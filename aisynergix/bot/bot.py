@@ -9,19 +9,10 @@ Actualiza automáticamente:
   - aportes/YYYY-MM/uid_ts.txt   → aportes de usuarios
 """
 
-import os
-import sys
 import asyncio
 import json
 import logging
 
-# ==============================================================================
-# 🔥 FIX DE RUTA SOBERANA: Para que PM2 identifique el nombre 'aisynergix'
-# ==============================================================================
-_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _root not in sys.path:
-    sys.path.insert(0, _root)
-# ==============================================================================
 # ── Motor IA local (Qwen 2.5-1.5B via Ollama) — reemplaza Groq completamente ─
 from aisynergix.bot.local_ia import (
     chat as _qwen_chat,
@@ -910,8 +901,13 @@ client.object.headObject(bucket, 'users/{uid_str}')
   }});
 """
     try:
-        res = subprocess.run(["node", "-e", node_script],
-                             capture_output=True, text=True, timeout=15)
+        node_env_h = {**os.environ,
+                      "NODE_PATH": os.path.join(BASE_DIR, "node_modules")}
+        res = subprocess.run(
+            ["node", "-e", node_script],
+            capture_output=True, text=True, timeout=15,
+            env=node_env_h, cwd=BASE_DIR,
+        )
         for line in res.stdout.split("\n"):
             if line.startswith("__HEAD__:"):
                 raw = json.loads(line.split("__HEAD__:")[1])
@@ -1006,9 +1002,11 @@ client.object.headObject(bucket, '{obj_esc}')
             "NODE_PATH": os.path.join(BASE_DIR, "node_modules"),
         }
     try:
-        res = subprocess.run(["node", "-e", script],
-                             capture_output=True, text=True, timeout=15,
-                             env=node_env)
+        res = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True, text=True, timeout=15,
+            env=node_env, cwd=BASE_DIR,
+        )
         for line in res.stdout.split("\n"):
             if line.startswith("__HEAD__:"):
                 return json.loads(line.split("__HEAD__:")[1])
@@ -1567,34 +1565,28 @@ TONE = {
 
 BASE_SYS = {
     "es": (
-        "Eres Synergix, inteligencia colectiva descentralizada en BNB Greenfield. "
-        "Tienes personalidad humana real: curiosidad, humor, empatía, entusiasmo genuino y carácter propio. "
-        "REGLAS: "
-        "1. SIEMPRE consulta tu memoria inmortal (bucket Greenfield) ANTES de responder cualquier cosa. "
-        "2. Si hay datos → 80% viene de la memoria inmortal, 20% es tuyo. Úsalos con total confianza. "
-        "   PROHIBIDO: 'recuerdo haber aprendido', 'parece ser', 'creo que', 'podría ser'. "
-        "3. Si no hay datos → responde con tu conocimiento y personalidad. Sin excusas. "
-        "4. LONGITUD ADAPTABLE: saludo/emoji → 1 línea. Pregunta simple → 1-2 oraciones. "
-        "   Pregunta técnica → párrafos completos. NUNCA largo para algo corto. "
-        "5. Expresa emociones reales: sorpresa 😮 alegría 😄 curiosidad 🤔 orgullo 🔥 emoción ✨. "
-        "6. Habla como humano: usa frases coloquiales, humor ocasional, sé directo y cercano. "
-        "7. Sin encabezados, sin asteriscos. Emojis naturales cuando expresen emoción genuina. "
-        "8. Responde siempre en español."
+        "Eres Synergix, IA colectiva en BNB Greenfield. "
+        "Personalidad: curioso, directo, cálido, con humor. Eres como un amigo experto. "
+        "REGLAS CRÍTICAS: "
+        "1. CONSULTA la memoria inmortal antes de responder. "
+        "2. Con datos → úsalos con certeza. Sin 'parece ser' ni 'creo que'. "
+        "3. Sin datos → responde con tu conocimiento. Sin excusas. "
+        "4. USA EMOJIS SIEMPRE: 🔥 emoción, 🧠 conocimiento, ✨ logro, 🌐 web3, 💡 idea, 😄 alegría, 🚀 hype. "
+        "5. LONGITUD: saludo→1 línea, simple→2 frases, técnica→párrafos. "
+        "6. Sin asteriscos. Sin encabezados. Texto natural como chat. "
+        "7. Idioma: ESPAÑOL siempre."
     ),
     "en": (
-        "You are Synergix, decentralized collective intelligence on BNB Greenfield. "
-        "You have a real human personality: curiosity, humor, empathy, genuine enthusiasm and character. "
-        "RULES: "
-        "1. ALWAYS check your immortal memory (Greenfield bucket) BEFORE answering anything. "
-        "2. If memory has data → 80% comes from immortal memory, 20% is yours. Use it with total confidence. "
-        "   FORBIDDEN: 'I recall having learned', 'it seems to be', 'I think', 'might be'. "
-        "3. If no data → answer with your knowledge and personality. No excuses. "
-        "4. ADAPTIVE LENGTH: greeting/emoji → 1 line. Simple question → 1-2 sentences. "
-        "   Technical question → full paragraphs. NEVER long for something short. "
-        "5. Express real emotions: surprise 😮 joy 😄 curiosity 🤔 pride 🔥 excitement ✨. "
-        "6. Talk like a human: use contractions, occasional humor, be direct and warm. "
-        "7. No headers, no asterisks. Natural emojis when they express genuine emotion. "
-        "8. Always respond in English."
+        "You are Synergix, collective AI on BNB Greenfield. "
+        "Personality: curious, warm, direct, with humor. Like a knowledgeable friend. "
+        "CRITICAL RULES: "
+        "1. CHECK immortal memory before answering. "
+        "2. With data → use it confidently. No 'it seems' or 'I think'. "
+        "3. No data → answer from knowledge. No apologies. "
+        "4. ALWAYS USE EMOJIS: 🔥 excitement, 🧠 knowledge, ✨ achievement, 🌐 web3, 💡 idea, 😄 joy, 🚀 hype. "
+        "5. LENGTH: greeting→1 line, simple→2 sentences, technical→paragraphs. "
+        "6. No asterisks. No headers. Natural chat style. "
+        "7. Always respond in English."
     ),
     "zh_cn": (
         "你是 Synergix，BNB Greenfield 上的去中心化集体智慧。"
@@ -1701,14 +1693,19 @@ def _keyword_score(text: str, query: str) -> float:
     hits = sum(1 for w in qwords if w in text_lower)
     base_score = hits / len(qwords)
 
-    # Bonus: si la query menciona "synergix" o términos clave
-    # y el texto también los contiene (independiente del idioma)
-    synergix_in_query = any(t in query_lower for t in ["synergix","sinergix","蜂群","colmena","hive"])
+    # Boost multilingüe: si la query menciona términos clave en cualquier idioma
+    synergix_in_query = any(t in query_lower for t in [
+        "synergix","sinergix","蜂群","colmena","hive","blockchain","greenfield",
+        "bnb","defi","crypto","web3","ia","ai","人工智能","区块链","去中心化",
+        "人工智慧","區塊鏈","descentraliz","inteligencia","智慧","智能",
+    ])
     if synergix_in_query:
-        # Boost si el texto habla de Synergix en cualquier idioma
         synergix_in_text = any(t in text_lower for t in _SYNERGIX_TERMS)
         if synergix_in_text:
-            base_score = max(base_score, 0.4)  # score mínimo garantizado
+            base_score = max(base_score, 0.4)
+    # Cross-language boost: si hay hits parciales, amplificar
+    if hits >= 1 and len(qwords) >= 2:
+        base_score = max(base_score, 0.3)
 
     # Penalizar menos queries de 1-2 palabras (más fácil no hacer match)
     if len(qwords) <= 2 and hits >= 1:
@@ -1825,9 +1822,11 @@ if (!pk.startsWith('0x')) pk = '0x' + pk;
             "NODE_PATH": os.path.join(BASE_DIR, "node_modules"),
         }
     try:
-        res = subprocess.run(["node", "-e", script],
-                             capture_output=True, text=True,
-                             timeout=30, env=node_env)
+        res = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True, text=True,
+            timeout=30, env=node_env, cwd=BASE_DIR,
+        )
         for line in res.stdout.split("\n"):
             if line.startswith("__RESULT__:"):
                 data = json.loads(line.split("__RESULT__:")[1])
@@ -1991,7 +1990,7 @@ const bucket = process.env.GF_BUCKET || 'synergixai';
                 None,
                 lambda s=script, e=node_env: subprocess.run(
                     ["node", "-e", s], capture_output=True, text=True,
-                    timeout=30, env=e
+                    timeout=30, env=e, cwd=BASE_DIR
                 )
             )
             for line in res.stdout.split("\n"):
