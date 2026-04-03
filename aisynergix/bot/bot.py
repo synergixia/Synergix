@@ -1099,11 +1099,12 @@ async def upload_backup_to_gf() -> None:
 # --- CONFIGURACIÓN DE BUCKET SOBERANO ---
 BUCKET_NAME = "synergixai"
 ROOT_FOLDER = "aisynergix"
+CTX_MAX     = 10  # Reducido para velocidad increíble
 
 async def upload_brain_to_gf(wisdom: str) -> None:
     """
     Sube el cerebro fusionado a synergixai/aisynergix/SYNERGIXAI/Synergix_ia.txt
-    Con los tags: last-sync, vectors, total, type
+    Con los tags: last-sync, vectors-count, total-size, type
     """
     now = datetime.now()
     total_aportes = db["global_stats"].get("total_contributions", 0)
@@ -1122,10 +1123,10 @@ async def upload_brain_to_gf(wisdom: str) -> None:
 
     # TAGS EXACTOS (Greenfield max 4)
     metadata = {
-        "last-sync": now.strftime("%Y-%m-%dT%H:%M:%S"),
-        "vectors":   str(total_aportes),
-        "total":     str(total_usuarios),
-        "type":      "brain"
+        "last-sync":     now.strftime("%Y-%m-%dT%H:%M:%S"),
+        "vectors-count": str(total_aportes),
+        "total-size":    str(total_usuarios),
+        "type":          "brain"
     }
 
     # Guardar copia local para el RAG instantáneo
