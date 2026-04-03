@@ -9,7 +9,6 @@ Actualiza automáticamente:
   - aportes/YYYY-MM/uid_ts.txt   → aportes de usuarios
 """
 
-
 import os
 import sys
 import asyncio
@@ -162,9 +161,9 @@ OLLAMA_BASE    = os.getenv("OLLAMA_BASE",  "http://localhost:11434")
 MODEL_CHAT     = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
 MODEL_FAST     = MODEL_CHAT
 MODEL_SLOW     = MODEL_CHAT
-MAX_TOKENS_CHAT  = int(os.getenv("MAX_TOKENS_CHAT",  "400"))   # 1.5B es rápido
-MAX_TOKENS_JUDGE = int(os.getenv("MAX_TOKENS_JUDGE", "150"))
-MAX_TOKENS_SUM   = int(os.getenv("MAX_TOKENS_SUM",   "60"))
+MAX_TOKENS_CHAT  = int(os.getenv("MAX_TOKENS_CHAT",  "200"))   # Ajustado para velocidad
+MAX_TOKENS_JUDGE = int(os.getenv("MAX_TOKENS_JUDGE", "100"))
+MAX_TOKENS_SUM   = int(os.getenv("MAX_TOKENS_SUM",   "50"))
 # En HF Spaces el WORKDIR es /app — la DB vive siempre en /app/data/
 DB_FILE = os.path.join(
     os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data")),
@@ -765,12 +764,19 @@ uploadToGreenfield(content, '{uid}', '{object_name_esc}', meta)
 """
 
     try:
-        node_env = {**os.environ,
-                    "DOTENV_BACKEND": os.path.join(BASE_DIR, "backend", ".env"),
-                    "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env")}
-        res = subprocess.run(["node", "-e", node_script],
-                             capture_output=True, text=True, timeout=120,
-                             env=node_env)
+        node_env = {
+            **os.environ,
+            "DOTENV_BACKEND": os.path.join(BASE_DIR, "backend", ".env"),
+            "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env"),
+            # NODE_PATH garantiza que node encuentre dotenv y el SDK de Greenfield
+            "NODE_PATH": os.path.join(BASE_DIR, "node_modules"),
+        }
+        res = subprocess.run(
+            ["node", "-e", node_script],
+            capture_output=True, text=True, timeout=120,
+            env=node_env,
+            cwd=BASE_DIR,   # ejecutar desde la raíz del proyecto
+        )
         if os.path.exists(tmp_path): os.remove(tmp_path)
 
         if res.stderr.strip():
@@ -996,7 +1002,9 @@ client.object.headObject(bucket, '{obj_esc}')
 """
     node_env = {**os.environ,
                 "DOTENV_BACKEND": os.path.join(BASE_DIR, "backend", ".env"),
-                "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env")}
+                "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env"),
+            "NODE_PATH": os.path.join(BASE_DIR, "node_modules"),
+        }
     try:
         res = subprocess.run(["node", "-e", script],
                              capture_output=True, text=True, timeout=15,
@@ -1813,7 +1821,9 @@ if (!pk.startsWith('0x')) pk = '0x' + pk;
 """
     node_env = {**os.environ,
                 "DOTENV_BACKEND": os.path.join(BASE_DIR, "backend", ".env"),
-                "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env")}
+                "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env"),
+            "NODE_PATH": os.path.join(BASE_DIR, "node_modules"),
+        }
     try:
         res = subprocess.run(["node", "-e", script],
                              capture_output=True, text=True,
@@ -1972,7 +1982,9 @@ const bucket = process.env.GF_BUCKET || 'synergixai';
 """
         node_env = {**os.environ,
                     "DOTENV_BACKEND": os.path.join(BASE_DIR, "backend", ".env"),
-                    "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env")}
+                    "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env"),
+            "NODE_PATH": os.path.join(BASE_DIR, "node_modules"),
+        }
         try:
             loop = asyncio.get_running_loop()
             res = await loop.run_in_executor(
