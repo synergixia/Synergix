@@ -1096,76 +1096,54 @@ async def upload_backup_to_gf() -> None:
 # GREENFIELD — SYNERGIXAI (SYNERGIXAI/Synergix_ia.txt)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# --- CONFIGURACIÓN DE BUCKET SOBERANO ---
+BUCKET_NAME = "synergixai"
+ROOT_FOLDER = "aisynergix"
+
 async def upload_brain_to_gf(wisdom: str) -> None:
     """
-    Sube el cerebro fusionado a SYNERGIXAI/Synergix_ia.txt en Greenfield.
-    Estrategia robusta:
-      1. Guardar copia local siempre (independiente de GF)
-      2. Intentar crear en GF (si no existe)
-      3. Si ya existe → delete + create (único método real del SDK)
-      4. Loguear error completo para diagnóstico
+    Sube el cerebro fusionado a synergixai/aisynergix/SYNERGIXAI/Synergix_ia.txt
+    Con los tags: last-sync, vectors, total, type
     """
     now = datetime.now()
-    all_summaries = [e.get("summary","") for uk in db["memory"]
-                     for e in db["memory"][uk] if e.get("summary")]
     total_aportes = db["global_stats"].get("total_contributions", 0)
+    total_usuarios = len(db.get("reputation", {}))
 
     brain_content = (
         f"=== SYNERGIX COLLECTIVE BRAIN ===\n"
         f"Actualizado: {now.isoformat()}\n"
-        f"Aportes procesados: {total_aportes}\n"
-        f"x-amz-meta-last-sync: {now.isoformat()}\n"
-        f"x-amz-meta-vector-count: {len(all_summaries)}\n\n"
-        f"=== CONOCIMIENTO FUSIONADO ===\n{wisdom}\n\n"
-        f"=== INVENTARIO ===\n" +
-        "\n".join(f"- {s}" for s in all_summaries[-50:])
+        f"Aportes: {total_aportes}\n"
+        f"Usuarios: {total_usuarios}\n\n"
+        f"=== CONOCIMIENTO FUSIONADO ===\n{wisdom}"
     )
-    import hashlib as _hl
-    brain_hash = _hl.sha256(brain_content.encode()).hexdigest()[:16]
+
+    # RUTA EXACTA EN DCELLAR
+    object_name = f"{ROOT_FOLDER}/SYNERGIXAI/Synergix_ia.txt"
+
+    # TAGS EXACTOS (Greenfield max 4)
     metadata = {
-        # Tag 1: last-sync — cuándo se actualizó el cerebro
-        "x-amz-meta-last-sync":     now.strftime("%Y-%m-%dT%H:%M:%S"),
-        # Tag 2: vector-count — aportes indexados en este cerebro
-        "x-amz-meta-vector-count":  str(len(all_summaries)),
-        # Tag 3: last-fusion-ts + total aportes procesados
-        "x-amz-meta-last-fusion-ts": f"{now.strftime('%Y-%m-%dT%H:%M:%S')}|total:{total_aportes}",
-        # Tag 4: integrity-hash — para detectar corrupción
-        "x-amz-meta-integrity-hash": brain_hash,
+        "last-sync": now.strftime("%Y-%m-%dT%H:%M:%S"),
+        "vectors":   str(total_aportes),
+        "total":     str(total_usuarios),
+        "type":      "brain"
     }
 
-    # ── 1. Guardar siempre copia local ────────────────────────────────────────
-    local_brain_dir = os.path.join(BASE_DIR, "SYNERGIXAI")  # local mirror
-    os.makedirs(local_brain_dir, exist_ok=True)
-    local_path = os.path.join(local_brain_dir, "Synergix_ia.txt")
-    try:
-        with open(local_path, "w", encoding="utf-8") as f:
-            f.write(brain_content)
-        logger.info("💾 Cerebro guardado localmente: %s", local_path)
-    except Exception as e:
-        logger.error("❌ Error guardando cerebro local: %s", e)
+    # Guardar copia local para el RAG instantáneo
+    local_path = os.path.join(BASE_DIR, "SYNERGIXAI", "Synergix_ia.txt")
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    with open(local_path, "w", encoding="utf-8") as f:
+        f.write(brain_content)
 
-    # ── 2. Subir a Greenfield — nombre único con timestamp, nunca colisiona ─────
-    # OPT GAS: nombre versionado = 0 delete txs, siempre 1 create tx
+    # Subida real a Greenfield
     loop = asyncio.get_running_loop()
-    versioned_name = GF.brain_versioned(now.strftime('%Y%m%d_%H%M%S'))
-
-    def _upload_brain_sync():
-        # Guardar puntero al cerebro más reciente en DB
-        db["global_stats"]["brain_latest"] = versioned_name
-        save_db()
-        # Subir directamente — nombre único garantiza no colisión, 0 delete
-        return gf_upload(brain_content, versioned_name, metadata,
-                         uid="system", upsert=False, only_tags=False)
-
     try:
-        result = await loop.run_in_executor(None, _upload_brain_sync)
-        logger.info("✅ GF %s → CID: %s", versioned_name, result.get("cid","?"))
-        # Invalidar cache para que el RAG recargue el cerebro nuevo
-        global _brain_cache_ts
-        _brain_cache_ts = 0.0
+        await loop.run_in_executor(None, lambda: gf_upload(
+            brain_content, object_name, metadata, upsert=True, only_tags=False
+        ))
+        logger.info(f"✅ Cerebro sincronizado en DCellar: {object_name}")
     except Exception as e:
-        logger.error("❌ GF brain upload falló: %s", e)
-        logger.error("   Cerebro guardado localmente: %s", local_path)
+        logger.error(f"❌ Error sincronizando cerebro: {e}")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # OLLAMA — IA local Qwen 2.5 3B Q4_K_M (sin dependencia de APIs externas)

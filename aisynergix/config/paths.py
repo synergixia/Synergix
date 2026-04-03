@@ -9,31 +9,15 @@ Carpeta raíz:     aisynergix/
 """
 import os
 
-_HERE     = os.path.dirname(os.path.abspath(__file__))
-PROJECT   = os.path.dirname(os.path.dirname(_HERE))
-
-LOCAL_ROOT      = os.environ.get("LOCAL_ROOT", os.path.join(PROJECT, "aisynergix"))
-LOCAL_BRAIN_DIR = os.path.join(LOCAL_ROOT, "SYNERGIXAI")
-LOCAL_DATA_DIR  = os.path.join(LOCAL_ROOT, "data")
-LOCAL_LOGS_DIR  = os.path.join(LOCAL_ROOT, "logs")
-LOCAL_MODEL_DIR = os.environ.get("OLLAMA_MODELS", os.path.expanduser("~/.ollama/models"))
-
-DB_FILE    = os.path.join(LOCAL_DATA_DIR, "synergix_db.json")
-BACKEND_DIR = os.path.join(LOCAL_ROOT, "..", "backend")
-UPLOAD_JS   = os.path.join(PROJECT, "aisynergix", "backend", "upload.js")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# RUTAS DCellar — Bucket: synergixai / Raíz: aisynergix/
-# ══════════════════════════════════════════════════════════════════════════════
-
-GF_BUCKET = os.environ.get("GF_BUCKET", "synergixai")   # ← nombre real del bucket
-GF_ROOT   = "aisynergix"                                  # ← carpeta raíz soberana
+# --- CONFIGURACIÓN MAESTRA DEL BUCKET ---
+GF_BUCKET = "synergixai"  # Nombre oficial del bucket en Greenfield
+GF_ROOT   = "aisynergix"   # Carpeta raíz soberana
 
 class GF:
-    """Rutas on-chain en bucket synergixai/aisynergix/"""
-
+    """Mapeo exacto de la estructura en DCellar (Greenfield)"""
+    
+    # Rutas Base
     BRAIN_DIR   = f"{GF_ROOT}/SYNERGIXAI"
-    BRAIN_FILE  = f"{GF_ROOT}/SYNERGIXAI/Synergix_ia.txt"
     USERS_DIR   = f"{GF_ROOT}/users"
     APORTES_DIR = f"{GF_ROOT}/aportes"
     AI_DIR      = f"{GF_ROOT}/ai/Qwen2.5-1.5B"
@@ -41,6 +25,9 @@ class GF:
     LOGS_DIR    = f"{GF_ROOT}/logs"
     BACKUPS_DIR = f"{GF_ROOT}/backups"
     DB_DIR      = f"{GF_ROOT}/data"
+    
+    # Archivo Maestro
+    BRAIN_FILE  = f"{BRAIN_DIR}/Synergix_ia.txt"
 
     @staticmethod
     def user(uid_hash: str) -> str:
@@ -66,11 +53,22 @@ class GF:
     def db_versioned(timestamp: str) -> str:
         return f"{GF.DB_DIR}/synergix_db_{timestamp}.json"
 
-    @staticmethod
-    def discovery(source: str, date: str) -> str:
-        return f"{GF.DISCOVERY}/{source}/{date}.json"
+# --- CONFIGURACIÓN LOCAL (SERVIDOR HETZNER) ---
+_HERE     = os.path.dirname(os.path.abspath(__file__))
+# Subimos dos niveles para llegar a la raíz del proyecto (donde está aisynergix/)
+PROJECT   = os.path.abspath(os.path.join(_HERE, "..", ".."))
 
+LOCAL_ROOT      = os.path.join(PROJECT, "aisynergix")
+LOCAL_BRAIN_DIR = os.path.join(LOCAL_ROOT, "SYNERGIXAI")
+LOCAL_DATA_DIR  = os.path.join(LOCAL_ROOT, "data")
+LOCAL_LOGS_DIR  = os.path.join(LOCAL_ROOT, "logs")
+LOCAL_BRAIN     = os.path.join(LOCAL_BRAIN_DIR, "Synergix_ia.txt")
+
+# Archivos de Sistema
+DB_FILE    = os.path.join(LOCAL_DATA_DIR, "synergix_db.json")
+UPLOAD_JS  = os.path.join(LOCAL_ROOT, "backend", "upload.js")
 
 def ensure_local_dirs():
+    """Crea la estructura de carpetas local si no existe"""
     for d in [LOCAL_BRAIN_DIR, LOCAL_DATA_DIR, LOCAL_LOGS_DIR]:
         os.makedirs(d, exist_ok=True)
