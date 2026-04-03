@@ -9,10 +9,20 @@ Actualiza automáticamente:
   - aportes/YYYY-MM/uid_ts.txt   → aportes de usuarios
 """
 
+
+import os
+import sys
 import asyncio
 import json
 import logging
 
+# ==============================================================================
+# 🔥 FIX DE RUTA SOBERANA: Para que PM2 identifique el nombre 'aisynergix'
+# ==============================================================================
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+# ==============================================================================
 # ── Motor IA local (Qwen 2.5-1.5B via Ollama) — reemplaza Groq completamente ─
 from aisynergix.bot.local_ia import (
     chat as _qwen_chat,
@@ -878,7 +888,7 @@ const client = Client.create(
   process.env.GF_RPC_URL || 'https://greenfield-chain.bnbchain.org', 
   process.env.GF_CHAIN_ID || '1017'
 );
-const bucket = process.env.GF_BUCKET || 'synergix';
+const bucket = process.env.GF_BUCKET || 'synergixai';
 client.object.headObject(bucket, 'users/{uid_str}')
   .then(res => {{
     const info = res.objectInfo || {{}};
@@ -969,7 +979,7 @@ const client = Client.create(
   process.env.GF_RPC_URL  || 'https://greenfield-chain.bnbchain.org',
   process.env.GF_CHAIN_ID || '1017'
 );
-const bucket = process.env.GF_BUCKET || 'synergix';
+const bucket = process.env.GF_BUCKET || 'synergixai';
 client.object.headObject(bucket, '{obj_esc}')
   .then(res => {{
     const info = res.objectInfo || {{}};
@@ -1783,7 +1793,7 @@ const client = Client.create(
   process.env.GF_RPC_URL  || 'https://greenfield-chain.bnbchain.org',
   process.env.GF_CHAIN_ID || '1017'
 );
-const bucket = process.env.GF_BUCKET || 'synergix';
+const bucket = process.env.GF_BUCKET || 'synergixai';
 let pk = process.env.PRIVATE_KEY || '';
 if (!pk.startsWith('0x')) pk = '0x' + pk;
 (async () => {{
@@ -1933,7 +1943,7 @@ const client = Client.create(
   process.env.GF_RPC_URL  || 'https://greenfield-chain.bnbchain.org',
   process.env.GF_CHAIN_ID || '1017'
 );
-const bucket = process.env.GF_BUCKET || 'synergix';
+const bucket = process.env.GF_BUCKET || 'synergixai';
 (async () => {{
   try {{
     const res = await client.object.listObjects({{
@@ -2357,6 +2367,10 @@ async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
     tone     = detect_tone(text)
     msg_type = classify_message(text) if not is_sticker else "sticker"
 
+    # Variables inicializadas aquí para que ambos modos A y B las tengan
+    reach_inject       = ""
+    length_instruction = ""
+
     # ── RAG + Agent-Reach en paralelo ────────────────────────────────────────
     used_objects = []
     rag_ctx      = ""
@@ -2459,7 +2473,6 @@ async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
         }.get(lang, "")
 
         # Añadir contexto de redes sociales si hay datos de reach
-        reach_inject = ""
         if reach_ctx and len(reach_ctx) > 30:
             reach_labels = {
                 "es":  "\n\n🌐 DATOS EN TIEMPO REAL (redes sociales e internet):\n",
@@ -2509,7 +2522,16 @@ async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
         # MODO B/C: Sin datos relevantes en el bucket
         system = BASE_SYS.get(lang, BASE_SYS["es"])
         system += f"\n\nTONO: {TONE[tone].get(lang,'')}"
-        system += f"\n\nLONGITUD: {length_instruction}"
+        # Calcular length_instruction para MODO B también
+        _length_map_b = {
+            "sticker": {"es":"Respuesta MUY CORTA: 1 línea.", "en":"VERY SHORT: 1 line.", "zh_cn":"极短：1行。", "zh":"極短：1行。"},
+            "simple":  {"es":"Respuesta CORTA: 1-2 oraciones.", "en":"SHORT: 1-2 sentences.", "zh_cn":"简短：1-2句。", "zh":"簡短：1-2句。"},
+            "normal":  {"es":"Respuesta NORMAL: 2-4 oraciones.", "en":"NORMAL: 2-4 sentences.", "zh_cn":"正常：2-4句。", "zh":"正常：2-4句。"},
+            "complex": {"es":"Respuesta DETALLADA: párrafos completos.", "en":"DETAILED: full paragraphs.", "zh_cn":"详细：完整段落。", "zh":"詳細：完整段落。"},
+        }
+        length_instruction = _length_map_b.get(msg_type, _length_map_b["normal"]).get(lang, "")
+        if length_instruction:
+            system += f"\n\nLONGITUD: {length_instruction}"
         if reach_inject:
             system += reach_inject
 
