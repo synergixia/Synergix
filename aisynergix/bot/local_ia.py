@@ -81,8 +81,8 @@ async def health():
     try:
         async with httpx.AsyncClient(timeout=2) as client:
             resp = await client.get(f"{OLLAMA_BASE}/api/tags")
-            return resp.status_code == 200
-    except: return False
+            return {"status": "ok", "model_ready": resp.status_code == 200}
+    except: return {"status": "error", "model_ready": False}
 
 async def warmup():
     await chat([{"role":"user", "content":"hi"}], max_tokens=1)
