@@ -7,7 +7,7 @@ Arquitectura soberana: CERO dependencias de APIs externas.
 El modelo corre en Hetzner CX22 (4 GB RAM, 2 vCPU).
 
 Optimizaciones para 1.5B en CPU:
-  - num_ctx=1024  → menos RAM, más velocidad (~800ms vs 3s con 2048)
+  - num_ctx=512   → velocidad máxima en CPU (~2-4s vs 10s con 2048)
   - num_thread=2  → usa ambos vCPU del CX22
   - temperature baja para judge/summarize (más determinista)
   - Timeout 45s chat, 20s judge/summarize (1.5B es más rápido)
@@ -39,10 +39,20 @@ MAX_TOKENS_SUM   = int(os.environ.get("MAX_TOKENS_SUM",   "60"))
 
 # Opciones Ollama optimizadas para 4 GB RAM / 2 vCPU
 _OLLAMA_OPTIONS = {
-    "num_ctx":        1024,   # Contexto reducido → más velocidad
+    "num_ctx":        512,    # ← CLAVE: contexto mínimo viable = máxima velocidad
     "num_thread":     2,      # 2 vCPU Hetzner CX22
+    "num_predict":    200,    # Limitar tokens de salida para respuestas cortas
     "repeat_penalty": 1.1,
-    "stop":          ["<|im_end|>", "<|endoftext|>"],
+    "stop":          ["<|im_end|>", "<|endoftext|>", "\n\n\n"],
+}
+
+# Opciones ultrarrápidas para judge/summarize (respuestas cortas)
+_OLLAMA_OPTIONS_FAST = {
+    "num_ctx":        256,    # Contexto mínimo para tareas cortas
+    "num_thread":     2,
+    "num_predict":    100,
+    "repeat_penalty": 1.1,
+    "stop":          ["<|im_end|>", "<|endoftext|>", "\n"],
 }
 
 
@@ -81,13 +91,15 @@ async def chat(messages: list,
     if max_tokens is None:
         max_tokens = MAX_TOKENS_CHAT
 
+    # Elegir opciones según el tipo de tarea
+    opts = _OLLAMA_OPTIONS_FAST if max_tokens <= 150 else _OLLAMA_OPTIONS
     payload = {
         "model":       OLLAMA_MODEL,
         "messages":    messages,
         "temperature": temperature,
         "max_tokens":  max_tokens,
         "stream":      False,
-        "options":     _OLLAMA_OPTIONS,
+        "options":     opts,
     }
 
     client = await _get_client()
