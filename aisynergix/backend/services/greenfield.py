@@ -17,9 +17,9 @@ from datetime import datetime
 from typing import Any, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
-logger = logging.getLogger("synergix.greenfield")
+logger = logging.getLogger("synergixai.greenfield")
 
-BUCKET_NAME:   str = os.getenv("GF_BUCKET",   "synergix")
+BUCKET_NAME:   str = os.getenv("GF_BUCKET",   "synergixai")
 GF_RPC_URL:    str = os.getenv("GF_RPC_URL",  "https://greenfield-chain.bnbchain.org")
 GF_CHAIN_ID:   str = os.getenv("GF_CHAIN_ID", "1017")
 UPLOAD_JS_PATH: str = os.path.normpath(

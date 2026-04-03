@@ -40,7 +40,7 @@ const { ethers }      = require('ethers');
 // ── Config Mainnet ────────────────────────────────────────────────────────────
 const RPC_URL     = process.env.GF_RPC_URL  || 'https://greenfield-chain.bnbchain.org';
 const CHAIN_ID    = process.env.GF_CHAIN_ID || '1017';
-const BUCKET_NAME = process.env.GF_BUCKET   || 'synergix';
+const BUCKET_NAME = process.env.GF_BUCKET   || 'synergixai';
 const client      = Client.create(RPC_URL, CHAIN_ID);
 
 // ── Carpetas públicas dentro de aisynergix/ ───────────────────────────────────
