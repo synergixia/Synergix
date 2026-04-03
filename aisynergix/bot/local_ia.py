@@ -39,19 +39,19 @@ MAX_TOKENS_SUM   = int(os.environ.get("MAX_TOKENS_SUM",   "60"))
 
 # Opciones Ollama optimizadas para 4 GB RAM / 2 vCPU
 _OLLAMA_OPTIONS = {
-    "num_ctx":        512,    # ← CLAVE: contexto mínimo viable = máxima velocidad
-    "num_thread":     2,      # 2 vCPU Hetzner CX22
-    "num_predict":    200,    # Limitar tokens de salida para respuestas cortas
+    "num_ctx":        512,    # Contexto reducido → velocidad máxima
+    "num_thread":     4,      # 4 núcleos CPU → máxima velocidad
+    "num_predict":    150,    # Limitar salida → respuestas más rápidas
     "repeat_penalty": 1.1,
     "stop":          ["<|im_end|>", "<|endoftext|>", "\n\n\n"],
 }
 
-# Opciones ultrarrápidas para judge/summarize (respuestas cortas)
+# Opciones para judge/summarize (muy corto, muy rápido)
 _OLLAMA_OPTIONS_FAST = {
-    "num_ctx":        256,    # Contexto mínimo para tareas cortas
-    "num_thread":     2,
-    "num_predict":    100,
-    "repeat_penalty": 1.1,
+    "num_ctx":        256,
+    "num_thread":     4,
+    "num_predict":    80,
+    "repeat_penalty": 1.0,
     "stop":          ["<|im_end|>", "<|endoftext|>", "\n"],
 }
 
