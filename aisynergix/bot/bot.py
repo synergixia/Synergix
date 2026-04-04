@@ -17,9 +17,10 @@ import sys
 
 # ── Asegurar que el bot encuentre sus módulos (Aisynergix Package) ────────────
 # Esto permite que 'from aisynergix...' funcione bajo PM2 en Hetzner.
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+BASE_BOT_DIR = os.path.dirname(os.path.abspath(__file__)) # /root/Synergix/aisynergix/bot
+PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_BOT_DIR)) # /root/Synergix
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 # ── Motor IA local (Qwen 2.5 0.5B via Ollama) — 100% Nativo Synergix ─────────
 from aisynergix.bot.local_ia import (
