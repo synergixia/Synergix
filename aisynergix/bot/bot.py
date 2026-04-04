@@ -12,6 +12,14 @@ Actualiza automáticamente:
 import asyncio
 import json
 import logging
+import os
+import sys
+
+# ── Asegurar que el bot encuentre sus módulos (Aisynergix Package) ────────────
+# Esto permite que 'from aisynergix...' funcione bajo PM2 o ejecución directa.
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
 # ── Motor IA local (Qwen 2.5-1.5B via Ollama) — reemplaza Groq completamente ─
 from aisynergix.bot.local_ia import (
