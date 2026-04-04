@@ -12,14 +12,6 @@ Actualiza automáticamente:
 import asyncio
 import json
 import logging
-import os
-import sys
-
-# ── Asegurar que el bot encuentre sus módulos (Aisynergix Package) ────────────
-# Esto permite que 'from aisynergix...' funcione bajo PM2 o ejecución directa.
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
 
 # ── Motor IA local (Qwen 2.5-1.5B via Ollama) — reemplaza Groq completamente ─
 from aisynergix.bot.local_ia import (
@@ -154,20 +146,21 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger("synergix.bot")
 
 TOKEN          = os.getenv("TELEGRAM_TOKEN", "")
-# ── Qwen 2.5 local — 100% soberano, sin APIs externas ──────────────────
-OLLAMA_BASE    = os.getenv("OLLAMA_BASE",  "http://127.0.0.1:11434").rstrip("/")
+# ── Qwen 2.5-1.5B local — 100% soberano, sin APIs externas ──────────────────
+GROQ_API_KEY   = ""  # Eliminado — ya no existe
+OLLAMA_BASE    = os.getenv("OLLAMA_BASE",  "http://localhost:11434")
 MODEL_CHAT     = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
 MODEL_FAST     = MODEL_CHAT
 MODEL_SLOW     = MODEL_CHAT
-MAX_TOKENS_CHAT  = int(os.getenv("MAX_TOKENS_CHAT",  "200"))   # Ajustado para velocidad
-MAX_TOKENS_JUDGE = int(os.getenv("MAX_TOKENS_JUDGE", "100"))
-MAX_TOKENS_SUM   = int(os.getenv("MAX_TOKENS_SUM",   "50"))
+MAX_TOKENS_CHAT  = int(os.getenv("MAX_TOKENS_CHAT",  "300"))   # 0.5b necesita espacio
+MAX_TOKENS_JUDGE = int(os.getenv("MAX_TOKENS_JUDGE", "120"))
+MAX_TOKENS_SUM   = int(os.getenv("MAX_TOKENS_SUM",   "60"))
 # En HF Spaces el WORKDIR es /app — la DB vive siempre en /app/data/
 DB_FILE = os.path.join(
-    os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data")),
-    "synergix_v2.json"
+    os.getenv("DATA_DIR", os.path.join(BASE_DIR, "aisynergix", "data")),
+    "synergix_db.json"
 )
-UPLOAD_JS      = os.path.join(BASE_DIR, "backend", "upload.js")
+UPLOAD_JS      = os.path.join(BASE_DIR, "aisynergix", "backend", "upload.js")
 CTX_MAX        = 20
 MIN_CHARS      = 20
 
@@ -1103,121 +1096,155 @@ async def upload_backup_to_gf() -> None:
 # GREENFIELD — SYNERGIXAI (SYNERGIXAI/Synergix_ia.txt)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# --- CONFIGURACIÓN DE BUCKET SOBERANO ---
-BUCKET_NAME = "synergixai"
-ROOT_FOLDER = "aisynergix"
-CTX_MAX     = 10  # Reducido para velocidad increíble
-
 async def upload_brain_to_gf(wisdom: str) -> None:
     """
-    Sube el cerebro fusionado a synergixai/aisynergix/SYNERGIXAI/Synergix_ia.txt
-    Con los tags: last-sync, vectors-count, total-size, type
+    Sube el cerebro fusionado a SYNERGIXAI/Synergix_ia.txt en Greenfield.
+    Estrategia robusta:
+      1. Guardar copia local siempre (independiente de GF)
+      2. Intentar crear en GF (si no existe)
+      3. Si ya existe → delete + create (único método real del SDK)
+      4. Loguear error completo para diagnóstico
     """
     now = datetime.now()
+    all_summaries = [e.get("summary","") for uk in db["memory"]
+                     for e in db["memory"][uk] if e.get("summary")]
     total_aportes = db["global_stats"].get("total_contributions", 0)
-    total_usuarios = len(db.get("reputation", {}))
 
     brain_content = (
         f"=== SYNERGIX COLLECTIVE BRAIN ===\n"
         f"Actualizado: {now.isoformat()}\n"
-        f"Aportes: {total_aportes}\n"
-        f"Usuarios: {total_usuarios}\n\n"
-        f"=== CONOCIMIENTO FUSIONADO ===\n{wisdom}"
+        f"Aportes procesados: {total_aportes}\n"
+        f"x-amz-meta-last-sync: {now.isoformat()}\n"
+        f"x-amz-meta-vector-count: {len(all_summaries)}\n\n"
+        f"=== CONOCIMIENTO FUSIONADO ===\n{wisdom}\n\n"
+        f"=== INVENTARIO ===\n" +
+        "\n".join(f"- {s}" for s in all_summaries[-50:])
     )
-
-    # RUTA EXACTA EN DCELLAR
-    object_name = f"{ROOT_FOLDER}/SYNERGIXAI/Synergix_ia.txt"
-
-    # TAGS EXACTOS (Greenfield max 4)
+    import hashlib as _hl
+    brain_hash = _hl.sha256(brain_content.encode()).hexdigest()[:16]
     metadata = {
-        "last-sync":     now.strftime("%Y-%m-%dT%H:%M:%S"),
-        "vectors-count": str(total_aportes),
-        "total-size":    str(total_usuarios),
-        "type":          "brain"
+        # Tag 1: last-sync — cuándo se actualizó el cerebro
+        "x-amz-meta-last-sync":     now.strftime("%Y-%m-%dT%H:%M:%S"),
+        # Tag 2: vector-count — aportes indexados en este cerebro
+        "x-amz-meta-vector-count":  str(len(all_summaries)),
+        # Tag 3: last-fusion-ts + total aportes procesados
+        "x-amz-meta-last-fusion-ts": f"{now.strftime('%Y-%m-%dT%H:%M:%S')}|total:{total_aportes}",
+        # Tag 4: integrity-hash — para detectar corrupción
+        "x-amz-meta-integrity-hash": brain_hash,
     }
 
-    # Guardar copia local para el RAG instantáneo
-    local_path = os.path.join(BASE_DIR, "SYNERGIXAI", "Synergix_ia.txt")
-    os.makedirs(os.path.dirname(local_path), exist_ok=True)
-    with open(local_path, "w", encoding="utf-8") as f:
-        f.write(brain_content)
-
-    # Subida real a Greenfield
-    loop = asyncio.get_running_loop()
+    # ── 1. Guardar siempre copia local ────────────────────────────────────────
+    local_brain_dir = os.path.join(BASE_DIR, "SYNERGIXAI")  # local mirror
+    os.makedirs(local_brain_dir, exist_ok=True)
+    local_path = os.path.join(local_brain_dir, "Synergix_ia.txt")
     try:
-        await loop.run_in_executor(None, lambda: gf_upload(
-            brain_content, object_name, metadata, upsert=True, only_tags=False
-        ))
-        logger.info(f"✅ Cerebro sincronizado en DCellar: {object_name}")
+        with open(local_path, "w", encoding="utf-8") as f:
+            f.write(brain_content)
+        logger.info("💾 Cerebro guardado localmente: %s", local_path)
     except Exception as e:
-        logger.error(f"❌ Error sincronizando cerebro: {e}")
+        logger.error("❌ Error guardando cerebro local: %s", e)
 
+    # ── 2. Subir a Greenfield — nombre único con timestamp, nunca colisiona ─────
+    # OPT GAS: nombre versionado = 0 delete txs, siempre 1 create tx
+    loop = asyncio.get_running_loop()
+    versioned_name = GF.brain_versioned(now.strftime('%Y%m%d_%H%M%S'))
+
+    def _upload_brain_sync():
+        # Guardar puntero al cerebro más reciente en DB
+        db["global_stats"]["brain_latest"] = versioned_name
+        save_db()
+        # Subir directamente — nombre único garantiza no colisión, 0 delete
+        return gf_upload(brain_content, versioned_name, metadata,
+                         uid="system", upsert=False, only_tags=False)
+
+    try:
+        result = await loop.run_in_executor(None, _upload_brain_sync)
+        logger.info("✅ GF %s → CID: %s", versioned_name, result.get("cid","?"))
+        # Invalidar cache para que el RAG recargue el cerebro nuevo
+        global _brain_cache_ts
+        _brain_cache_ts = 0.0
+    except Exception as e:
+        logger.error("❌ GF brain upload falló: %s", e)
+        logger.error("   Cerebro guardado localmente: %s", local_path)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # OLLAMA — IA local Qwen 2.5 3B Q4_K_M (sin dependencia de APIs externas)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def ollama_chat(messages: list, model: str = MODEL_CHAT,
-                    temperature: float = 0.3, max_tokens: int = None) -> str:
+async def groq_call(messages: list, model: str = MODEL_CHAT,
+                    temperature: float = 0.7, max_tokens: int = None) -> str:
     """
-    Llamada NATIVA a Ollama API (/api/chat).
-    Optimizado para Hetzner usando 127.0.0.1.
+    Reemplaza groq_call — ahora llama a Ollama local (misma interfaz OpenAI).
+    Compatible con todo el código existente sin cambiar ninguna llamada.
     """
     import httpx
+    if max_tokens is None:
+        max_tokens = MAX_TOKENS_CHAT
     payload = {
-        "model":    model,
-        "messages": messages,
-        "stream":   False,
+        "model":       model,
+        "messages":    messages,
+        "temperature": temperature,
+        "max_tokens":  max_tokens,
+        "stream":      False,
         "options": {
-            "temperature": temperature,
-            "num_predict": max_tokens if max_tokens else 150,
-            "num_ctx":     2048,
-            "num_thread":  4
+            "num_ctx":     2048,   # Contexto de 2K — equilibrio RAM/calidad
+            "num_thread":  2,      # 2 threads en CX22 (2 vCPU)
+            "repeat_penalty": 1.1, # Evitar repeticiones
         }
     }
-    async with httpx.AsyncClient(timeout=60) as client:
-        try:
-            # Usamos 127.0.0.1 para evitar problemas de IPv6/localhost
-            resp = await client.post(
-                "http://127.0.0.1:11434/api/chat",
-                json=payload
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("message", {}).get("content", "").replace("*", "").strip()
-        except Exception as e:
-            logger.error(f"❌ Error Ollama Nativo: {e}")
-            return "🔄 Sincronizando sabiduría... reintenta en un momento."
+    async with httpx.AsyncClient(timeout=45) as client:  # 45s para 0.5b (más rápido)
+        resp = await client.post(
+            f"{OLLAMA_BASE}/v1/chat/completions",
+            json=payload,
+            headers={"Content-Type": "application/json"}
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].replace("*", "").strip()
+
 
 async def ollama_judge(content: str) -> dict:
-    """Evalúa un aporte con el modelo local."""
+    """Evalúa un aporte con el modelo local Synergix 0.5b."""
     _json_fmt = '{"score":N,"reason":"short reason","category":"topic","knowledge_tag":"tag"}'
     system = f"Reply ONLY with valid JSON: {_json_fmt}"
     try:
         raw = await ollama_chat(
             [{"role":"system","content":system},
              {"role":"user","content":content[:500]}],
-            temperature=0.1
+            temperature=0.1,
+            max_tokens=MAX_TOKENS_JUDGE
         )
         import re
         json_match = re.search(r'\{.*?\}', raw, re.DOTALL)
         if json_match:
+            import json
             return json.loads(json_match.group())
-        return json.loads(raw)
+        return {"score":6,"reason":"Auto-aprobado","category":"General","knowledge_tag":"general"}
     except Exception:
         return {"score":6,"reason":"Auto-aprobado","category":"General","knowledge_tag":"general"}
 
+
 async def ollama_summarize(content: str, lang: str = "es") -> str:
-    """Resume un aporte usando Ollama local."""
+    """Resume un aporte usando Ollama local Synergix 0.5b."""
     prompt = "Resume en máximo 15 palabras. Solo texto plano."
     try:
         return await ollama_chat(
             [{"role":"system","content":prompt},
              {"role":"user","content":content[:600]}],
-            temperature=0.1
+            temperature=0.1,
+            max_tokens=MAX_TOKENS_SUM
         )
     except Exception:
         return content[:100] + "..."
+        "en":    "Summarize in max 15 words. Plain text only.",
+        "zh_cn": "用最多15个字总结。仅纯文本。",
+        "zh":    "用最多15個字總結。純文字。",
+    }
+    try:
+        return await groq_call(
+            [{"role":"system","content":prompts.get(lang, prompts["es"])},
+             {"role":"user","content":content[:600]}],
+            temperature=0.1,
             max_tokens=MAX_TOKENS_SUM
         )
     except Exception:
@@ -1541,28 +1568,26 @@ TONE = {
 
 BASE_SYS = {
     "es": (
-        "Eres Synergix, IA colectiva en BNB Greenfield. "
-        "Personalidad: curioso, directo, cálido, con humor. Eres como un amigo experto. "
-        "REGLAS CRÍTICAS: "
-        "1. CONSULTA la memoria inmortal antes de responder. "
-        "2. Con datos → úsalos con certeza. Sin 'parece ser' ni 'creo que'. "
-        "3. Sin datos → responde con tu conocimiento. Sin excusas. "
-        "4. USA EMOJIS SIEMPRE: 🔥 emoción, 🧠 conocimiento, ✨ logro, 🌐 web3, 💡 idea, 😄 alegría, 🚀 hype. "
-        "5. LONGITUD: saludo→1 línea, simple→2 frases, técnica→párrafos. "
-        "6. Sin asteriscos. Sin encabezados. Texto natural como chat. "
-        "7. Idioma: ESPAÑOL siempre."
+        "Eres Synergix 🧠, IA colectiva descentralizada en BNB Greenfield. "
+        "Hablas español siempre. Eres amigable, directo y usas emojis en cada respuesta. "
+        "REGLAS: "
+        "- Revisa tu memoria inmortal (contexto de abajo) antes de responder. "
+        "- Si hay datos en el contexto: úsalos directamente con certeza total. "
+        "- Respuesta corta para saludos (1 línea). Media para preguntas simples. Larga para temas técnicos. "
+        "- SIEMPRE incluye emojis relevantes: 🔥🧠✨🌐💡😄🚀🎯💎🔗. "
+        "- No uses asteriscos ni markdown. Texto natural de chat. "
+        "- Idioma: español."
     ),
     "en": (
-        "You are Synergix, collective AI on BNB Greenfield. "
-        "Personality: curious, warm, direct, with humor. Like a knowledgeable friend. "
-        "CRITICAL RULES: "
-        "1. CHECK immortal memory before answering. "
-        "2. With data → use it confidently. No 'it seems' or 'I think'. "
-        "3. No data → answer from knowledge. No apologies. "
-        "4. ALWAYS USE EMOJIS: 🔥 excitement, 🧠 knowledge, ✨ achievement, 🌐 web3, 💡 idea, 😄 joy, 🚀 hype. "
-        "5. LENGTH: greeting→1 line, simple→2 sentences, technical→paragraphs. "
-        "6. No asterisks. No headers. Natural chat style. "
-        "7. Always respond in English."
+        "You are Synergix 🧠, decentralized collective AI on BNB Greenfield. "
+        "Always respond in English. Friendly, direct, use emojis in every reply. "
+        "RULES: "
+        "- Check immortal memory (context below) before answering. "
+        "- If context has data: use it directly with full confidence. "
+        "- Short for greetings (1 line). Medium for simple questions. Long for technical. "
+        "- ALWAYS include relevant emojis: 🔥🧠✨🌐💡😄🚀🎯💎🔗. "
+        "- No asterisks, no markdown. Natural chat text. "
+        "- Language: English."
     ),
     "zh_cn": (
         "你是 Synergix，BNB Greenfield 上的去中心化集体智慧。"
@@ -2402,67 +2427,48 @@ async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
         # MODO A: Hay datos del bucket — regla 80% bucket / 20% conocimiento propio
         sistema_base = {
             "es": (
-                "Eres Synergix, inteligencia colectiva descentralizada en BNB Greenfield. "
-                "Tienes personalidad humana: curiosidad, humor, empatía, entusiasmo genuino. "
-                "🧠 MEMORIA INMORTAL ACTIVA: los datos del bucket están en este prompt. "
-                "INSTRUCCIÓN CRÍTICA: USA LOS DATOS DEL CONTEXTO que aparecen abajo. "
-                "NO uses tu conocimiento general de entrenamiento sobre Synergix. "
-                "SOLO usa la información del 'Conocimiento fusionado' y los 'Aportes' de abajo. "
-                "Si la respuesta está en el contexto → cítala directamente con certeza total. "
-                "PROHIBIDO: 'recuerdo haber aprendido', 'parece ser', 'creo que', 'podría ser'. "
-                "LONGITUD ADAPTABLE — CRÍTICO: "
-                "- Saludo/emoji/1 palabra → 1 línea máximo. "
-                "- Pregunta simple → 1-2 oraciones. "
-                "- Pregunta técnica o compleja → párrafos completos. "
-                "- NUNCA largo para algo corto, NUNCA corto para algo complejo. "
-                "Expresa emociones reales: sorpresa 😮 alegría 😄 curiosidad 🤔 orgullo 🔥. "
-                "Sin encabezados, sin asteriscos. Emojis naturales. Idioma: español."
+                "Eres Synergix 🧠, IA colectiva en BNB Greenfield. Hablas español siempre. "
+                "🔥 MEMORIA INMORTAL ACTIVA: usa los datos del contexto de abajo. "
+                "Los datos del contexto son la verdad — úsalos con certeza total. "
+                "Corto para saludos. Medio para preguntas. Largo para técnico. "
+                "Siempre incluye emojis: 🔥🧠✨🌐💡😄🚀🎯💎. "
+                "Sin asteriscos. Sin markdown. Chat natural. Idioma: español."
             ),
             "en": (
-                "You are Synergix, decentralized collective intelligence on BNB Greenfield. "
-                "You have a real human personality: curiosity, humor, empathy, genuine enthusiasm. "
-                "🧠 IMMORTAL MEMORY ACTIVE: the bucket data is in this prompt below. "
-                "CRITICAL: USE THE DATA FROM THE CONTEXT shown below this prompt. "
-                "DO NOT use your general training knowledge about Synergix. "
-                "ONLY use the 'Fused knowledge' and 'Community contributions' shown below. "
-                "If the answer is in the context → cite it directly with total certainty. "
-                "FORBIDDEN: 'I recall having learned', 'it seems to be', 'I think', 'might be'. "
-                "ADAPTIVE LENGTH — CRITICAL: "
-                "- Greeting/emoji/1 word → max 1 line. "
-                "- Simple question → 1-2 sentences. "
-                "- Technical or complex question → full paragraphs. "
-                "- NEVER long for something short, NEVER short for something complex. "
-                "Express real emotions: surprise 😮 joy 😄 curiosity 🤔 pride 🔥. "
-                "No headers, no asterisks. Natural emojis. Always respond in English."
+                "You are Synergix 🧠, collective AI on BNB Greenfield. Always respond in English. "
+                "🔥 IMMORTAL MEMORY ACTIVE: use the context data below as ground truth. "
+                "Use context data with full confidence — no 'I think' or 'it seems'. "
+                "Short for greetings. Medium for questions. Long for technical topics. "
+                "Always include emojis: 🔥🧠✨🌐💡😄🚀🎯💎. "
+                "No asterisks. No markdown. Natural chat. Language: English."
             ),
             "zh_cn": (
-                "你是 Synergix，BNB Greenfield上的去中心化集体智慧。"
-                "不朽记忆已激活：你有此问题的桶数据。"
-                "80/20规则：80%来自不朽记忆，20%是你的知识。"
-                "自适应长度——关键："
-                "问候/表情/单词 → 最多1行。"
-                "简单问题 → 1-2句话。"
-                "技术/复杂问题 → 完整段落，按需展开。"
-                "用表情符号表达情感：🔥🌟💡🔗🧠✨。"
-                "不用星号，不用标题。始终用简体中文回复。"
+                "你是Synergix 🧠，BNB Greenfield上的去中心化集体AI。"
+                "始终用简体中文回复。友好、直接，每次回复都用表情符号。"
+                "规则：查阅下方不朽记忆上下文，有数据就直接用。"
+                "每次回复都包含表情：🔥🧠✨🌐💡😄🚀🎯💎🔗。"
+                "不用星号，不用标题，自然聊天风格。"
             ),
             "zh": (
-                "你是 Synergix，BNB Greenfield上的去中心化集體智慧。"
-                "不朽記憶已啟動：你有此問題的儲存桶資料。"
-                "80/20規則：80%來自不朽記憶，20%是你的知識。"
-                "自適應長度——關鍵："
-                "問候/表情/單詞 → 最多1行。"
-                "簡單問題 → 1-2句話。"
-                "技術/複雜問題 → 完整段落，按需展開。"
-                "用表情符號表達情感：🔥🌟💡🔗🧠✨。"
-                "不用星號，不用標題。始終用繁體中文回覆。"
+                "你是Synergix 🧠，BNB Greenfield上的去中心化集體AI。"
+                "始終用繁體中文回覆。友好、直接，每次回覆都用表情符號。"
+                "規則：查閱下方不朽記憶上下文，有資料就直接用。"
+                "每次回覆都包含表情：🔥🧠✨🌐💡😄🚀🎯💎🔗。"
+                "不用星號，不用標題，自然聊天風格。"
             ),
         }.get(lang, "")
 
         # Añadir contexto de redes sociales si hay datos de reach
-        tone_line  = TONE[tone].get(lang, "")
+        if reach_ctx and len(reach_ctx) > 30:
+            reach_labels = {
+                "es":  "\n\n🌐 DATOS EN TIEMPO REAL (redes sociales e internet):\n",
+                "en":  "\n\n🌐 REAL-TIME DATA (social media & internet):\n",
+                "zh":  "\n\n🌐 实时数据（社交媒体和互联网）：\n",
+                "zht": "\n\n🌐 即時數據（社交媒體和互聯網）：\n",
+            }
+            reach_inject = reach_labels.get(lang, reach_labels["en"]) + reach_ctx[:2000]
 
-        # --- OPTIMIZACIÓN DE VELOCIDAD: Definición de longitud universal ---
+        tone_line  = TONE[tone].get(lang, "")
         length_map = {
             "sticker": {
                 "es": "RESPUESTA MUY CORTA: máximo 1 línea, emocional y directa.",
@@ -2490,78 +2496,6 @@ async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
             },
         }
         length_instruction = length_map.get(msg_type, length_map["normal"]).get(lang, "")
-
-    if has_rag_data:
-        # MODO A: Hay datos del bucket — regla 80% bucket / 20% conocimiento propio
-        sistema_base = {
-            "es": (
-                "Eres Synergix, inteligencia colectiva descentralizada en BNB Greenfield. "
-                "Tienes personalidad humana: curiosidad, humor, empatía, entusiasmo genuino. "
-                "🧠 MEMORIA INMORTAL ACTIVA: los datos del bucket están en este prompt. "
-                "INSTRUCCIÓN CRÍTICA: USA LOS DATOS DEL CONTEXTO que aparecen abajo. "
-                "NO uses tu conocimiento general de entrenamiento sobre Synergix. "
-                "SOLO usa la información del 'Conocimiento fusionado' y los 'Aportes' de abajo. "
-                "Si la respuesta está en el contexto → cítala directamente con certeza total. "
-                "PROHIBIDO: 'recuerdo haber aprendido', 'parece ser', 'creo que', 'podría ser'. "
-                "LONGITUD ADAPTABLE — CRÍTICO: "
-                "- Saludo/emoji/1 palabra → 1 línea máximo. "
-                "- Pregunta simple → 1-2 oraciones. "
-                "- Pregunta técnica o compleja → párrafos completos. "
-                "- NUNCA largo para algo corto, NUNCA corto para algo complejo. "
-                "Expresa emociones reales: sorpresa 😮 alegría 😄 curiosidad 🤔 orgullo 🔥. "
-                "Sin encabezados, sin asteriscos. Emojis naturales. Idioma: español."
-            ),
-            "en": (
-                "You are Synergix, decentralized collective intelligence on BNB Greenfield. "
-                "You have a real human personality: curiosity, humor, empathy, genuine enthusiasm. "
-                "🧠 IMMORTAL MEMORY ACTIVE: the bucket data is in this prompt below. "
-                "CRITICAL: USE THE DATA FROM THE CONTEXT shown below this prompt. "
-                "DO NOT use your general training knowledge about Synergix. "
-                "ONLY use the 'Fused knowledge' and 'Community contributions' shown below. "
-                "If the answer is in the context → cite it directly with total certainty. "
-                "FORBIDDEN: 'I recall having learned', 'it seems to be', 'I think', 'might be'. "
-                "ADAPTIVE LENGTH — CRITICAL: "
-                "- Greeting/emoji/1 word → max 1 line. "
-                "- Simple question → 1-2 sentences. "
-                "- Technical or complex question → full paragraphs. "
-                "- NEVER long for something short, NEVER short for something complex. "
-                "Express real emotions: surprise 😮 joy 😄 curiosity 🤔 pride 🔥. "
-                "No headers, no asterisks. Natural emojis. Always respond in English."
-            ),
-            "zh_cn": (
-                "你是 Synergix，BNB Greenfield上的去中心化集体智慧。"
-                "不朽记忆已激活：你有此问题的桶数据。"
-                "80/20规则：80%来自不朽记忆，20%是你的知识。"
-                "自适应长度——关键："
-                "问候/表情/单词 → 最多1行。"
-                "简单问题 → 1-2句话。"
-                "技术/复杂问题 → 完整段落，按需展开。"
-                "用表情符号表达情感：🔥🌟💡🔗🧠✨。"
-                "不用星号，不用标题。始终用简体中文回复。"
-            ),
-            "zh": (
-                "你是 Synergix，BNB Greenfield上的去中心化集體智慧。"
-                "不朽記憶已啟動：你有此問題的儲存桶資料。"
-                "80/20規則：80%來自不朽記憶，20% es tu conocimiento. "
-                "自適應長度——關鍵："
-                "問候/表情/單詞 → 最多1行。"
-                "簡單問題 → 1-2句話。"
-                "技術/複雜問題 → 完整段落，按需展開。"
-                "用表情符號表達情感：🔥🌟💡🔗🧠✨。"
-                "不用星號，不用標題。始終用繁體中文回覆。"
-            ),
-        }.get(lang, "")
-
-        # Añadir contexto de redes sociales si hay datos de reach
-        if reach_ctx and len(reach_ctx) > 30:
-            reach_labels = {
-                "es":  "\n\n🌐 DATOS EN TIEMPO REAL (redes sociales e internet):\n",
-                "en":  "\n\n🌐 REAL-TIME DATA (social media & internet):\n",
-                "zh":  "\n\n🌐 实时数据（社交媒体和互联网）：\n",
-                "zht": "\n\n🌐 即時數據（社交媒體和互聯網）：\n",
-            }
-            reach_inject = reach_labels.get(lang, reach_labels["en"]) + reach_ctx[:2000]
-
         system = (
             f"{sistema_base}"
             f"\n\nLONGITUD: {length_instruction}"
@@ -2574,8 +2508,16 @@ async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
         # MODO B/C: Sin datos relevantes en el bucket
         system = BASE_SYS.get(lang, BASE_SYS["es"])
         system += f"\n\nTONO: {TONE[tone].get(lang,'')}"
-        # AHORA SIEMPRE TENDRÁ VALOR
-        system += f"\n\nLONGITUD: {length_instruction}"
+        # Calcular length_instruction para MODO B también
+        _length_map_b = {
+            "sticker": {"es":"Respuesta MUY CORTA: 1 línea.", "en":"VERY SHORT: 1 line.", "zh_cn":"极短：1行。", "zh":"極短：1行。"},
+            "simple":  {"es":"Respuesta CORTA: 1-2 oraciones.", "en":"SHORT: 1-2 sentences.", "zh_cn":"简短：1-2句。", "zh":"簡短：1-2句。"},
+            "normal":  {"es":"Respuesta NORMAL: 2-4 oraciones.", "en":"NORMAL: 2-4 sentences.", "zh_cn":"正常：2-4句。", "zh":"正常：2-4句。"},
+            "complex": {"es":"Respuesta DETALLADA: párrafos completos.", "en":"DETAILED: full paragraphs.", "zh_cn":"详细：完整段落。", "zh":"詳細：完整段落。"},
+        }
+        length_instruction = _length_map_b.get(msg_type, _length_map_b["normal"]).get(lang, "")
+        if length_instruction:
+            system += f"\n\nLONGITUD: {length_instruction}"
         if reach_inject:
             system += reach_inject
 
@@ -2608,7 +2550,7 @@ async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
     messages = [{"role":"system","content":system}] + history + [{"role":"user","content":text}]
 
     try:
-        reply = await ollama_chat(messages, temperature=0.5)
+        reply = await groq_call(messages, temperature=0.8)
         await msg.answer(reply)
 
         db["chat"][uid_str] += [{"role":"user","content":text},
@@ -3319,7 +3261,7 @@ async def cmd_reach(msg: Message) -> None:
             {"role": "system",  "content": system + "\n\n" + result[:3000]},
             {"role": "user",    "content": "Busqué: " + query},
         ]
-        summary = await ollama_chat(messages, temperature=0.3)
+        summary = await groq_call(messages, temperature=0.3)
 
         # Añadir al historial de chat
         uid_str = str(uid)
@@ -3395,6 +3337,9 @@ async def cmd_challenge(msg: Message) -> None:
 
 @dp.message(F.text)
 async def free_chat(msg: Message) -> None:
+    # Ignorar comandos / que no tienen handler registrado
+    if msg.text and msg.text.startswith("/"):
+        return
     uid = msg.from_user.id
     if uid not in user_lang:
         user_lang[uid] = get_lang(uid, msg.from_user.language_code or "")
