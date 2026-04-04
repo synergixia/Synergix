@@ -154,8 +154,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger("synergix.bot")
 
 TOKEN          = os.getenv("TELEGRAM_TOKEN", "")
-# ── Qwen 2.5-1.5B local — 100% soberano, sin APIs externas ──────────────────
-GROQ_API_KEY   = ""  # Eliminado — ya no existe
+# ── Qwen 2.5 local — 100% soberano, sin APIs externas ──────────────────
 OLLAMA_BASE    = os.getenv("OLLAMA_BASE",  "http://127.0.0.1:11434").rstrip("/")
 MODEL_CHAT     = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
 MODEL_FAST     = MODEL_CHAT
@@ -1158,65 +1157,48 @@ async def upload_brain_to_gf(wisdom: str) -> None:
 # OLLAMA — IA local Qwen 2.5 3B Q4_K_M (sin dependencia de APIs externas)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def groq_call(messages: list, model: str = MODEL_CHAT,
-                    temperature: float = 0.7, max_tokens: int = None) -> str:
+async def ollama_chat(messages: list, model: str = MODEL_CHAT,
+                    temperature: float = 0.3, max_tokens: int = None) -> str:
     """
-    Reemplaza groq_call — ahora llama a Ollama local (misma interfaz OpenAI).
-    Compatible con todo el código existente sin cambiar ninguna llamada.
+    Llamada NATIVA a Ollama API (/api/chat).
+    Optimizado para Hetzner usando 127.0.0.1.
     """
     import httpx
-    if max_tokens is None:
-        max_tokens = MAX_TOKENS_CHAT
     payload = {
-        "model":       model,
-        "messages":    messages,
-        "temperature": temperature,
-        "max_tokens":  max_tokens,
-        "stream":      False,
+        "model":    model,
+        "messages": messages,
+        "stream":   False,
         "options": {
-            "num_ctx":     2048,   # Contexto de 2K — equilibrio RAM/calidad
-            "num_thread":  2,      # 2 threads en CX22 (2 vCPU)
-            "repeat_penalty": 1.1, # Evitar repeticiones
+            "temperature": temperature,
+            "num_predict": max_tokens if max_tokens else 150,
+            "num_ctx":     2048,
+            "num_thread":  4
         }
     }
     async with httpx.AsyncClient(timeout=60) as client:
-        # VÍA NATIVA: Ollama es más estable en /api/chat que en /v1/...
-        resp = await client.post(
-            f"{OLLAMA_BASE}/api/chat",
-            json={
-                "model":    model,
-                "messages": messages,
-                "stream":   False,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                    "num_ctx":     2048,
-                    "num_thread":  4, # Aprovechando tus 4 núcleos
-                }
-            }
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("message", {}).get("content", "").replace("*", "").strip()
+        try:
+            # Usamos 127.0.0.1 para evitar problemas de IPv6/localhost
+            resp = await client.post(
+                "http://127.0.0.1:11434/api/chat",
+                json=payload
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("message", {}).get("content", "").replace("*", "").strip()
+        except Exception as e:
+            logger.error(f"❌ Error Ollama Nativo: {e}")
+            return "🔄 Sincronizando sabiduría... reintenta en un momento."
 
-
-async def groq_judge(content: str) -> dict:
-    """Evalúa un aporte con Qwen local. JSON estructurado."""
+async def ollama_judge(content: str) -> dict:
+    """Evalúa un aporte con el modelo local."""
     _json_fmt = '{"score":N,"reason":"short reason","category":"topic","knowledge_tag":"tag"}'
-    system = (
-        "You are a knowledge curator for Synergix. "
-        "Evaluate the contribution on originality, utility and clarity (1-10). "
-        f"Reply ONLY with valid JSON, nothing else: {_json_fmt}"
-    )
+    system = f"Reply ONLY with valid JSON: {_json_fmt}"
     try:
-        raw = await groq_call(
+        raw = await ollama_chat(
             [{"role":"system","content":system},
              {"role":"user","content":content[:500]}],
-            temperature=0.1,
-            max_tokens=MAX_TOKENS_JUDGE
+            temperature=0.1
         )
-        raw = raw.strip()
-        # Extraer JSON aunque el modelo añada texto extra
         import re
         json_match = re.search(r'\{.*?\}', raw, re.DOTALL)
         if json_match:
@@ -1225,20 +1207,17 @@ async def groq_judge(content: str) -> dict:
     except Exception:
         return {"score":6,"reason":"Auto-aprobado","category":"General","knowledge_tag":"general"}
 
-
-async def groq_summarize(content: str, lang: str = "es") -> str:
-    """Resume un aporte en máximo 15 palabras con Qwen local."""
-    prompts = {
-        "es":    "Resume en máximo 15 palabras. Solo texto plano sin puntuación extra.",
-        "en":    "Summarize in max 15 words. Plain text only.",
-        "zh_cn": "用最多15个字总结。仅纯文本。",
-        "zh":    "用最多15個字總結。純文字。",
-    }
+async def ollama_summarize(content: str, lang: str = "es") -> str:
+    """Resume un aporte usando Ollama local."""
+    prompt = "Resume en máximo 15 palabras. Solo texto plano."
     try:
-        return await groq_call(
-            [{"role":"system","content":prompts.get(lang, prompts["es"])},
+        return await ollama_chat(
+            [{"role":"system","content":prompt},
              {"role":"user","content":content[:600]}],
-            temperature=0.1,
+            temperature=0.1
+        )
+    except Exception:
+        return content[:100] + "..."
             max_tokens=MAX_TOKENS_SUM
         )
     except Exception:
@@ -2629,7 +2608,7 @@ async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
     messages = [{"role":"system","content":system}] + history + [{"role":"user","content":text}]
 
     try:
-        reply = await groq_call(messages, temperature=0.5)
+        reply = await ollama_chat(messages, temperature=0.5)
         await msg.answer(reply)
 
         db["chat"][uid_str] += [{"role":"user","content":text},
@@ -3340,7 +3319,7 @@ async def cmd_reach(msg: Message) -> None:
             {"role": "system",  "content": system + "\n\n" + result[:3000]},
             {"role": "user",    "content": "Busqué: " + query},
         ]
-        summary = await groq_call(messages, temperature=0.3)
+        summary = await ollama_chat(messages, temperature=0.3)
 
         # Añadir al historial de chat
         uid_str = str(uid)
