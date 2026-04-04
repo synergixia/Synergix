@@ -148,8 +148,8 @@ logger = logging.getLogger("synergix.bot")
 TOKEN          = os.getenv("TELEGRAM_TOKEN", "")
 # ── Qwen 2.5-1.5B local — 100% soberano, sin APIs externas ──────────────────
 GROQ_API_KEY   = ""  # Eliminado — ya no existe
-OLLAMA_BASE    = os.getenv("OLLAMA_BASE",  "http://localhost:11434")
-MODEL_CHAT     = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+OLLAMA_BASE    = os.getenv("OLLAMA_BASE",  "http://127.0.0.1:11434").rstrip("/")
+MODEL_CHAT     = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
 MODEL_FAST     = MODEL_CHAT
 MODEL_SLOW     = MODEL_CHAT
 MAX_TOKENS_CHAT  = int(os.getenv("MAX_TOKENS_CHAT",  "200"))   # Ajustado para velocidad

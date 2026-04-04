@@ -12,9 +12,9 @@ import time
 
 logger = logging.getLogger("synergix.local_ia")
 
-OLLAMA_BASE  = os.getenv("OLLAMA_BASE", "http://localhost:11434")
+OLLAMA_BASE  = os.getenv("OLLAMA_BASE", "http://127.0.0.1:11434").rstrip("/")
 # MOTOR ULTRALIGERO Y MULTILINGÜE
-OLLAMA_MODEL = "qwen2.5:0.5b"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
 
 # --- CONFIGURACIÓN DE ALTO RENDIMIENTO ---
 OPTIONS = {

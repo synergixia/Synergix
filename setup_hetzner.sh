@@ -12,7 +12,7 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 
 APP_DIR="${APP_DIR:-/root/Synergix}"
 BOT_SCRIPT="$APP_DIR/aisynergix/bot/bot.py"
-OLLAMA_MODEL="qwen2.5:1.5b"
+OLLAMA_MODEL="qwen2.5:0.5b"
 
 echo ""
 echo -e "${BLUE}╔═══════════════════════════════════════════════╗${NC}"
