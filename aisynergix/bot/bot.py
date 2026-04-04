@@ -12,13 +12,17 @@ Actualiza automáticamente:
 import asyncio
 import json
 import logging
+import os
+import sys
 
-# ── Motor IA local (Qwen 2.5-1.5B via Ollama) — reemplaza Groq completamente ─
+# ── Asegurar que el bot encuentre sus módulos (Aisynergix Package) ────────────
+# Esto permite que 'from aisynergix...' funcione bajo PM2 en Hetzner.
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+# ── Motor IA local (Qwen 2.5 0.5B via Ollama) — 100% Nativo Synergix ─────────
 from aisynergix.bot.local_ia import (
-    chat as _qwen_chat,
-    judge as _qwen_judge,
-    summarize as _qwen_summarize,
-    groq_call, groq_judge, groq_summarize,  # aliases legacy
     health as ollama_health_check,
     warmup as ollama_warmup,
     transcribe_audio,
