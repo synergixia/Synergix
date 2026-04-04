@@ -1236,19 +1236,6 @@ async def ollama_summarize(content: str, lang: str = "es") -> str:
         )
     except Exception:
         return content[:100] + "..."
-        "en":    "Summarize in max 15 words. Plain text only.",
-        "zh_cn": "用最多15个字总结。仅纯文本。",
-        "zh":    "用最多15個字總結。純文字。",
-    }
-    try:
-        return await groq_call(
-            [{"role":"system","content":prompts.get(lang, prompts["es"])},
-             {"role":"user","content":content[:600]}],
-            temperature=0.1,
-            max_tokens=MAX_TOKENS_SUM
-        )
-    except Exception:
-        return content[:60] + "..."
 
 
 async def ollama_health() -> bool:
