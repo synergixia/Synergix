@@ -1171,15 +1171,25 @@ async def groq_call(messages: list, model: str = MODEL_CHAT,
             "repeat_penalty": 1.1, # Evitar repeticiones
         }
     }
-    async with httpx.AsyncClient(timeout=60) as client:  # 60s — CPU es más lento
+    async with httpx.AsyncClient(timeout=60) as client:
+        # VÍA NATIVA: Ollama es más estable en /api/chat que en /v1/...
         resp = await client.post(
-            f"{OLLAMA_BASE}/v1/chat/completions",
-            json=payload,
-            headers={"Content-Type": "application/json"}
+            f"{OLLAMA_BASE}/api/chat",
+            json={
+                "model":    model,
+                "messages": messages,
+                "stream":   False,
+                "options": {
+                    "temperature": temperature,
+                    "num_predict": max_tokens,
+                    "num_ctx":     2048,
+                    "num_thread":  4, # Aprovechando tus 4 núcleos
+                }
+            }
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"].replace("*", "").strip()
+        return data.get("message", {}).get("content", "").replace("*", "").strip()
 
 
 async def groq_judge(content: str) -> dict:
