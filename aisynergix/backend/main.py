@@ -38,10 +38,10 @@ logging.basicConfig(
 logger = logging.getLogger("synergix.backend")
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DB_FILE = os.path.join(os.path.dirname(__file__), "..", "aisynergix", "data", "synergix_db.json")
+DB_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "synergix_db.json")
 FEDERATION_INTERVAL = 480  # 8 minutos
-OLLAMA_MODEL = "qwen2.5:1.5b"
-UPLOAD_JS_PATH = os.path.join(os.path.dirname(__file__), "..", "aisynergix", "backend", "upload.js")
+OLLAMA_MODEL = "qwen2.5:0.5b"
+UPLOAD_JS_PATH = os.path.join(os.path.dirname(__file__), "upload.js")
 
 
 # ── DB Local ──────────────────────────────────────────────────────────────────
@@ -354,7 +354,7 @@ async def chat_libre(data: ChatMsg):
         )
     except Exception as exc:
         logger.warning("⚠️ RAG injection error: %s", exc)
-        enriched_system = get_base_system(data.lang)
+        enriched_system = IDENTITY.get(data.lang, IDENTITY["es"])
 
     if tone_instr:
         enriched_system += f"\n\nTONO: {tone_instr}"

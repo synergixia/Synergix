@@ -30,7 +30,7 @@ import httpx
 logger = logging.getLogger("synergix.ia")
 
 # ── Config desde .env ─────────────────────────────────────────────────────────
-OLLAMA_BASE  = os.environ.get("OLLAMA_BASE",  "http://localhost:11434")
+OLLAMA_BASE  = os.environ.get("OLLAMA_BASE",  "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:0.5b")
 
 MAX_TOKENS_CHAT  = int(os.environ.get("MAX_TOKENS_CHAT",  "400"))

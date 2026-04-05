@@ -151,7 +151,7 @@ logger = logging.getLogger("synergix.bot")
 TOKEN          = os.getenv("TELEGRAM_TOKEN", "")
 # ── Qwen 2.5-1.5B local — 100% soberano, sin APIs externas ──────────────────
 GROQ_API_KEY   = ""  # Eliminado — ya no existe
-OLLAMA_BASE    = os.getenv("OLLAMA_BASE",  "http://localhost:11434")
+OLLAMA_BASE    = os.getenv("OLLAMA_BASE",  "http://127.0.0.1:11434")
 MODEL_CHAT     = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
 MODEL_FAST     = MODEL_CHAT
 MODEL_SLOW     = MODEL_CHAT
@@ -1183,18 +1183,15 @@ async def groq_call(messages: list, model: str = MODEL_CHAT,
     import httpx
     if max_tokens is None:
         max_tokens = MAX_TOKENS_CHAT
+        
     payload = {
         "model":       model,
         "messages":    messages,
         "temperature": temperature,
         "max_tokens":  max_tokens,
-        "stream":      False,
-        "options": {
-            "num_ctx":     2048,   # Contexto de 2K — equilibrio RAM/calidad
-            "num_thread":  2,      # 2 threads en CX22 (2 vCPU)
-            "repeat_penalty": 1.1, # Evitar repeticiones
-        }
+        "stream":      False
     }
+    
     async with httpx.AsyncClient(timeout=45) as client:
         resp = await client.post(
             f"{OLLAMA_BASE}/v1/chat/completions",
@@ -1202,8 +1199,8 @@ async def groq_call(messages: list, model: str = MODEL_CHAT,
             headers={"Content-Type": "application/json"}
         )
         if resp.status_code == 404:
-            # Modelo no encontrado — intentar sin sufijo de cuantización
-            payload["model"] = MODEL_CHAT.split(":")[0]
+            # Fallback si el modelo exacto no se encuentra, intentar con la base
+            payload["model"] = model.split(":")[0]
             resp = await client.post(
                 f"{OLLAMA_BASE}/v1/chat/completions",
                 json=payload,
