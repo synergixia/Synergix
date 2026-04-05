@@ -1,4 +1,3 @@
-# bot/bot.py
 """
 Synergix Bot - Producción Completa con Sincronización Greenfield.
 Actualiza automáticamente:
@@ -28,7 +27,6 @@ from aisynergix.bot.local_ia import (
     warmup as ollama_warmup,
     transcribe_audio,
 )
-
 # ── Configuración de paths y prompts ─────────────────────────────────────────
 from aisynergix.config.paths import GF, DB_FILE as _DB_FILE, UPLOAD_JS as _UPLOAD_JS
 from aisynergix.config.system_prompts import build_system_prompt
@@ -162,10 +160,10 @@ MAX_TOKENS_JUDGE = int(os.getenv("MAX_TOKENS_JUDGE", "120"))
 MAX_TOKENS_SUM   = int(os.getenv("MAX_TOKENS_SUM",   "60"))
 # En HF Spaces el WORKDIR es /app — la DB vive siempre en /app/data/
 DB_FILE = os.path.join(
-    os.getenv("DATA_DIR", os.path.join(BASE_DIR, "aisynergix", "data")),
+    os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data")),
     "synergix_db.json"
 )
-UPLOAD_JS      = os.path.join(BASE_DIR, "aisynergix", "backend", "upload.js")
+UPLOAD_JS      = os.path.join(BASE_DIR, "backend", "upload.js")
 CTX_MAX        = 20
 MIN_CHARS      = 20
 
@@ -765,13 +763,13 @@ uploadToGreenfield(content, '{uid}', '{object_name_esc}', meta)
             "DOTENV_BACKEND": os.path.join(BASE_DIR, "backend", ".env"),
             "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env"),
             # NODE_PATH garantiza que node encuentre dotenv y el SDK de Greenfield
-            "NODE_PATH": os.path.join(BASE_DIR, "node_modules"),
+            "NODE_PATH": os.path.join(os.path.dirname(BASE_DIR), "node_modules"),
         }
         res = subprocess.run(
             ["node", "-e", node_script],
             capture_output=True, text=True, timeout=120,
             env=node_env,
-            cwd=BASE_DIR,   # ejecutar desde la raíz del proyecto
+            cwd=os.path.dirname(BASE_DIR),  # /root/Synergix/ donde está package.json
         )
         if os.path.exists(tmp_path): os.remove(tmp_path)
 
@@ -911,7 +909,7 @@ client.object.headObject(bucket, 'users/{uid_str}')
         res = subprocess.run(
             ["node", "-e", node_script],
             capture_output=True, text=True, timeout=15,
-            env=node_env_h, cwd=BASE_DIR,
+            env=node_env_h, cwd=os.path.dirname(BASE_DIR),
         )
         for line in res.stdout.split("\n"):
             if line.startswith("__HEAD__:"):
@@ -1004,13 +1002,13 @@ client.object.headObject(bucket, '{obj_esc}')
     node_env = {**os.environ,
                 "DOTENV_BACKEND": os.path.join(BASE_DIR, "backend", ".env"),
                 "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env"),
-            "NODE_PATH": os.path.join(BASE_DIR, "node_modules"),
+            "NODE_PATH": os.path.join(os.path.dirname(BASE_DIR), "node_modules"),
         }
     try:
         res = subprocess.run(
             ["node", "-e", script],
             capture_output=True, text=True, timeout=15,
-            env=node_env, cwd=BASE_DIR,
+            env=node_env, cwd=os.path.dirname(BASE_DIR),
         )
         for line in res.stdout.split("\n"):
             if line.startswith("__HEAD__:"):
@@ -1197,50 +1195,68 @@ async def groq_call(messages: list, model: str = MODEL_CHAT,
             "repeat_penalty": 1.1, # Evitar repeticiones
         }
     }
-    async with httpx.AsyncClient(timeout=45) as client:  # 45s para 0.5b (más rápido)
+    async with httpx.AsyncClient(timeout=45) as client:
         resp = await client.post(
             f"{OLLAMA_BASE}/v1/chat/completions",
             json=payload,
             headers={"Content-Type": "application/json"}
         )
+        if resp.status_code == 404:
+            # Modelo no encontrado — intentar sin sufijo de cuantización
+            payload["model"] = MODEL_CHAT.split(":")[0]
+            resp = await client.post(
+                f"{OLLAMA_BASE}/v1/chat/completions",
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"].replace("*", "").strip()
 
 
-async def ollama_judge(content: str) -> dict:
-    """Evalúa un aporte con el modelo local Synergix 0.5b."""
+async def groq_judge(content: str) -> dict:
+    """Evalúa un aporte con Qwen local. JSON estructurado."""
     _json_fmt = '{"score":N,"reason":"short reason","category":"topic","knowledge_tag":"tag"}'
-    system = f"Reply ONLY with valid JSON: {_json_fmt}"
+    system = (
+        "You are a knowledge curator for Synergix. "
+        "Evaluate the contribution on originality, utility and clarity (1-10). "
+        f"Reply ONLY with valid JSON, nothing else: {_json_fmt}"
+    )
     try:
-        raw = await ollama_chat(
+        raw = await groq_call(
             [{"role":"system","content":system},
              {"role":"user","content":content[:500]}],
             temperature=0.1,
             max_tokens=MAX_TOKENS_JUDGE
         )
+        raw = raw.strip()
+        # Extraer JSON aunque el modelo añada texto extra
         import re
         json_match = re.search(r'\{.*?\}', raw, re.DOTALL)
         if json_match:
-            import json
             return json.loads(json_match.group())
-        return {"score":6,"reason":"Auto-aprobado","category":"General","knowledge_tag":"general"}
+        return json.loads(raw)
     except Exception:
         return {"score":6,"reason":"Auto-aprobado","category":"General","knowledge_tag":"general"}
 
 
-async def ollama_summarize(content: str, lang: str = "es") -> str:
-    """Resume un aporte usando Ollama local Synergix 0.5b."""
-    prompt = "Resume en máximo 15 palabras. Solo texto plano."
+async def groq_summarize(content: str, lang: str = "es") -> str:
+    """Resume un aporte en máximo 15 palabras con Qwen local."""
+    prompts = {
+        "es":    "Resume en máximo 15 palabras. Solo texto plano sin puntuación extra.",
+        "en":    "Summarize in max 15 words. Plain text only.",
+        "zh_cn": "用最多15个字总结。仅纯文本。",
+        "zh":    "用最多15個字總結。純文字。",
+    }
     try:
-        return await ollama_chat(
-            [{"role":"system","content":prompt},
+        return await groq_call(
+            [{"role":"system","content":prompts.get(lang, prompts["es"])},
              {"role":"user","content":content[:600]}],
             temperature=0.1,
             max_tokens=MAX_TOKENS_SUM
         )
     except Exception:
-        return content[:100] + "..."
+        return content[:60] + "..."
 
 
 async def ollama_health() -> bool:
@@ -1812,13 +1828,13 @@ if (!pk.startsWith('0x')) pk = '0x' + pk;
     node_env = {**os.environ,
                 "DOTENV_BACKEND": os.path.join(BASE_DIR, "backend", ".env"),
                 "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env"),
-            "NODE_PATH": os.path.join(BASE_DIR, "node_modules"),
+            "NODE_PATH": os.path.join(os.path.dirname(BASE_DIR), "node_modules"),
         }
     try:
         res = subprocess.run(
             ["node", "-e", script],
             capture_output=True, text=True,
-            timeout=30, env=node_env, cwd=BASE_DIR,
+            timeout=30, env=node_env, cwd=os.path.dirname(BASE_DIR),
         )
         for line in res.stdout.split("\n"):
             if line.startswith("__RESULT__:"):
@@ -1975,7 +1991,7 @@ const bucket = process.env.GF_BUCKET || 'synergixai';
         node_env = {**os.environ,
                     "DOTENV_BACKEND": os.path.join(BASE_DIR, "backend", ".env"),
                     "DOTENV_ROOT":    os.path.join(BASE_DIR, ".env"),
-            "NODE_PATH": os.path.join(BASE_DIR, "node_modules"),
+            "NODE_PATH": os.path.join(os.path.dirname(BASE_DIR), "node_modules"),
         }
         try:
             loop = asyncio.get_running_loop()
