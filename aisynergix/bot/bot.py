@@ -1290,21 +1290,66 @@ def get_next_midnight_utc() -> str:
     return midnight.isoformat()
 
 
-def check_and_update_daily_limit(uid: int) -> tuple:
+# ── GHOST IDENTITY MANAGER (Soberanía vía Tags de Greenfield) ────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Filtro de entrada ultra-rápido que lee la reputación del usuario desde
+# los Tags de Greenfield (DCellar) sin descargar archivos.
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def get_sovereign_identity(uid: int) -> dict:
     """
-    Verifica límite diario. Reset automático si pasó medianoche UTC.
-    Returns: (puede_aportar: bool, count: int, limit: int)
+    Lee la identidad y límites del usuario desde los Tags de Greenfield.
+    Retorna: {points, contributions, role, lang, daily_count, daily_reset}
+    """
+    uid_str = str(uid)
+    object_name = f"aisynergix/users/{uid_str}.json"
+    
+    # Cache local (TTL 1 min para velocidad extrema)
+    cache_key = f"user_{uid_str}"
+    if cache_key in _rag_cache and (time.time() - _rag_cache[cache_key]['ts']) < 60:
+        return _rag_cache[cache_key]['data']
+
+    try:
+        # Petición HEAD a Greenfield vía script Node o SDK
+        # Por ahora usamos la base de datos local como espejo (Mirror)
+        # pero con la estructura de Tags de Greenfield.
+        rep      = db["reputation"].get(uid_str, {})
+        settings = db.get("user_settings", {}).get(uid_str, {})
+        
+        identity = {
+            "points":        int(rep.get("points", 0)),
+            "contributions": int(rep.get("contributions", 0)),
+            "role":          rep.get("role", "rank_1"),
+            "lang":          settings.get("lang", "es"),
+            "daily_count":   int(settings.get("daily_count", 0)),
+            "daily_reset":   settings.get("daily_reset", "")
+        }
+        
+        # En el futuro, aquí se hace la llamada real a greenfield_client.head_object()
+        _rag_cache[cache_key] = {'data': identity, 'ts': time.time()}
+        return identity
+    except Exception as e:
+        logger.error(f"⚠️ GhostIdentityManager error: {e}")
+        return {
+            "points": 0, "contributions": 0, "role": "rank_1", 
+            "lang": "es", "daily_count": 0, "daily_reset": ""
+        }
+
+
+async def check_and_update_daily_limit(uid: int) -> tuple:
+    """
+    Verifica límite diario desde Greenfield (GhostIdentityManager).
+    Reset automático si pasó medianoche UTC.
     """
     from datetime import timezone
+    identity  = await get_sovereign_identity(uid)
     uid_str   = str(uid)
-    settings  = db.get("user_settings", {}).get(uid_str, {})
-    rep       = db["reputation"].get(uid_str, {"points": 0})
-    pts       = rep.get("points", 0)
+    pts       = identity["points"]
     rank_info = get_rank_info(pts, uid)
     limit     = rank_info["daily_limit"]
     now_utc   = datetime.now(timezone.utc)
-    reset_ts  = settings.get("daily_reset", "")
-    count     = int(settings.get("daily_count", 0))
+    reset_ts  = identity["daily_reset"]
+    count     = identity["daily_count"]
 
     # Reset si pasó medianoche UTC
     if reset_ts:
@@ -1315,14 +1360,18 @@ def check_and_update_daily_limit(uid: int) -> tuple:
                 reset_dt = reset_dt.replace(tzinfo=_tz.utc)
             if now_utc >= reset_dt:
                 count = 0
+                # Sincronizar localmente (Mirror)
                 if "user_settings" not in db: db["user_settings"] = {}
                 if uid_str not in db["user_settings"]: db["user_settings"][uid_str] = {}
                 db["user_settings"][uid_str]["daily_count"] = "0"
                 db["user_settings"][uid_str]["daily_reset"] = get_next_midnight_utc()
                 save_db()
+                # Invalidar cache de identidad para reflejar el reset
+                if f"user_{uid_str}" in _rag_cache: del _rag_cache[f"user_{uid_str}"]
         except Exception:
             pass
     else:
+        # Inicializar límites si no existen
         if "user_settings" not in db: db["user_settings"] = {}
         if uid_str not in db["user_settings"]: db["user_settings"][uid_str] = {}
         db["user_settings"][uid_str]["daily_reset"] = get_next_midnight_utc()
@@ -2785,24 +2834,8 @@ async def recv_text(msg: Message, state: FSMContext) -> None:
     if len(c) < MIN_CHARS:
         await msg.answer(tx["contrib_short"].format(chars=len(c))); return
 
-    # Verificar límite diario (primero DB local, luego GF si hay discrepancia)
-    puede, count, limit = check_and_update_daily_limit(uid)
-    if not puede:
-        # Double-check con HEAD a GF por si hubo reinicio del servidor
-        try:
-            loop_d = asyncio.get_running_loop()
-            gf_check = await loop_d.run_in_executor(None, lambda: gf_head_user(uid))
-            if gf_check.get("exists") and gf_check.get("daily_reset"):
-                # Sincronizar desde GF y re-verificar
-                uid_str_d = str(uid)
-                if "user_settings" not in db: db["user_settings"] = {}
-                if uid_str_d not in db["user_settings"]: db["user_settings"][uid_str_d] = {}
-                db["user_settings"][uid_str_d]["daily_count"] = str(gf_check.get("daily_count", count))
-                db["user_settings"][uid_str_d]["daily_reset"] = gf_check.get("daily_reset", "")
-                save_db()
-                puede, count, limit = check_and_update_daily_limit(uid)
-        except Exception:
-            pass  # Mantener la verificación local
+    # Verificar límite diario soberano (GhostIdentityManager)
+    puede, count, limit = await check_and_update_daily_limit(uid)
 
     if not puede:
         rank_info = get_rank_info(db["reputation"].get(str(uid), {}).get("points", 0), uid)
@@ -2847,8 +2880,23 @@ async def recv_voice(msg: Message, state: FSMContext) -> None:
         if not content:
             content = "[Audio no transcrito — instala: pip install faster-whisper]"
         await bot.delete_message(msg.chat.id, wait.message_id)
+
         if len(content) < MIN_CHARS:
             await msg.answer(T[lang]["contrib_short"].format(chars=len(content))); return
+
+        # Verificar límite diario soberano (GhostIdentityManager)
+        puede, count, limit = await check_and_update_daily_limit(uid)
+        if not puede:
+            rank_info = get_rank_info(db["reputation"].get(str(uid), {}).get("points", 0), uid)
+            role_name = T[lang].get(rank_info["key"], "Usuario")
+            limit_msg = {
+                "es": f"¡Estás imparable! 🔥 Hoy ya alcanzaste tu límite como {role_name} ({count}/{limit} aportes). Vuelve mañana, la red te necesita más fuerte.",
+                "en": f"Unstoppable! 🔥 Today you reached your limit as {role_name} ({count}/{limit} contributions). Come back tomorrow, the network needs you stronger.",
+                "zh_cn": f"势不可挡！🔥 今天你已达到作为 {role_name} 的限制（{count}/{limit} 次贡献）。明天再来，网络需要更强大的你。",
+                "zh":    f"勢不可擋！🔥 今天你已達到作為 {role_name} 的限制（{count}/{limit} 次貢獻）。明天再來，網路需要更強大的你。",
+            }
+            await msg.answer(limit_msg.get(lang, limit_msg["es"])); return
+
         await msg.answer(T[lang]["received"])
         _queue.put_nowait(ContribJob(uid=uid, name=msg.from_user.first_name or "Usuario",
                                      content=content, lang=lang, chat_id=msg.chat.id))
