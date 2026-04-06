@@ -2426,8 +2426,11 @@ async def _update_impact_in_gf(uid_str: str, obj_name: str, meta: dict) -> None:
 async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
     uid     = msg.from_user.id
     uid_str = str(uid)
-    lang    = user_lang.get(uid, "es")
-    pts_u   = db["reputation"].get(uid_str, {}).get("points", 0)
+    
+    # ── SOBERANÍA: Identidad desde Greenfield (GhostIdentityManager) ──────────
+    identity = await get_sovereign_identity(uid)
+    lang     = identity["lang"]
+    pts_u    = identity["points"]
     rank_info = get_rank_info(pts_u, uid)
 
     tone     = detect_tone(text)

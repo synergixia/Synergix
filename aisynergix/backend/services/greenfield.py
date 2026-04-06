@@ -65,10 +65,32 @@ class GreenfieldClient:
         return {"status": "success", "path": path}
 
     async def increment_points(self, uid: str, amount: int = 1):
-        """Incrementa puntos directamente en los Tags del perfil."""
-        # 1. Leer perfil actual (Tags)
-        # 2. Actualizar localmente
-        # 3. Subir de nuevo
-        pass
+        """
+        Incrementa puntos directamente en los Tags de Greenfield.
+        Es la 'Regalía' barata del RAG.
+        """
+        try:
+            # 1. Obtener puntos actuales vía HEAD
+            meta = await self.head_object(f"aisynergix/users/{uid}.json")
+            current_pts = int(meta.get("meta", {}).get("points", 0))
+            new_pts = current_pts + amount
+
+            # 2. Actualizar solo los Tags (MsgSetTag)
+            js_esc = UPLOAD_JS.replace("'", "\\'")
+            cmd = [
+                "node", "-e",
+                f"const {{ updateObjectTags }} = require('{js_esc}'); "
+                f"updateObjectTags('aisynergix/users/{uid}.json', {{ points: '{new_pts}' }}) "
+                f".then(r => console.log('__RESULT__:' + JSON.stringify(r))) "
+                f".catch(e => process.exit(1));"
+            ]
+            
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            await proc.communicate()
+            logger.info(f"🌟 Regalía otorgada a {uid}: +{amount} pts (Total: {new_pts})")
+        except Exception as e:
+            logger.error(f"⚠️ Error incrementando puntos: {e}")
 
 greenfield_client = GreenfieldClient()
