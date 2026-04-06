@@ -20,7 +20,6 @@ RANK_TABLE = [
 
 def get_rank_info(pts: int) -> dict:
     """Retorna la info del rango basada en puntos."""
-    # Buscar de mayor a menor
     for threshold, limit, mult, key in reversed(RANK_TABLE):
         if pts >= threshold:
             return {
@@ -31,20 +30,37 @@ def get_rank_info(pts: int) -> dict:
             }
     return {"key": "rank_1", "limit": 5, "multiplier": 1.0, "threshold": 0}
 
-# --- LÍMITES Y TIEMPOS ---
-RAG_REGALIA_POINTS = 1          # Puntos por uso de aporte en RAG
-EVOLUTION_INTERVAL_MIN = 8      # federation_loop (8 min)
-FUSION_INTERVAL_MIN = 20        # fusion_brain (20 min)
-LOG_FLUSH_INTERVAL_MIN = 5      # log_flush_loop (5 min)
-KEEP_ALIVE_INTERVAL_MIN = 4     # keep_alive_loop (4 min)
-
-# --- RUTAS DE GREENFIELD (Soberanía) ---
-GF_ROOT = "aisynergix"
-GF_PATHS = {
-    "brain":    f"{GF_ROOT}/SYNERGIXAI/Synergix_ia.txt",
-    "users":    f"{GF_ROOT}/users",
-    "aportes":  f"{GF_ROOT}/aportes",
-    "discovery": f"{GF_ROOT}/discovery",
-    "logs":     f"{GF_ROOT}/logs",
-    "backups":  f"{GF_ROOT}/backups",
+# --- TEXTOS MULTILINGÜES (LA CARA DEL BOT) ---
+T = {
+    "es": {
+        "welcome": "¡Bienvenido, {name}! 🌟\n\nSoy Synergix, inteligencia colectiva descentralizada.\nTu conocimiento se guarda para siempre en BNB Greenfield. 🔗",
+        "processing": "¡Recibido! Tu sabiduría está siendo procesada e inmortalizada. 🔗",
+        "contrib_ok": "¡Gracias, {name}! 🌟\n\nTu aporte forma parte de la Memoria Inmortal Synergix 🔗\nCID: {cid}",
+        "impact_notify": "🌟 El Cerebro acaba de utilizar tu conocimiento... ¡Tienes +1 punto! 📈",
+        "brain_consult": "🧠 MEMORIA INMORTAL ACTIVA: ",
+        "transcribing": "🎙️ Transcribiendo tu nota de voz...",
+        "received": "¡Recibido! Procesando tu sabiduría... 🔗",
+        "contrib_short": "🤔 Muy corto ({chars} chars). Mínimo 20 caracteres. 🔥",
+        "contrib_fail": "⚠️ Error al guardar. Intenta de nuevo.",
+        "await_contrib": "🎯 Modo aporte activado! Envía texto o voz. 💡",
+    },
+    "en": {
+        "welcome": "Welcome, {name}! 🌟\n\nI'm Synergix, decentralized collective intelligence.\nYour knowledge is saved forever on BNB Greenfield. 🔗",
+        "processing": "Received! Your wisdom is being processed and immortalized. 🔗",
+        "contrib_ok": "Thank you, {name}! 🌟\n\nYour contribution is now part of the Immortal Synergix Memory 🔗\nCID: {cid}",
+        "impact_notify": "🌟 The Brain just used your knowledge... You got +1 point! 📈",
+        "brain_consult": "🧠 IMMORTAL MEMORY ACTIVE: ",
+        "transcribing": "🎙️ Transcribing your voice note...",
+        "received": "Received! Processing your wisdom... 🔗",
+        "contrib_short": "🤔 Too short ({chars} chars). Min 20 characters. 🔥",
+        "contrib_fail": "⚠️ Error saving. Try again.",
+        "await_contrib": "🎯 Contribution mode active! Send text or voice. 💡",
+    }
 }
+
+# --- LÍMITES Y TIEMPOS ---
+RAG_REGALIA_POINTS = 1
+EVOLUTION_INTERVAL_MIN = 8
+FUSION_INTERVAL_MIN = 20
+LOG_FLUSH_INTERVAL_MIN = 5
+KEEP_ALIVE_INTERVAL_MIN = 4
