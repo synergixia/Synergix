@@ -14,25 +14,40 @@ class GF:
     DISCOVERY   = f"{GF_ROOT}/discovery"
     LOGS_DIR    = f"{GF_ROOT}/logs"
     BACKUPS_DIR = f"{GF_ROOT}/backups"
+    DB_DIR      = f"{GF_ROOT}/data"
     
     BRAIN_FILE  = f"{BRAIN_DIR}/Synergix_ia.txt"
 
     @staticmethod
-    def user_path(uid: str) -> str:
+    def user(uid: str) -> str:
         return f"{GF.USERS_DIR}/{uid}.json"
 
     @staticmethod
-    def aporte_path(uid: str, ts: int) -> str:
-        month = datetime.now().strftime("%Y-%m")
+    def aporte(month: str, uid: str, ts: int) -> str:
         return f"{GF.APORTES_DIR}/{month}/{uid}_{ts}.txt"
+
+    @staticmethod
+    def brain_versioned(timestamp: str) -> str:
+        return f"{GF.BRAIN_DIR}/Synergix_ia_{timestamp}.txt"
+
+    @staticmethod
+    def log(date: str) -> str:
+        return f"{GF.LOGS_DIR}/{date}_events.log"
+
+    @staticmethod
+    def backup(timestamp: str) -> str:
+        return f"{GF.BACKUPS_DIR}/snapshot_{timestamp}.bak"
+
+    @staticmethod
+    def db_versioned(timestamp: str) -> str:
+        return f"{GF.DB_DIR}/synergix_db_{timestamp}.json"
 
 # --- LOCAL REPOSITORY STRUCTURE ---
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# Raíz del repo: synergix/
-REPO_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
+AISYNERGIX  = os.path.abspath(os.path.join(_HERE, ".."))
+REPO_ROOT   = os.path.abspath(os.path.join(AISYNERGIX, ".."))
 
-AISYNERGIX  = os.path.join(REPO_ROOT, "aisynergix")
-DATA_LOCAL  = os.path.join(AISYNERGIX, "data") # Carpeta para persistencia local
+DATA_LOCAL  = os.path.join(AISYNERGIX, "data")
 SYNERGIXAI  = os.path.join(AISYNERGIX, "SYNERGIXAI")
 LOGS_LOCAL  = os.path.join(AISYNERGIX, "logs")
 

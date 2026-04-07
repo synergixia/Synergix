@@ -1,91 +1,67 @@
-version: "3.9"
-
-# ── Synergix — docker-compose.yml ─────────────────────────────────────────────
-# Levanta el bot + Ollama automáticamente en Hetzner.
-#
-# Uso:
-#   docker compose up -d          # Arrancar todo
-#   docker compose logs -f bot    # Ver logs del bot
-#   docker compose restart bot    # Reiniciar solo el bot
-#   docker compose down           # Detener todo
-#
-# IMPORTANTE: copiar .env.example → .env y rellenar las variables antes de arrancar.
-
 services:
-
-  # ── Ollama — motor de IA local (Qwen 2.5-1.5B) ───────────────────────────────
-  ollama:
-    image: ollama/ollama:latest
-    container_name: synergix_ollama
-    restart: unless-stopped
+  # ── MOTOR DE IA: PENSADOR (1.5B) ──
+  ia-pensador:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: synergix-ia-pensador
     volumes:
-      - ollama_models:/root/.ollama     # Modelos persistentes entre reinicios
+      - ../qwen2.5-1.5b-instruct-q4_k_m.gguf:/models/model.gguf
     ports:
-      - "127.0.0.1:11434:11434"         # Solo accesible localmente
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-    environment:
-      - OLLAMA_KEEP_ALIVE=24h           # Mantener modelo en RAM
-      - OLLAMA_NUM_PARALLEL=1           # 1 request a la vez (4GB RAM)
-    # Descomenta si tienes GPU NVIDIA:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+      - "8080:8080"
+    command: ["-m", "/models/model.gguf", "--host", "0.0.0.0", "--port", "8080", "--threads", "2", "--ctx-size", "2048"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
 
-  # ── Synergix Bot ──────────────────────────────────────────────────────────────
-  bot:
+  # ── MOTOR DE IA: JUEZ (0.5B) ──
+  ia-juez:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: synergix-ia-juez
+    volumes:
+      - ../qwen2.5-0.5b-instruct-q8_0.gguf:/models/model.gguf
+    ports:
+      - "8081:8081"
+    command: ["-m", "/models/model.gguf", "--host", "0.0.0.0", "--port", "8081", "--threads", "2", "--ctx-size", "512"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 600M
+
+  # ── SYNERGIX BOT ──
+  synergix-bot:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: synergix_bot
-    restart: unless-stopped
+    container_name: synergix-bot
     depends_on:
-      ollama:
-        condition: service_healthy
-    env_file:
-      - ../.env
+      - ia-pensador
+      - ia-juez
+    env_file: ../.env
     environment:
-      - OLLAMA_BASE=http://ollama:11434
-      - OLLAMA_MODEL=qwen2.5:1.5b
-      - PYTHONPATH=/app
-      - MAX_TOKENS_CHAT=400
-      - MAX_TOKENS_JUDGE=150
-      - MAX_TOKENS_SUM=60
+      - OLLAMA_BASE=http://ia-pensador:8080
+      - URL_JUEZ=http://ia-juez:8081
     volumes:
-      - synergix_data:/app/aisynergix/data       # DB local persistente
-      - synergix_logs:/app/aisynergix/logs       # Logs persistentes
-      - synergix_brain:/app/aisynergix/SYNERGIXAI # Cerebro local
-    ports:
-      - "8080:8080"                              # Webhook interno
-    healthcheck:
-      test: ["CMD", "python", "-c",
-             "import httpx; httpx.get('http://localhost:8080/health', timeout=5)"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
-    command: >
-      sh -c "
-        echo '🔥 Descargando Qwen 2.5-1.5B si no existe...' &&
-        curl -s http://ollama:11434/api/pull -d '{\"name\":\"qwen2.5:1.5b\"}' || true &&
-        echo '🚀 Iniciando Synergix bot...' &&
-        python aisynergix/bot/bot.py
-      "
+      - ../aisynergix/data:/app/aisynergix/data
+      - ../aisynergix/logs:/app/aisynergix/logs
+    command: ["python3", "aisynergix/bot/bot.py"]
+    restart: unless-stopped
 
-volumes:
-  ollama_models:
-    name: synergix_ollama_models
-  synergix_data:
-    name: synergix_data
-  synergix_logs:
-    name: synergix_logs
-  synergix_brain:
-    name: synergix_brain
+  # ── SYNERGIX BACKEND ──
+  synergix-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: synergix-backend
+    depends_on:
+      - ia-pensador
+    env_file: ../.env
+    environment:
+      - OLLAMA_BASE=http://ia-pensador:8080
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../aisynergix/data:/app/aisynergix/data
+    command: ["uvicorn", "aisynergix.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
