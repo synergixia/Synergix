@@ -1,0 +1,20 @@
+# Ignorar modelos pesados (se montan por volumen)
+*.gguf
+*.bin
+*.deb
+*.zip
+*.tar.gz
+
+# Ignorar datos y logs locales
+aisynergix/data/
+aisynergix/logs/
+aisynergix/SYNERGIXAI/
+
+# Ignorar entornos y dependencias locales
+venv/
+synergix_venv/
+node_modules/
+.git/
+.cache/
+__pycache__/
+*.pyc

@@ -1,13 +1,12 @@
 {
   "name": "synergix",
-  "version": "2.0.0",
-  "description": "Decentralized collective AI on BNB Greenfield — Qwen 2.5-1.5B local",
-  "main": "aisynergix/backend/upload.js",
+  "version": "3.0.0",
+  "description": "Primera IA con Memoria Inmortal en Web3",
   "private": true,
+  "main": "aisynergix/backend/upload.js",
   "scripts": {
     "init-bucket": "node aisynergix/scripts/init_bucket.js",
-    "test-upload":  "node aisynergix/backend/upload.js test",
-    "check":        "node -e \"const {objectExists} = require('./aisynergix/backend/upload.js'); objectExists('aisynergix/SYNERGIXAI/Synergix_ia.txt').then(r => console.log('Brain exists:', r))\""
+    "test-upload": "node aisynergix/backend/upload.js test"
   },
   "dependencies": {
     "@bnb-chain/greenfield-js-sdk": "^2.2.0",
@@ -15,7 +14,5 @@
     "dotenv":                       "^16.4.5",
     "ethers":                       "^6.12.0"
   },
-  "engines": {
-    "node": ">=20.0.0"
-  }
+  "engines": { "node": ">=20.0.0" }
 }
