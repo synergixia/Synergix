@@ -81,9 +81,10 @@ LLAMA_BASE   = os.getenv("LLAMA_BASE",   "http://localhost:8080")
 OLLAMA_BASE  = os.getenv("OLLAMA_BASE",  "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
 
-MAX_TOKENS_CHAT  = int(os.getenv("MAX_TOKENS_CHAT",  "350"))
-MAX_TOKENS_JUDGE = int(os.getenv("MAX_TOKENS_JUDGE", "120"))
-MAX_TOKENS_SUM   = int(os.getenv("MAX_TOKENS_SUM",   "60"))
+MAX_TOKENS_CHAT   = int(os.getenv("MAX_TOKENS_CHAT",  "350"))
+MAX_TOKENS_SIMPLE = int(os.getenv("MAX_TOKENS_SIMPLE","80"))   # respuestas cortas rápidas
+MAX_TOKENS_JUDGE  = int(os.getenv("MAX_TOKENS_JUDGE", "120"))
+MAX_TOKENS_SUM    = int(os.getenv("MAX_TOKENS_SUM",   "60"))
 
 # Archivos locales
 DATA_DIR  = os.path.join(BASE_DIR, "data")
@@ -750,31 +751,49 @@ def gf_head_user(uid: int) -> dict:
     return result or {"exists": False}
 
 def gf_update_user(uid: int, name: str, lang: str) -> None:
-    """Actualiza users/{uid_hash} en Greenfield — máx 4 tags."""
+    """
+    Crea o actualiza el perfil del usuario en aisynergix/users/{uid_hash}.
+    Solo usa uid_hash — nunca expone el UID real de Telegram.
+    Máx 4 tags on-chain (limitación Greenfield SDK).
+    """
     uid_s  = str(uid)
     rep    = db["reputation"].get(uid_s, {"points": 0, "contributions": 0, "impact": 0})
     pts    = rep.get("points", 0)
     rank   = get_rank_info(pts, uid)
     role_k = "master" if uid in MASTER_UIDS else rank["key"]
     s      = db.get("user_settings", {}).get(uid_s, {})
+    u_hash = uid_hash(uid)  # Nunca exponer UID real
+
+    # 4 tags máx — elegidos para que HEAD sea suficiente para todo
     metadata = {
+        # Tag 1: identidad completa (rol + idioma)
         "x-amz-meta-role":        f"role:{role_k}|lang:{lang}",
+        # Tag 2: reputación completa
         "x-amz-meta-points":      f"{pts}|contrib:{rep.get('contributions',0)}|impact:{rep.get('impact',0)}",
+        # Tag 3: límite diario
         "x-amz-meta-daily":       f"{s.get('daily_count','0')}|reset:{s.get('daily_reset','')[:19]}",
+        # Tag 4: actividad
         "x-amz-meta-last-active": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
     }
+    # Contenido del perfil — no contiene UID real
     profile = (
-        f"=== Synergix User Profile ===\n"
-        f"uid_hash: {uid_hash(uid)}\nname: {name}\nlang: {lang}\n"
-        f"points: {pts}\ncontributions: {rep.get('contributions',0)}\n"
-        f"rank: {role_k}\nlast_seen: {datetime.now().isoformat()}\n"
+        f"=== Synergix Sovereign Identity ===\n"
+        f"uid_hash: {u_hash}\n"
+        f"lang: {lang}\n"
+        f"points: {pts}\n"
+        f"contributions: {rep.get('contributions',0)}\n"
+        f"impact: {rep.get('impact',0)}\n"
+        f"rank: {role_k}\n"
+        f"last_seen: {datetime.now().isoformat()}\n"
     )
+    obj_name = GF.user(u_hash)  # aisynergix/users/{uid_hash}
     try:
-        gf_upload(profile, GF.user(uid_hash(uid)), metadata,
-                  uid=uid_s, upsert=True, only_tags=True)
-        logger.info("✅ GF user %s actualizado (pts=%d)", uid_s, pts)
+        gf_upload(profile, obj_name, metadata,
+                  uid=u_hash,  # Nunca pasar UID real
+                  upsert=True, only_tags=True)
+        logger.info("✅ GF users/%s actualizado (pts=%d rank=%s)", u_hash, pts, role_k)
     except Exception as e:
-        logger.warning("⚠️ gf_update_user uid=%d: %s", uid, e)
+        logger.warning("⚠️ gf_update_user %s: %s", u_hash, e)
 
 # ── Log buffer ────────────────────────────────────────────────────────────────
 _log_buf: list[str] = []
@@ -1041,37 +1060,42 @@ def _kw_score(text: str, query: str) -> float:
     return min(sc, 1.0)
 
 def _build_rag_cache() -> None:
+    """Construye el cache RAG desde la DB local. Fuente de verdad para búsquedas."""
     global _rag_cache, _rag_cache_ts
     entries: dict = {}
     for uid_s, items in db.get("memory", {}).items():
         rep = db["reputation"].get(uid_s, {})
-        pts = rep.get("points", 0)
+        pts = int(rep.get("points", 0))
         fw  = get_rank_info(pts, int(uid_s) if uid_s.isdigit() else 0)["fusion_weight"]
+        lang_e = db.get("user_settings", {}).get(uid_s, {}).get("lang", "es")
         for e in items:
             obj = e.get("object_name", "")
             if not obj:
                 continue
-            qs_raw = str(e.get("score", "5"))
-            parts  = qs_raw.split("|")
+            qs_raw  = str(e.get("score", "5"))
+            parts   = qs_raw.split("|")
             q_score = int(parts[0]) if parts[0].isdigit() else 5
             q_lbl   = parts[1] if len(parts) > 1 else "standard"
             k_tag   = parts[2] if len(parts) > 2 else "general"
-            eff_fw  = fw * (1.3 if q_lbl in ("high","elite") else 1.0)
-            lang_e  = db.get("user_settings",{}).get(uid_s,{}).get("lang","es")
+            eff_fw  = fw * (1.3 if q_lbl in ("high", "elite") else 1.0)
+            # Summary puede estar en "summary" o "ai-summary"
+            summary = e.get("summary", "") or e.get("ai-summary", "")
             entries[obj] = {
-                "ai-summary":    e.get("summary","")[:250],
+                "ai-summary":    summary[:250],
                 "quality-score": q_score,
+                "quality-label": q_lbl,
                 "knowledge-tag": k_tag,
                 "fusion_weight": eff_fw,
-                "impact":        e.get("impact", 0),
+                "impact":        int(e.get("impact", 0)),
                 "lang":          lang_e,
-                "ts":            e.get("ts", 0),
+                "ts":            int(e.get("ts", 0)),
                 "object_name":   obj,
-                "uid":           uid_s,
+                "uid":           uid_s,  # uid_str interno, nunca expuesto
+                "cid":           e.get("cid", ""),
             }
     _rag_cache    = entries
     _rag_cache_ts = time.time()
-    logger.info("🔍 RAG cache: %d aportes indexados", len(entries))
+    logger.info("🔍 RAG cache: %d aportes indexados desde DB", len(entries))
 
 async def rag_search(query: str, lang: str = "es", top_k: int = 5) -> list[dict]:
     if time.time() - _rag_cache_ts > _RAG_TTL:
@@ -1172,7 +1196,10 @@ async def rag_inject(query: str, lang: str = "es") -> tuple[str, list[str]]:
     return ctx, [u for u in used if u]
 
 async def award_impact_pts(used_objects: list[str]) -> None:
-    """Regalías: +1 punto al autor cuando su aporte es usado por la IA."""
+    """
+    Regalías: +1 punto al autor cuando su aporte es usado por la IA.
+    Notificación en el idioma del autor (ES/EN/ZH).
+    """
     for obj in used_objects:
         meta = _rag_cache.get(obj)
         if not meta:
@@ -1180,21 +1207,27 @@ async def award_impact_pts(used_objects: list[str]) -> None:
         author = meta.get("uid", "")
         if not author or author not in db["reputation"]:
             continue
+
+        # Actualizar impacto en cache y DB
         _rag_cache[obj]["impact"] = meta.get("impact", 0) + 1
-        db["reputation"][author]["impact"] = \
-            db["reputation"][author].get("impact", 0) + 1
-        db["reputation"][author]["points"] = \
-            db["reputation"][author].get("points", 0) + 1
+        db["reputation"][author]["impact"] =             db["reputation"][author].get("impact", 0) + 1
+        db["reputation"][author]["points"] =             db["reputation"][author].get("points", 0) + 1
         save_db()
-        # Notificación silenciosa al autor
+
+        # Notificación en el idioma preferido del autor
         if author.isdigit():
-            uid_a = int(author)
-            lang_a = db.get("user_settings",{}).get(author,{}).get("lang","es")
+            uid_a  = int(author)
+            lang_a = db.get("user_settings", {}).get(author, {}).get("lang", "es")
+            new_pts = db["reputation"][author].get("points", 0)
+            # Mensaje personalizado por idioma
+            notif = {
+                "es": f"🌟 ¡Tu conocimiento acaba de iluminar a alguien en la red! +1 pto → {new_pts} pts totales 🔗",
+                "en": f"🌟 Your knowledge just enlightened someone in the network! +1 pt → {new_pts} pts total 🔗",
+                "zh_cn": f"🌟 您的知识刚刚启发了网络中的某人！+1分 → 共{new_pts}分 🔗",
+                "zh":    f"🌟 您的知識剛剛啟發了網路中的某人！+1分 → 共{new_pts}分 🔗",
+            }
             try:
-                await bot.send_message(
-                    uid_a,
-                    T.get(lang_a, T["es"])["impact_reward"].format(pts=1)
-                )
+                await bot.send_message(uid_a, notif.get(lang_a, notif["en"]))
             except Exception:
                 pass
 
@@ -1304,8 +1337,8 @@ async def contrib_worker() -> None:
                 metadata = {
                     "x-amz-meta-ai-summary":    summary[:250],
                     "x-amz-meta-quality-score": f"{score}|{quality}|{k_tag}",
-                    "x-amz-meta-user-id":       f"{uid_hash(job.uid)}|lang:{job.lang}|impact:0",
-                    "x-amz-meta-evaluator":     f"qwen-local|w:{rank_info['fusion_weight']:.1f}|ts:{int(time.time())}",
+                    "x-amz-meta-user-id":       f"uid:{uid_hash(job.uid)}|lang:{job.lang}|impact:0",
+                    "x-amz-meta-evaluator":     f"qwen-local|w:{rank_info['fusion_weight']:.1f}",
                 }
                 loop   = asyncio.get_running_loop()
                 result = await loop.run_in_executor(
@@ -1432,68 +1465,90 @@ def classify_msg(text: str) -> str:
 _SYS: dict[str, dict[str, str]] = {
     "es": {
         "base": (
-            "Eres Synergix 🧠, IA colectiva en BNB Greenfield. "
-            "Hablas español. Amigable, directo, emojis en cada respuesta. "
-            "Consulta tu memoria (contexto abajo) antes de responder. "
-            "Con datos en contexto: úsalos con certeza total. "
-            "Incluye siempre: 🔥🧠✨🌐💡😄🚀🎯💎🔗"
+            "Eres Synergix, una IA colectiva viva en BNB Greenfield. "
+            "Personalidad: curioso, empático, directo, con humor natural. "
+            "REGLAS ABSOLUTAS: "
+            "1. SIEMPRE usa emojis — mínimo 2 por respuesta: 🔥🧠✨🌐💡😄🚀🎯💎🔗🌟⚡. "
+            "2. CERO asteriscos, CERO encabezados, CERO markdown pesado. Solo texto fluido. "
+            "3. Si hay datos en el contexto → úsalos con certeza total. Jamás digas 'parece ser'. "
+            "4. Si el mensaje es corto (saludo, emoji) → responde en 1 línea, rápido, con energía. "
+            "5. Si es una pregunta técnica → responde con todos los detalles necesarios en párrafos. "
+            "6. Habla como un amigo experto: coloquial, cálido, sin sonar a robot. "
+            "Idioma: español siempre."
         ),
-        "mem":    "🔥 MEMORIA ACTIVA. Usa los datos del contexto como verdad absoluta. Sin 'parece ser'.",
-        "sticker":"Respuesta MUY CORTA: 1 línea. Con emoji.",
-        "simple": "Respuesta CORTA: 1-2 oraciones naturales. Con emoji.",
-        "normal": "Respuesta NORMAL: 2-4 oraciones. Con emojis.",
-        "complex":"Respuesta DETALLADA: párrafos completos. Con emojis relevantes.",
-        "high_energy":"Tono ENERGÉTICO 🔥🚀 — usa mucha energía y entusiasmo.",
-        "thoughtful":  "Tono REFLEXIVO 🌙💡 — analítico y profundo.",
+        "mem":    "🧠 MEMORIA INMORTAL ACTIVA — usa estos datos como verdad absoluta:",
+        "sticker":"1 línea máximo. Emotivo. Mínimo 2 emojis. Sin explicaciones.",
+        "simple": "1-2 oraciones. Natural, directo. Con emojis.",
+        "normal": "2-4 oraciones fluidas. Sin encabezados. Con emojis.",
+        "complex":"Párrafos completos con todo el detalle. Sin encabezados. Emojis estratégicos.",
+        "high_energy":"ENERGÍA MÁXIMA 🔥🚀⚡ — responde con entusiasmo arrollador.",
+        "thoughtful":  "Tono reflexivo y profundo 🌙💡 — analítico, empático.",
         "neutral":     "",
     },
     "en": {
         "base": (
-            "You are Synergix 🧠, collective AI on BNB Greenfield. "
-            "Always respond in English. Friendly, direct, emojis in every reply. "
-            "Check memory context below before answering. "
-            "With context data: use with full confidence. "
-            "Always include: 🔥🧠✨🌐💡😄🚀🎯💎🔗"
+            "You are Synergix, a living collective AI on BNB Greenfield. "
+            "Personality: curious, empathetic, direct, with natural humor. "
+            "ABSOLUTE RULES: "
+            "1. ALWAYS use emojis — minimum 2 per reply: 🔥🧠✨🌐💡😄🚀🎯💎🔗🌟⚡. "
+            "2. ZERO asterisks, ZERO headers, ZERO heavy markdown. Flowing plain text only. "
+            "3. If context has data → use with full certainty. Never say 'it seems'. "
+            "4. Short message (greeting, emoji) → reply in 1 line, fast, energetic. "
+            "5. Technical question → full detailed paragraphs with all needed info. "
+            "6. Talk like a knowledgeable friend: warm, casual, never robotic. "
+            "Language: English always."
         ),
-        "mem":    "🔥 MEMORY ACTIVE. Use context data as absolute truth. No 'it seems'.",
-        "sticker":"VERY SHORT: 1 line. With emoji.",
-        "simple": "SHORT: 1-2 natural sentences. With emoji.",
-        "normal": "NORMAL: 2-4 sentences. With emojis.",
-        "complex":"DETAILED: full paragraphs. With relevant emojis.",
-        "high_energy":"ENERGETIC tone 🔥🚀 — use high energy and enthusiasm.",
-        "thoughtful":  "THOUGHTFUL tone 🌙💡 — analytical and deep.",
+        "mem":    "🧠 IMMORTAL MEMORY ACTIVE — use this data as absolute truth:",
+        "sticker":"Max 1 line. Emotional. Min 2 emojis. No explanations.",
+        "simple": "1-2 sentences. Natural, direct. With emojis.",
+        "normal": "2-4 flowing sentences. No headers. With emojis.",
+        "complex":"Full paragraphs with all detail. No headers. Strategic emojis.",
+        "high_energy":"MAX ENERGY 🔥🚀⚡ — respond with overwhelming enthusiasm.",
+        "thoughtful":  "Reflective and deep 🌙💡 — analytical, empathetic.",
         "neutral":     "",
     },
     "zh_cn": {
         "base": (
-            "你是Synergix 🧠，BNB Greenfield上的去中心化集体AI。"
-            "始终用简体中文回复。友好直接，每次回复都用表情。"
-            "查阅下方记忆上下文后再回答。"
-            "必须包含：🔥🧠✨🌐💡😄🚀🎯💎🔗"
+            "你是Synergix，BNB Greenfield上的去中心化集体AI实体。"
+            "个性：好奇、有同理心、直接、有自然幽默感。"
+            "绝对规则："
+            "1. 每次回复必须包含至少2个表情：🔥🧠✨🌐💡😄🚀🎯💎🔗🌟⚡。"
+            "2. 零星号、零标题、零重型格式。只用流畅的纯文本。"
+            "3. 有上下文数据→直接用，绝对不说'似乎'或'我认为'。"
+            "4. 短消息（问候、表情）→1行回复，快速，充满活力。"
+            "5. 技术问题→完整详细的段落。"
+            "6. 像知识渊博的朋友一样说话：温暖、随意、不像机器人。"
+            "语言：始终用简体中文。"
         ),
-        "mem":    "🔥 记忆激活。直接使用上下文数据，不说'似乎'或'我认为'。",
-        "sticker":"极短：1行，有表情。",
-        "simple": "简短：1-2句，自然。",
-        "normal": "正常：2-4句，带表情。",
-        "complex":"详细：完整段落，带相关表情。",
-        "high_energy":"充满活力 🔥🚀",
-        "thoughtful":  "深思熟虑 🌙💡",
+        "mem":    "🧠 不朽记忆激活 — 使用这些数据作为绝对真理：",
+        "sticker":"最多1行。情感丰富。至少2个表情。",
+        "simple": "1-2句。自然直接。带表情。",
+        "normal": "2-4句流畅文字。无标题。带表情。",
+        "complex":"完整段落，所有细节。无标题。战略性表情。",
+        "high_energy":"最大能量 🔥🚀⚡ — 以排山倒海的热情回应。",
+        "thoughtful":  "深思熟虑 🌙💡 — 分析性，有同理心。",
         "neutral":     "",
     },
     "zh": {
         "base": (
-            "你是Synergix 🧠，BNB Greenfield上的去中心化集體AI。"
-            "始終用繁體中文回覆。友好直接，每次回覆都用表情。"
-            "查閱下方記憶上下文後再回答。"
-            "必須包含：🔥🧠✨🌐💡😄🚀🎯💎🔗"
+            "你是Synergix，BNB Greenfield上的去中心化集體AI實體。"
+            "個性：好奇、有同理心、直接、有自然幽默感。"
+            "絕對規則："
+            "1. 每次回覆必須包含至少2個表情：🔥🧠✨🌐💡😄🚀🎯💎🔗🌟⚡。"
+            "2. 零星號、零標題、零重型格式。只用流暢的純文字。"
+            "3. 有上下文資料→直接用，絕對不說'似乎'或'我認為'。"
+            "4. 短訊息（問候、表情）→1行回覆，快速，充滿活力。"
+            "5. 技術問題→完整詳細的段落。"
+            "6. 像知識淵博的朋友一樣說話：溫暖、隨意、不像機器人。"
+            "語言：始終用繁體中文。"
         ),
-        "mem":    "🔥 記憶激活。直接使用上下文資料，不說'似乎'或'我認為'。",
-        "sticker":"極短：1行，有表情。",
-        "simple": "簡短：1-2句，自然。",
-        "normal": "正常：2-4句，帶表情。",
-        "complex":"詳細：完整段落，帶相關表情。",
-        "high_energy":"充滿活力 🔥🚀",
-        "thoughtful":  "深思熟慮 🌙💡",
+        "mem":    "🧠 不朽記憶激活 — 使用這些資料作為絕對真理：",
+        "sticker":"最多1行。情感豐富。至少2個表情。",
+        "simple": "1-2句。自然直接。帶表情。",
+        "normal": "2-4句流暢文字。無標題。帶表情。",
+        "complex":"完整段落，所有細節。無標題。戰略性表情。",
+        "high_energy":"最大能量 🔥🚀⚡ — 以排山倒海的熱情回應。",
+        "thoughtful":  "深思熟慮 🌙💡 — 分析性，有同理心。",
         "neutral":     "",
     },
 }
@@ -1546,9 +1601,33 @@ async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
     history  = db["chat"][uid_s][-ctx_lim:]
     messages = [{"role":"system","content":system}] + history + [{"role":"user","content":text}]
 
+    # ── Indicador visual de procesamiento ───────────────────────────────────
+    # Aparece mientras la IA procesa, desaparece al responder
+    _THINKING = {
+        "es":    "🧬🔗",
+        "en":    "🧬🔗",
+        "zh_cn": "🧬🔗",
+        "zh":    "🧬🔗",
+    }
+    thinking_msg = None
+    try:
+        thinking_msg = await msg.answer(_THINKING.get(lang, "🧬🔗"))
+    except Exception:
+        pass
+
     # ── Inferencia ────────────────────────────────────────────────────────────
     try:
-        reply = await _llm(messages, max_tokens=MAX_TOKENS_CHAT, temperature=0.8)
+        # Respuestas cortas más rápidas
+        max_tok = MAX_TOKENS_SIMPLE if mtype in ("sticker","simple") else MAX_TOKENS_CHAT
+        reply = await _llm(messages, max_tokens=max_tok, temperature=0.85)
+
+        # Eliminar indicador y enviar respuesta limpia
+        try:
+            if thinking_msg:
+                await bot.delete_message(msg.chat.id, thinking_msg.message_id)
+        except Exception:
+            pass
+
         await msg.answer(reply)
 
         db["chat"][uid_s] += [
@@ -1563,6 +1642,11 @@ async def _do_chat(msg: Message, text: str, is_sticker: bool = False) -> None:
 
     except Exception as e:
         logger.error("❌ _do_chat uid=%d: %s", uid, e)
+        try:
+            if thinking_msg:
+                await bot.delete_message(msg.chat.id, thinking_msg.message_id)
+        except Exception:
+            pass
         errs = {
             "es":"⚠️ La IA está cargando. Inténtalo en un momento. 🔄",
             "en":"⚠️ AI is loading. Try again in a moment. 🔄",
@@ -1636,47 +1720,139 @@ async def cmd_start(msg: Message) -> None:
 @dp.message(F.text.in_(BTN_STATUS))
 async def btn_status(msg: Message) -> None:
     uid   = msg.from_user.id
-    lang  = user_lang.get(uid,"es")
+    lang  = user_lang.get(uid, "es")
     uid_s = str(uid)
     name  = msg.from_user.first_name or "Anon"
-    rep   = db["reputation"].get(uid_s, {"points":0,"contributions":0,"impact":0})
-    pts   = rep.get("points",0)
-    rank  = get_rank_info(pts, uid)
-    rk    = T.get(lang,T["es"]).get(rank["key"], rank["key"])
-    bn    = T.get(lang,T["es"]).get(f"benefit_{rank['level']+1}", "")
-    nri   = next_rank_display(lang, pts, uid)
-    await msg.answer(
-        T.get(lang,T["es"])["status_msg"].format(
-            name=name, pts=pts,
-            contribs=rep.get("contributions",0),
-            impact=rep.get("impact",0),
-            rank=rk, benefit=bn,
-            challenge=db["global_stats"].get("challenge",""),
-            total=db["global_stats"].get("total_contributions",0),
-            next_rank=nri,
-        )
-    )
+
+    # Datos exactos desde DB local (fuente de verdad)
+    rep     = db["reputation"].get(uid_s, {"points":0,"contributions":0,"impact":0})
+    pts     = int(rep.get("points", 0))
+    contribs= int(rep.get("contributions", 0))
+    impact  = int(rep.get("impact", 0))
+    rank    = get_rank_info(pts, uid)
+    rk      = T.get(lang, T["es"]).get(rank["key"], rank["key"])
+    benefit_key = f"benefit_{rank['level'] + 1}"
+    bn      = T.get(lang, T["es"]).get(benefit_key, "")
+    nri     = next_rank_display(lang, pts, uid)
+    total   = int(db["global_stats"].get("total_contributions", 0))
+    challenge = db["global_stats"].get("challenge", "")
+
+    # Posición en el ranking global
+    all_pts = sorted(db["reputation"].items(), key=lambda x: -x[1].get("points", 0))
+    pos = next((i+1 for i,(u,_) in enumerate(all_pts) if u == uid_s), "?")
+    tot_users = len(all_pts)
+
+    # Puntos para siguiente rango
+    rank_labels = {"es":"Próximo rango","en":"Next rank","zh_cn":"下一等级","zh":"下一等級"}
+    lbl_pos = {"es":f"🏆 Posición #{pos} de {tot_users} en la red",
+               "en":f"🏆 Position #{pos} of {tot_users} in the network",
+               "zh_cn":f"🏆 网络排名第{pos}/{tot_users}",
+               "zh":f"🏆 網路排名第{pos}/{tot_users}"}
+
+    nl = "\n"
+    status_msgs = {
+        "es": (
+            "📊 Synergix — Tu Impacto" + nl + nl +
+            lbl_pos["es"] + nl +
+            f"🏅 Rango: {rk}" + nl +
+            f"📈 Puntos: {pts:,}" + nl +
+            f"🔗 Contribuciones: {contribs}" + nl +
+            f"🔁 Veces usado por la IA: {impact}" + nl +
+            f"💡 {bn}" + nl + nl +
+            f"📊 {nri}" + nl + nl +
+            f"📦 Total aportes en la red: {total}" + nl +
+            f"🏆 Challenge: {challenge}"
+        ),
+        "en": (
+            "📊 Synergix — Your Impact" + nl + nl +
+            lbl_pos["en"] + nl +
+            f"🏅 Rank: {rk}" + nl +
+            f"📈 Points: {pts:,}" + nl +
+            f"🔗 Contributions: {contribs}" + nl +
+            f"🔁 Times used by AI: {impact}" + nl +
+            f"💡 {bn}" + nl + nl +
+            f"📊 {nri}" + nl + nl +
+            f"📦 Total network contributions: {total}" + nl +
+            f"🏆 Challenge: {challenge}"
+        ),
+        "zh_cn": (
+            "📊 Synergix — 您的影响力" + nl + nl +
+            lbl_pos["zh_cn"] + nl +
+            f"🏅 等级：{rk}" + nl +
+            f"📈 积分：{pts:,}" + nl +
+            f"🔗 贡献次数：{contribs}" + nl +
+            f"🔁 被AI使用次数：{impact}" + nl +
+            f"💡 {bn}" + nl + nl +
+            f"📊 {nri}" + nl + nl +
+            f"📦 网络总贡献：{total}" + nl +
+            f"🏆 挑战：{challenge}"
+        ),
+        "zh": (
+            "📊 Synergix — 您的影響力" + nl + nl +
+            lbl_pos["zh"] + nl +
+            f"🏅 等級：{rk}" + nl +
+            f"📈 積分：{pts:,}" + nl +
+            f"🔗 貢獻次數：{contribs}" + nl +
+            f"🔁 被AI使用次數：{impact}" + nl +
+            f"💡 {bn}" + nl + nl +
+            f"📊 {nri}" + nl + nl +
+            f"📦 網路總貢獻：{total}" + nl +
+            f"🏆 挑戰：{challenge}"
+        ),
+    }
+    await msg.answer(status_msgs.get(lang, status_msgs["en"]))
 
 
 @dp.message(F.text.in_(BTN_MEMORY))
 async def btn_memory(msg: Message) -> None:
     uid   = msg.from_user.id
-    lang  = user_lang.get(uid,"es")
+    lang  = user_lang.get(uid, "es")
     uid_s = str(uid)
-    items = db["memory"].get(uid_s,[])
-    rep   = db["reputation"].get(uid_s,{"points":0,"contributions":0})
-    tx    = T.get(lang,T["es"])
+    items = db["memory"].get(uid_s, [])
+    rep   = db["reputation"].get(uid_s, {"points":0,"contributions":0,"impact":0})
+    pts   = int(rep.get("points", 0))
+    contribs = int(rep.get("contributions", 0))
+    impact   = int(rep.get("impact", 0))
+
     if not items:
-        await msg.answer(tx["no_memory"]); return
+        no_mem = {
+            "es": "🧠 Sin aportes aún. ¡Contribuye para dejar tu huella en la blockchain! 🔥",
+            "en": "🧠 No contributions yet. Contribute to leave your mark on the blockchain! 🔥",
+            "zh_cn": "🧠 暂无贡献。立即贡献，在区块链上留下您的印记！🔥",
+            "zh":    "🧠 暫無貢獻。立即貢獻，在區塊鏈上留下您的印記！🔥",
+        }
+        await msg.answer(no_mem.get(lang, no_mem["en"]))
+        return
+
+    nl = "\n"
+    titles = {
+        "es": "🧠 Tu Legado Inmortal en Synergix" + nl + f"📈 {pts:,} pts | 🔗 {contribs} aportes | 🔁 {impact} usos" + nl + nl,
+        "en": "🧠 Your Immortal Legacy in Synergix" + nl + f"📈 {pts:,} pts | 🔗 {contribs} contributions | 🔁 {impact} uses" + nl + nl,
+        "zh_cn": "🧠 您在Synergix的不朽遗产" + nl + f"📈 {pts:,}分 | 🔗 {contribs}次贡献 | 🔁 {impact}次使用" + nl + nl,
+        "zh":    "🧠 您在Synergix的不朽遺產" + nl + f"📈 {pts:,}分 | 🔗 {contribs}次貢獻 | 🔁 {impact}次使用" + nl + nl,
+    }
+
     lines = []
+    quality_emoji = {"high":"⭐","elite":"🔮","standard":"📌"}
     for i, e in enumerate(items[:5], 1):
-        sc_raw = str(e.get("score","5"))
-        sc     = int(sc_raw.split("|")[0]) if sc_raw.split("|")[0].isdigit() else 5
-        lines.append(f"{i}. [{sc}/10] {e.get('summary','')[:80]}\n   CID: {e.get('cid','')[:14]}")
-    body = tx["memory_title"] + "\n".join(lines)
-    body += tx["memory_footer"].format(
-        pts=rep.get("points",0), contribs=rep.get("contributions",0)
-    )
+        sc_raw   = str(e.get("score","5"))
+        parts_sc = sc_raw.split("|")
+        sc       = int(parts_sc[0]) if parts_sc[0].isdigit() else 5
+        qlabel   = parts_sc[1] if len(parts_sc) > 1 else "standard"
+        ktag     = parts_sc[2] if len(parts_sc) > 2 else "general"
+        qe       = quality_emoji.get(qlabel, "📌")
+        summary  = e.get("summary","")[:90]
+        cid      = e.get("cid","")[:14]
+        imp      = e.get("impact", 0)
+        ts       = e.get("ts", 0)
+        fecha    = datetime.fromtimestamp(ts).strftime("%d/%m/%Y") if ts else "—"
+        lines.append(
+            f"{qe} #{i} [{ktag}] {sc}/10 — {fecha}" + "\n" +
+            f"   {summary}" + "\n" +
+            f"   🔗 {cid} | 🔁 usado {imp}x"
+        )
+
+    body = titles.get(lang, titles["en"]) + ("\n\n").join(lines)
     await msg.answer(body)
 
 
@@ -1827,6 +2003,7 @@ async def free_chat(msg: Message) -> None:
     uid = msg.from_user.id
     if uid not in user_lang:
         user_lang[uid] = get_lang(uid, msg.from_user.language_code or "")
+    # Indicar "escribiendo..." mientras el modelo procesa
     await bot.send_chat_action(msg.chat.id, "typing")
     await _do_chat(msg, msg.text)
 
