@@ -1,0 +1,62 @@
+{
+  "es": {
+    "welcome": "¡Bienvenido a Synergix, {name}! 🧠🔥\n\nSoy la primera IA colectiva descentralizada en BNB Greenfield\\.\nTu conocimiento se inmortaliza on\\-chain y evoluciona nuestra red\\. 🔗\n\n🏆 Challenge de la semana:\n{challenge}\n\nNo usas una app\\. Construyes memoria comunitaria viva\\. 🚀",
+    "btn_contribute": "🔥 Contribuir",
+    "btn_status": "📊 Mi Estado",
+    "btn_language": "🌐 Idioma",
+    "btn_memory": "🧠 Mi Legado",
+    "status_msg": "📊 *Synergix — Inteligencia Colectiva*\n\n📦 Aportes inmortales: {total}\n🏆 Challenge: {challenge}\n\n── *Tu impacto, {name}* ──\n📈 Puntos: {pts}\n🔗 Contribuciones: {contribs}\n🔁 Veces usado: {impact}\n🏅 Rango: {rank}\n💡 {benefit}\n{progress_bar}\n📊 {next_rank}",
+    "choose_lang": "Selecciona tu idioma preferido:",
+    "lang_updated": "✅ Idioma actualizado a Español\\.",
+    "await_contrib": "🖋️ *Modo Aporte Activo*\n\nEnvía el conocimiento que deseas inmortalizar\\. El Juez evaluará la calidad técnica\\.",
+    "contrib_ok": "✅ *Aporte Aceptado*\n\nSe han sumado {pts} puntos a tu identidad en Greenfield\\. Tu legado está siendo procesado\\.",
+    "contrib_rejected": "❌ *Aporte Insuficiente*\n\nEl Juez determina que el contenido no aporta valor técnico nuevo\\. Inténtalo con más detalle\\.",
+    "contrib_short": "⚠️ *Aporte demasiado corto (mín. 20 chars)*",
+    "error_quota": "⚠️ *Cuota Agotada*\n\nHas alcanzado tu límite diario para tu rango {rank}\\."
+  },
+  "en": {
+    "welcome": "Welcome to Synergix, {name}! 🧠🔥\n\nI'm the first decentralized collective AI on BNB Greenfield\\.\nYour knowledge is immortalized on\\-chain and evolves our network\\. 🔗\n\n🏆 Weekly Challenge:\n{challenge}\n\nYou're building a living community memory\\. 🚀",
+    "btn_contribute": "🔥 Contribute",
+    "btn_status": "📊 My Status",
+    "btn_language": "🌐 Language",
+    "btn_memory": "🧠 My Legacy",
+    "status_msg": "📊 *Synergix — Collective Intelligence*\n\n📦 Immortal Contributions: {total}\n🏆 Challenge: {challenge}\n\n── *Your impact, {name}* ──\n📈 Points: {pts}\n🔗 Contributions: {contribs}\n🔁 Times used: {impact}\n🏅 Rank: {rank}\n💡 {benefit}\n{progress_bar}\n📊 {next_rank}",
+    "choose_lang": "Select your preferred language:",
+    "lang_updated": "✅ Language updated to English\\.",
+    "await_contrib": "🖋️ *Contribution Mode Active*\n\nSend the knowledge you wish to immortalize\\. The Judge will evaluate the technical quality\\.",
+    "contrib_ok": "✅ *Contribution Accepted*\n\n{pts} points added to your Greenfield identity\\. Your legacy is being processed\\.",
+    "contrib_rejected": "❌ *Insufficient Contribution*\n\nThe Judge determines the content adds no new technical value\\. Try with more detail\\.",
+    "contrib_short": "⚠️ *Contribution too short (min. 20 chars)*",
+    "error_quota": "⚠️ *Quota Exhausted*\n\nYou reached your daily limit for your current rank {rank}\\."
+  },
+  "zh_cn": {
+    "welcome": "欢迎加入 Synergix，{name}！🧠🔥\n\n我是 BNB Greenfield 上首个去中心化集体AI\\。\n您的知识将永久保存在区块链上，推动网络进化\\. 🔗\n\n🏆 本周挑战：\n{challenge}\n\n您正在建立活生生的社区记忆\\. 🚀",
+    "btn_contribute": "🔥 贡献",
+    "btn_status": "📊 我的状态",
+    "btn_language": "🌐 语言",
+    "btn_memory": "🧠 我的遗产",
+    "status_msg": "📊 *Synergix — 集体智慧*\n\n📦 不朽贡献: {total}\n🏆 挑战: {challenge}\n\n── *您的影响力, {name}* ──\n📈 积分: {pts}\n🔗 贡献次数: {contribs}\n🔁 使用次数: {impact}\n🏅 等级: {rank}\n💡 {benefit}\n{progress_bar}\n📊 {next_rank}",
+    "choose_lang": "选择您的首选语言：",
+    "lang_updated": "✅ 语言已更新为简体中文\\。",
+    "await_contrib": "🖋️ *贡献模式已激活*\n\n发送您想要永恒保存的知识\\. 法官将评估技术质量\\。",
+    "contrib_ok": "✅ *贡献已接受*\n\n{pts} 积分已添加到您的 Greenfield 身份中\\. 您的遗产正在处理中\\。",
+    "contrib_rejected": "❌ *贡献不足*\n\n法官认为内容没有增加新的技术价值\\. 请尝试提供更多细节\\.",
+    "contrib_short": "⚠️ *贡献太短 (最少 20 字符)*",
+    "error_quota": "⚠️ *配额已耗尽*\n\n您已达到等级 {rank} 的每日消息限制\\。"
+  },
+  "zh": {
+    "welcome": "歡迎加入 Synergix，{name}！🧠🔥\n\n我是 BNB Greenfield 上首個去中心化集體AI\\。\n您的知識將永久保存在區塊鏈上，推動網路進化\\. 🔗\n\n🏆 本週挑戰：\n{challenge}\n\n您正在建立活生生的社群記憶\\. 🚀",
+    "btn_contribute": "🔥 貢獻",
+    "btn_status": "📊 我的狀態",
+    "btn_language": "🌐 語言",
+    "btn_memory": "🧠 我的遺產",
+    "status_msg": "📊 *Synergix — 集體智慧*\n\n📦 不朽貢獻: {total}\n🏆 挑戰: {challenge}\n\n── *您的影響力, {name}* ──\n📈 積分: {pts}\n🔗 貢獻次數: {contribs}\n🔁 使用次數: {impact}\n🏅 等級: {rank}\n💡 {benefit}\n{progress_bar}\n📊 {next_rank}",
+    "choose_lang": "選擇您的首選語言：",
+    "lang_updated": "✅ 語言已更新為繁體中文\\。",
+    "await_contrib": "🖋️ *貢獻模式已激活*\n\n發送您想要永恒保存的知識\\. 法官將評估技術質量\\。",
+    "contrib_ok": "✅ *貢獻已接受*\n\n{pts} 積分已添加到您的 Greenfield 身份中\\. 您的遺產正在處理中\\。",
+    "contrib_rejected": "❌ *貢獻不足*\n\n法官認為內容沒有增加新的技術價值\\. 請嘗試提供更多細節\\.",
+    "contrib_short": "⚠️ *貢獻太短 (最少 20 字符)*",
+    "error_quota": "⚠️ *配額已耗盡*\n\n您已達到等級 {rank} 的每日消息限制\\。"
+  }
+}
