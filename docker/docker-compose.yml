@@ -4,8 +4,7 @@ services:
   synergix-juez:
     image: ghcr.io/ggerganov/llama.cpp:server
     container_name: synergix-juez
-    # Se usa Qwen 0.5B para latencia ultra-baja en la validación técnica
-    command: "-m /models/qwen1_5-0_5b-chat-q4_k_m.gguf --host 0.0.0.0 --port 8080 -c 512"
+    command: "-m /models/qwen2.5-0.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8080 -c 512"
     ports:
       - "8080:8080"
     volumes:
@@ -22,8 +21,7 @@ services:
   synergix-pensador:
     image: ghcr.io/ggerganov/llama.cpp:server
     container_name: synergix-pensador
-    # Se usa Qwen 1.5B con mayor contexto para el RAG y generación de respuestas
-    command: "-m /models/qwen1_5-1_5b-chat-q4_k_m.gguf --host 0.0.0.0 --port 8081 -c 2048"
+    command: "-m /models/qwen2.5-1.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8081 -c 2048 -t 2"
     ports:
       - "8081:8081"
     volumes:

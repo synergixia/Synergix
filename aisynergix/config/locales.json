@@ -5,14 +5,14 @@
     "btn_status": "📊 Mi Estado",
     "btn_language": "🌐 Idioma",
     "btn_memory": "🧠 Mi Legado",
-    "status_msg": "📊 *Synergix — Inteligencia Colectiva*\n\n📦 Aportes inmortales: {total}\n🏆 Challenge: {challenge}\n\n── *Tu impacto, {name}* ──\n📈 Puntos: {pts}\n🔗 Contribuciones: {contribs}\n🔁 Veces usado: {impact}\n🏅 Rango: {rank}\n💡 {benefit}\n{progress_bar}\n📊 {next_rank}",
+    "status_msg": "📊 *Synergix — Nodo Soberano*\n\n📦 Aportes inmortales: {total}\n🏆 Challenge: {challenge}\n\n── *Tu impacto, {name}* ──\n📈 Puntos: {pts}\n🔗 Contribuciones: {contribs}\n🔁 Veces usado: {impact}\n🏅 Rango: {rank}\n💡 {benefit}\n{progress_bar}\n📊 {next_rank}",
     "choose_lang": "Selecciona tu idioma preferido:",
     "lang_updated": "✅ Idioma actualizado a Español\\.",
     "await_contrib": "🖋️ *Modo Aporte Activo*\n\nEnvía el conocimiento que deseas inmortalizar\\. El Juez evaluará la calidad técnica\\.",
     "contrib_ok": "✅ *Aporte Aceptado*\n\nSe han sumado {pts} puntos a tu identidad en Greenfield\\. Tu legado está siendo procesado\\.",
-    "contrib_rejected": "❌ *Aporte Insuficiente*\n\nEl Juez determina que el contenido no aporta valor técnico nuevo\\. Inténtalo con más detalle\\.",
-    "contrib_short": "⚠️ *Aporte demasiado corto (mín. 20 chars)*",
-    "error_quota": "⚠️ *Cuota Agotada*\n\nHas alcanzado tu límite diario para tu rango {rank}\\."
+    "contrib_rejected": "❌ *Aporte Insuficiente*\n\nEl Juez determina que el contenido no aporta valor técnico nuevo\\. Inténtalo con mayor profundidad\\.",
+    "contrib_short": "⚠️ *Aporte demasiado corto (mín. 20 caracteres)*",
+    "error_quota": "⚠️ *Cuota Agotada*\n\nHas alcanzado tu límite diario de interacción para el rango {rank}\\."
   },
   "en": {
     "welcome": "Welcome to Synergix, {name}! 🧠🔥\n\nI'm the first decentralized collective AI on BNB Greenfield\\.\nYour knowledge is immortalized on\\-chain and evolves our network\\. 🔗\n\n🏆 Weekly Challenge:\n{challenge}\n\nYou're building a living community memory\\. 🚀",
@@ -20,12 +20,12 @@
     "btn_status": "📊 My Status",
     "btn_language": "🌐 Language",
     "btn_memory": "🧠 My Legacy",
-    "status_msg": "📊 *Synergix — Collective Intelligence*\n\n📦 Immortal Contributions: {total}\n🏆 Challenge: {challenge}\n\n── *Your impact, {name}* ──\n📈 Points: {pts}\n🔗 Contributions: {contribs}\n🔁 Times used: {impact}\n🏅 Rank: {rank}\n💡 {benefit}\n{progress_bar}\n📊 {next_rank}",
+    "status_msg": "📊 *Synergix — Sovereign Node*\n\n📦 Immortal Contributions: {total}\n🏆 Challenge: {challenge}\n\n── *Your impact, {name}* ──\n📈 Points: {pts}\n🔗 Contributions: {contribs}\n🔁 Times used: {impact}\n🏅 Rank: {rank}\n💡 {benefit}\n{progress_bar}\n📊 {next_rank}",
     "choose_lang": "Select your preferred language:",
     "lang_updated": "✅ Language updated to English\\.",
     "await_contrib": "🖋️ *Contribution Mode Active*\n\nSend the knowledge you wish to immortalize\\. The Judge will evaluate the technical quality\\.",
     "contrib_ok": "✅ *Contribution Accepted*\n\n{pts} points added to your Greenfield identity\\. Your legacy is being processed\\.",
-    "contrib_rejected": "❌ *Insufficient Contribution*\n\nThe Judge determines the content adds no new technical value\\. Try with more detail\\.",
+    "contrib_rejected": "❌ *Insufficient Contribution*\n\nThe Judge determines the content adds no new technical value\\.",
     "contrib_short": "⚠️ *Contribution too short (min. 20 chars)*",
     "error_quota": "⚠️ *Quota Exhausted*\n\nYou reached your daily limit for your current rank {rank}\\."
   },

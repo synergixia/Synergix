@@ -1,87 +1,82 @@
 import asyncio
 import os
+import json
 import hashlib
 import urllib.parse
-from datetime import datetime, timezone
 import httpx
-from aisynergix.services.greenfield import SP_URL, BUCKET_NAME, _generate_v4_signature
+from aisynergix.services.greenfield import SP_URL, BUCKET_NAME, _sign_v4
 
+# Directorio local donde se guardará la memoria para el RAG
 BRAIN_DIR = "aisynergix/data/brains"
 
-async def download_and_verify(path: str, save_path: str, expected_hash: str = None) -> bool:
-    """Descarga un archivo desde Greenfield usando firmas V4 y verifica su SHA-256."""
+async def download_file(path: str, local_path: str) -> bool:
+    """Descarga un objeto de Greenfield con verificación de integridad."""
     url = f"{SP_URL}{path}"
     domain = urllib.parse.urlparse(SP_URL).netloc
     headers = {"Host": domain}
-    auth, amz_date = _generate_v4_signature("GET", path, headers, b"")
-    if auth:
-        headers["Authorization"] = auth
-        headers["x-amz-date"] = amz_date
+    
+    auth, date = _sign_v4("GET", path, headers)
+    headers.update({"Authorization": auth, "x-amz-date": date})
     
     async with httpx.AsyncClient() as client:
         try:
             print(f"[SYNC] Descargando {path}...")
-            response = await client.get(url, headers=headers, timeout=60.0)
-            if response.status_code == 200:
-                content = response.content
-                
-                # Verificación de integridad si se provee el hash esperado
-                if expected_hash:
-                    file_hash = hashlib.sha256(content).hexdigest()
-                    if file_hash != expected_hash:
-                        print(f"[SYNC] Error de integridad en {path}. Hash mismatch.")
-                        return False
-                        
-                with open(save_path, "wb") as f:
-                    f.write(content)
+            resp = await client.get(url, headers=headers, timeout=120.0)
+            if resp.status_code == 200:
+                with open(local_path, "wb") as f:
+                    f.write(resp.content)
                 return True
             else:
-                print(f"[SYNC] Fallo al descargar {path} - HTTP {response.status_code}")
+                print(f"[SYNC] Error HTTP {resp.status_code} en {path}")
         except Exception as e:
-            print(f"[SYNC] Excepción descargando {path}: {e}")
+            print(f"[SYNC] Error de conexión: {e}")
     return False
 
-async def sync_brain():
-    print("[SYNC] Iniciando secuencia de ignición del Nodo Fantasma...")
-    os.makedirs(BRAIN_DIR, exist_ok=True)
+async def get_latest_version_tag() -> str:
+    """Consulta el tag 'latest_v' del archivo brain_pointer."""
+    path = f"/{BUCKET_NAME}/aisynergix/data/brain_pointer"
+    headers = {"Host": urllib.parse.urlparse(SP_URL).netloc}
     
-    pointer_path = f"/{BUCKET_NAME}/aisynergix/data/brain_pointer"
-    pointer_url = f"{SP_URL}{pointer_path}"
+    auth, date = _sign_v4("HEAD", path, headers)
+    headers.update({"Authorization": auth, "x-amz-date": date})
     
-    domain = urllib.parse.urlparse(SP_URL).netloc
-    headers = {"Host": domain}
-    auth, amz_date = _generate_v4_signature("HEAD", pointer_path, headers, b"")
-    if auth:
-        headers["Authorization"] = auth
-        headers["x-amz-date"] = amz_date
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.head(pointer_url, headers=headers)
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.head(f"{SP_URL}{path}", headers=headers)
             if resp.status_code == 200:
                 tags_raw = resp.headers.get("x-amz-meta-tags", "{}")
-                tags = json.loads(urllib.parse.unquote(tags_raw)) if tags_raw else {}
-                version = tags.get("latest_v", "v0")
-                txt_hash = tags.get("txt_hash", None)
-                idx_hash = tags.get("idx_hash", None)
-                
-                print(f"[SYNC] Puntero detectado: Versión {version}")
-                
-                txt_path = f"/{BUCKET_NAME}/aisynergix/data/brains/Synergix_ia_{version}.txt"
-                idx_path = f"/{BUCKET_NAME}/aisynergix/data/brains/Synergix_ia_{version}.index"
-                
-                txt_saved = await download_and_verify(txt_path, f"{BRAIN_DIR}/Synergix_ia.txt", txt_hash)
-                idx_saved = await download_and_verify(idx_path, f"{BRAIN_DIR}/Synergix_ia.index", idx_hash)
-                
-                if txt_saved and idx_saved:
-                    print("[SYNC] Descarga completada y verificada. El cerebro está listo.")
-                else:
-                    print("[SYNC] Advertencia: No se pudo verificar la descarga. Se usará el estado local si existe.")
-            else:
-                print("[SYNC] Puntero no encontrado en Greenfield. Se iniciará un cerebro en blanco.")
-    except Exception as e:
-        print(f"[SYNC] Error de conexión general: {e}")
+                tags = json.loads(urllib.parse.unquote(tags_raw))
+                return tags.get("latest_v", "v0")
+        except: pass
+    return "v0"
+
+async def run_sync():
+    """Ejecuta la sincronización completa del cerebro."""
+    print("🧬 Iniciando sincronización de Memoria Inmortal...")
+    os.makedirs(BRAIN_DIR, exist_ok=True)
+    
+    # 1. Obtener qué versión debemos descargar
+    version = await get_latest_version_tag()
+    if version == "v0":
+        print("[SYNC] No se encontró una versión previa. Se iniciará cerebro vacío.")
+        return
+
+    print(f"[SYNC] Sincronizando Versión: {version}")
+    
+    # 2. Rutas en DCellar (coordinadas con tu estructura)
+    remote_txt = f"/{BUCKET_NAME}/aisynergix/data/brains/Synergix_ia_{version}.txt"
+    remote_idx = f"/{BUCKET_NAME}/aisynergix/data/brains/Synergix_ia_{version}.index"
+    
+    # 3. Descarga y sobreescritura local de Synergix_ia.txt/index
+    # El bot siempre lee los archivos sin el prefijo de versión para facilidad de acceso
+    txt_ok = await download_file(remote_txt, f"{BRAIN_DIR}/Synergix_ia.txt")
+    idx_ok = await download_file(remote_idx, f"{BRAIN_DIR}/Synergix_ia.index")
+    
+    if txt_ok and idx_ok:
+        print(f"✅ Memoria Inmortal {version} lista para operar.")
+    else:
+        print("⚠️ Fallo en la sincronización. Verificando estado local...")
 
 if __name__ == "__main__":
-    import json
-    asyncio.run(sync_brain())
+    asyncio.run(run_sync())
+

@@ -8,158 +8,123 @@ import httpx
 from eth_account import Account
 from eth_account.messages import encode_defunct
 from dotenv import load_dotenv
+import xml.etree.ElementTree as ET
 
 load_dotenv()
 
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
-BUCKET_NAME = os.getenv("BUCKET_NAME", "synergixai")
+SALT = os.getenv("SALT", "synergix_ghost_protocol_v1_super_secret")
+BUCKET = os.getenv("BUCKET_NAME", "synergixai")
 SP_URL = os.getenv("SP_URL", "https://greenfield-chain.bnbchain.org")
-SALT = os.getenv("SALT", "synergix_ghost_protocol_v1")
 
 if PRIVATE_KEY:
     account = Account.from_key(PRIVATE_KEY)
-    WALLET_ADDRESS = account.address
+    ADDRESS = account.address
 else:
     account = None
-    WALLET_ADDRESS = ""
+    ADDRESS = ""
 
 def get_ghost_id(uid: str) -> str:
-    """Aplica Hashing + Salting irreversible para garantizar privacidad Zero-Knowledge."""
+    """GHOST PROTOCOL: Convierte el ID de Telegram en un Hash irreversible (Privacidad Total)."""
     return hashlib.sha256(f"{uid}{SALT}".encode('utf-8')).hexdigest()
 
-def _generate_v4_signature(method: str, path: str, headers: dict, payload: bytes) -> tuple[str, str]:
-    """Genera firma ECDSA nativa V4 para BNB Greenfield."""
-    if not account:
-        return "", ""
-    
+def _sign_v4(method, path, headers, payload=b""):
+    """Firma nativa ECDSA V4 para BNB Greenfield."""
+    if not account: return "", ""
     t = datetime.now(timezone.utc)
     amz_date = t.strftime('%Y%m%dT%H%M%SZ')
     datestamp = t.strftime('%Y%m%d')
+    domain = urllib.parse.urlparse(SP_URL).netloc
     
     canonical_uri = urllib.parse.quote(path, safe='/~')
-    canonical_querystring = ''
-    
-    domain = urllib.parse.urlparse(SP_URL).netloc
     canonical_headers = f"host:{domain}\nx-amz-date:{amz_date}\n"
     signed_headers = "host;x-amz-date"
-    
     payload_hash = hashlib.sha256(payload).hexdigest()
     
-    canonical_request = f"{method}\n{canonical_uri}\n{canonical_querystring}\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+    canonical_request = f"{method}\n{canonical_uri}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+    scope = f"{datestamp}/greenfield/s3/aws4_request"
+    string_to_sign = f"AWS4-ECDSA-SHA256\n{amz_date}\n{scope}\n{hashlib.sha256(canonical_request.encode()).hexdigest()}"
     
-    algorithm = "AWS4-ECDSA-SHA256"
-    credential_scope = f"{datestamp}/greenfield/s3/aws4_request"
-    string_to_sign = f"{algorithm}\n{amz_date}\n{credential_scope}\n{hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()}"
-    
-    signable_message = encode_defunct(text=string_to_sign)
-    signed_message = Account.sign_message(signable_message, private_key=PRIVATE_KEY)
-    
-    signature = signed_message.signature.hex()
-    
-    authorization_header = f"{algorithm} Credential={WALLET_ADDRESS}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
-    return authorization_header, amz_date
+    signature = account.sign_message(encode_defunct(text=string_to_sign)).signature.hex()
+    auth = f"AWS4-ECDSA-SHA256 Credential={ADDRESS}/{scope}, SignedHeaders={signed_headers}, Signature={signature}"
+    return auth, amz_date
 
-async def get_user_metadata(uid: str) -> dict:
-    """Obtiene los tags del archivo fantasma del usuario en 0 Bytes."""
-    ghost_id = get_ghost_id(uid)
-    path = f"/{BUCKET_NAME}/aisynergix/users/{ghost_id}"
-    url = f"{SP_URL}{path}"
-    
-    domain = urllib.parse.urlparse(SP_URL).netloc
-    headers = {"Host": domain}
-    auth, amz_date = _generate_v4_signature("HEAD", path, headers, b"")
-    if auth:
-        headers["Authorization"] = auth
-        headers["x-amz-date"] = amz_date
+async def get_user_metadata(uid: str):
+    """Accede a aisynergix/users/{ghost_id} (0 Bytes)."""
+    gid = get_ghost_id(uid)
+    path = f"/{BUCKET}/aisynergix/users/{gid}"
+    headers = {"Host": urllib.parse.urlparse(SP_URL).netloc}
+    auth, date = _sign_v4("HEAD", path, headers)
+    headers.update({"Authorization": auth, "x-amz-date": date})
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.head(url, headers=headers)
-            if response.status_code == 200:
-                tags = response.headers.get("x-amz-meta-tags", "{}")
-                if tags:
-                    return json.loads(urllib.parse.unquote(tags))
-            return None
-        except Exception as e:
-            print(f"[GF] Error HEAD metadata: {e}")
-            return None
+            r = await client.head(f"{SP_URL}{path}", headers=headers, timeout=10.0)
+            if r.status_code == 200:
+                tags = r.headers.get("x-amz-meta-tags", "{}")
+                return json.loads(urllib.parse.unquote(tags))
+        except: pass
+    return None
 
 async def update_user_metadata(uid: str, updates: dict):
-    """Actualiza los tags del archivo fantasma sin modificar su contenido."""
-    ghost_id = get_ghost_id(uid)
+    """Actualiza los Tags en la ruta de Identidades Fantasma."""
+    gid = get_ghost_id(uid)
     current = await get_user_metadata(uid) or {}
     current.update(updates)
     
-    path = f"/{BUCKET_NAME}/aisynergix/users/{ghost_id}?tagging"
-    url = f"{SP_URL}{path}"
+    path = f"/{BUCKET}/aisynergix/users/{gid}?tagging"
+    tags_json = urllib.parse.quote(json.dumps(current))
+    payload = f"<Tagging><TagSet><Tag><Key>data</Key><Value>{tags_json}</Value></Tag></TagSet></Tagging>".encode()
     
-    tags_str = urllib.parse.quote(json.dumps(current))
-    payload = f"<Tagging><TagSet><Tag><Key>data</Key><Value>{tags_str}</Value></Tag></TagSet></Tagging>".encode('utf-8')
-    
-    domain = urllib.parse.urlparse(SP_URL).netloc
-    headers = {
-        "Host": domain,
-        "Content-Type": "application/xml"
-    }
-    auth, amz_date = _generate_v4_signature("PUT", path, headers, payload)
-    if auth:
-        headers["Authorization"] = auth
-        headers["x-amz-date"] = amz_date
+    headers = {"Host": urllib.parse.urlparse(SP_URL).netloc, "Content-Type": "application/xml"}
+    auth, date = _sign_v4("PUT", path, headers, payload)
+    headers.update({"Authorization": auth, "x-amz-date": date})
     
     async with httpx.AsyncClient() as client:
         try:
-            await client.put(url, headers=headers, content=payload)
+            await client.put(f"{SP_URL}{path}", headers=headers, content=payload, timeout=15.0)
         except Exception as e:
-            print(f"[GF] Error PUT metadata: {e}")
+            print(f"[Greenfield] Error actualizando metadatos: {e}")
 
 async def upload_aporte(uid: str, content: str, tags: dict):
-    """Sube un archivo de conocimiento asociándolo al hash del usuario."""
-    ghost_id = get_ghost_id(uid)
-    ts = int(time.time())
+    """Sube el Legado a aisynergix/aportes/YYYY-MM/"""
+    gid = get_ghost_id(uid)
     month = datetime.now(timezone.utc).strftime('%Y-%m')
-    path = f"/{BUCKET_NAME}/aisynergix/aportes/{month}/{ghost_id}_{ts}.txt"
-    url = f"{SP_URL}{path}"
-    
+    ts = int(time.time())
+    path = f"/{BUCKET}/aisynergix/aportes/{month}/{gid}_{ts}.txt"
     payload = content.encode('utf-8')
-    tags_str = urllib.parse.quote(json.dumps(tags))
     
-    domain = urllib.parse.urlparse(SP_URL).netloc
     headers = {
-        "Host": domain,
+        "Host": urllib.parse.urlparse(SP_URL).netloc,
         "Content-Type": "text/plain",
-        "x-amz-meta-tags": tags_str
+        "x-amz-meta-tags": urllib.parse.quote(json.dumps(tags))
     }
-    
-    auth, amz_date = _generate_v4_signature("PUT", path, headers, payload)
-    if auth:
-        headers["Authorization"] = auth
-        headers["x-amz-date"] = amz_date
+    auth, date = _sign_v4("PUT", path, headers, payload)
+    headers.update({"Authorization": auth, "x-amz-date": date})
     
     async with httpx.AsyncClient() as client:
         try:
-            await client.put(url, headers=headers, content=payload)
+            await client.put(f"{SP_URL}{path}", headers=headers, content=payload, timeout=30.0)
         except Exception as e:
-            print(f"[GF] Error upload_aporte: {e}")
+            print(f"[Greenfield] Error subiendo aporte: {e}")
 
 async def list_objects(prefix: str) -> list:
-    """Lista objetos en el bucket para la consolidación del RAG."""
-    path = f"/{BUCKET_NAME}/?prefix={urllib.parse.quote(prefix)}"
-    url = f"{SP_URL}{path}"
+    """Lista objetos parseando XML para Evolución y Auditoría."""
+    path = f"/{BUCKET}/?prefix={urllib.parse.quote(prefix)}"
+    headers = {"Host": urllib.parse.urlparse(SP_URL).netloc}
+    auth, date = _sign_v4("GET", path, headers)
+    headers.update({"Authorization": auth, "x-amz-date": date})
     
-    domain = urllib.parse.urlparse(SP_URL).netloc
-    headers = {"Host": domain}
-    auth, amz_date = _generate_v4_signature("GET", path, headers, b"")
-    if auth:
-        headers["Authorization"] = auth
-        headers["x-amz-date"] = amz_date
-    
+    keys = []
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, headers=headers)
-            if response.status_code == 200:
-                # Aquí iría el parseo real del XML para obtener las keys de los objetos
-                return [] 
-            return []
+            resp = await client.get(f"{SP_URL}{path}", headers=headers, timeout=20.0)
+            if resp.status_code == 200:
+                root = ET.fromstring(resp.text)
+                for contents in root.findall('.//{http://s3.amazonaws.com/doc/2006-03-01/}Contents') or root.findall('Contents'):
+                    key = contents.find('{http://s3.amazonaws.com/doc/2006-03-01/}Key')
+                    if key is None: key = contents.find('Key')
+                    if key is not None: keys.append(key.text)
         except Exception as e:
-            print(f"[GF] Error list_objects: {e}")
-            return []
+            print(f"[Greenfield] Error listando objetos: {e}")
+    return keys

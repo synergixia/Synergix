@@ -7,7 +7,7 @@ EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
 try:
     embedder = SentenceTransformer(EMBEDDING_MODEL)
 except Exception as e:
-    print(f"Error cargando el modelo de embedding: {e}")
+    print(f"Error cargando modelo de embedding: {e}")
     embedder = None
 
 BRAIN_DIR = "aisynergix/data/brains"
@@ -25,9 +25,9 @@ def load_index():
             index = faiss.read_index(INDEX_PATH)
             with open(TEXTS_PATH, "r", encoding="utf-8") as f:
                 corpus = [line.strip() for line in f.readlines() if line.strip()]
-            print(f"[RAG] Cerebro cargado: {len(corpus)} fragmentos.")
+            print(f"[RAG] Memoria Inmortal cargada: {len(corpus)} fragmentos en RAM.")
         except Exception as e:
-            print(f"[RAG] Error leyendo índice FAISS: {e}")
+            print(f"[RAG] Error leyendo FAISS: {e}")
             _init_empty()
     else:
         _init_empty()
@@ -36,12 +36,11 @@ def _init_empty():
     global index, corpus
     index = faiss.IndexFlatL2(384)
     corpus = []
-    print("[RAG] Cerebro inicializado en blanco (384 dimensiones).")
+    print("[RAG] Memoria Inmortal inicializada en blanco.")
 
 load_index()
 
 async def get_related_context(query: str, top_k: int = 3) -> str:
-    """Busca fragmentos del Legado usando similitud vectorial."""
     if not index or index.ntotal == 0 or not corpus or not embedder:
         return ""
     
@@ -53,12 +52,10 @@ async def get_related_context(query: str, top_k: int = 3) -> str:
         if i != -1 and i < len(corpus):
             results.append(corpus[i])
             
-    if not results:
-        return ""
+    if not results: return ""
         
-    context_str = "\n".join([f"<contexto_inmutable>\n{res}\n</contexto_inmutable>" for res in results])
-    return f"Contexto del Legado:\n{context_str}"
+    context_str = "\n".join([f"<legado>\n{res}\n</legado>" for res in results])
+    return f"Contexto del Legado Extraído:\n{context_str}"
 
 def reload_index():
-    """Hot-Reload para cargar nuevos cerebros sin reiniciar el bot."""
     load_index()
