@@ -7,7 +7,7 @@ EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
 try:
     embedder = SentenceTransformer(EMBEDDING_MODEL)
 except Exception as e:
-    print(f"Error cargando modelo de embedding: {e}")
+    print(f"Error crítico cargando modelo embedder: {e}")
     embedder = None
 
 BRAIN_DIR = "aisynergix/data/brains"
@@ -18,6 +18,7 @@ index = None
 corpus = []
 
 def load_index():
+    """Hidrata la RAM del servidor Hetzner con la Memoria Vectorial inmutable."""
     global index, corpus
     os.makedirs(BRAIN_DIR, exist_ok=True)
     if os.path.exists(INDEX_PATH) and os.path.exists(TEXTS_PATH):
@@ -25,9 +26,9 @@ def load_index():
             index = faiss.read_index(INDEX_PATH)
             with open(TEXTS_PATH, "r", encoding="utf-8") as f:
                 corpus = [line.strip() for line in f.readlines() if line.strip()]
-            print(f"[RAG] Memoria Inmortal cargada: {len(corpus)} fragmentos en RAM.")
+            print(f"[RAG] Memoria Inmortal conectada: {len(corpus)} fragmentos en RAM.")
         except Exception as e:
-            print(f"[RAG] Error leyendo FAISS: {e}")
+            print(f"[RAG] Fallo al leer FAISS: {e}")
             _init_empty()
     else:
         _init_empty()
@@ -36,11 +37,11 @@ def _init_empty():
     global index, corpus
     index = faiss.IndexFlatL2(384)
     corpus = []
-    print("[RAG] Memoria Inmortal inicializada en blanco.")
 
 load_index()
 
 async def get_related_context(query: str, top_k: int = 3) -> str:
+    """Busca y extrae contexto estricto antes de enviar el prompt a la IA local."""
     if not index or index.ntotal == 0 or not corpus or not embedder:
         return ""
     

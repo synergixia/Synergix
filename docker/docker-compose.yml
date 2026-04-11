@@ -1,10 +1,11 @@
 version: '3.8'
 
 services:
+  # Juez: Evalúa calidad técnica (1.5B para mayor criterio y análisis)
   synergix-juez:
     image: ghcr.io/ggerganov/llama.cpp:server
     container_name: synergix-juez
-    command: "-m /models/qwen2.5-0.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8080 -c 512"
+    command: "-m /models/qwen2.5-1.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8080 -c 1024"
     ports:
       - "8080:8080"
     volumes:
@@ -12,16 +13,15 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1.5G
-    networks:
-      - synergix-net
+          cpus: '1.5'
+          memory: 2G
     restart: unless-stopped
 
+  # Pensador: Respuesta rápida y precisa (0.5B optimizado para velocidad y RAG)
   synergix-pensador:
     image: ghcr.io/ggerganov/llama.cpp:server
     container_name: synergix-pensador
-    command: "-m /models/qwen2.5-1.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8081 -c 2048 -t 2"
+    command: "-m /models/qwen2.5-0.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8081 -c 2048"
     ports:
       - "8081:8081"
     volumes:
@@ -29,10 +29,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 3.5G
-    networks:
-      - synergix-net
+          cpus: '1.5'
+          memory: 1.5G
     restart: unless-stopped
 
 networks:

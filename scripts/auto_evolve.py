@@ -1,22 +1,20 @@
 import asyncio
 import logging
+from scripts.fusion_brain import fusion_brain
 from aisynergix.services.rag_engine import reload_index
-from scripts.fusion_brain import fusion_brain 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [EVOLVE] %(message)s")
-logger = logging.getLogger("SynergixAutoEvolve")
 
-async def evolution_loop():
-    logger.info("Daemon de Evolución Iniciado (10 min / 600s)")
+async def evolution_daemon():
+    print("🚀 Centinela Auto-Evolve Activo (Ciclo 600s)")
     while True:
         try:
-            has_evolved = await fusion_brain()
-            if has_evolved:
-                logger.info("🧬 Nueva memoria generada. Recargando RAG...")
+            if await fusion_brain():
+                print("🧬 Expandiendo RAM Vectorial...")
                 reload_index()
         except Exception as e:
-            logger.error(f"Fallo en evolución: {e}")
-        await asyncio.sleep(600)
+            print(f"⚠️ Error: {e}")
+        await asyncio.sleep(600) # 10 Minutos garantizados
 
 if __name__ == "__main__":
-    asyncio.run(evolution_loop())
+    asyncio.run(evolution_daemon())
