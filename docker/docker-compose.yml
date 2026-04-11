@@ -1,11 +1,14 @@
 version: '3.8'
 
 services:
-  # Juez: Evalúa calidad técnica (1.5B para mayor criterio y análisis)
-  synergix-juez:
+  # Juez: Ahora con espacio para respirar y bloqueado en RAM
+  synergix-ia-juez:
     image: ghcr.io/ggerganov/llama.cpp:server
-    container_name: synergix-juez
-    command: "-m /models/qwen2.5-1.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8080 -c 1024"
+    container_name: synergix-ia-juez
+    # -t 2: Usamos 2 hilos para los 2 CPUs asignados
+    # --mlock: Prohibido ir al disco (SWAP)
+    # -c 1024: Contexto optimizado
+    command: "-m /models/qwen2.5-1.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8080 -c 1024 -t 2 --mlock"
     ports:
       - "8080:8080"
     volumes:
@@ -13,15 +16,16 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5'
-          memory: 2G
+          cpus: '2.0'
+          memory: 1.8G  # Subimos de 600MB a 1.8GB para evitar el 93% de uso
     restart: unless-stopped
 
-  # Pensador: Respuesta rápida y precisa (0.5B optimizado para velocidad y RAG)
-  synergix-pensador:
+  # Pensador: El motor del chat libre, ahora con prioridad de CPU
+  synergix-ia-pensador:
     image: ghcr.io/ggerganov/llama.cpp:server
-    container_name: synergix-pensador
-    command: "-m /models/qwen2.5-0.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8081 -c 2048"
+    container_name: synergix-ia-pensador
+    # --mlock es vital aquí para que el RAG no sea lento
+    command: "-m /models/qwen2.5-0.5b-instruct-q8_0.gguf --host 0.0.0.0 --port 8081 -c 2048 -t 2 --mlock"
     ports:
       - "8081:8081"
     volumes:
@@ -29,10 +33,27 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5'
-          memory: 1.5G
+          cpus: '2.0'
+          memory: 2.5G  # Subimos para que el RAG quepa cómodo en RAM
+    restart: unless-stopped
+
+  # Tu bot de Telegram
+  synergix-bot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile # Asegúrate de tener un Dockerfile en la raíz o carpeta docker
+    container_name: synergix-bot
+    env_file: ../.env
+    depends_on:
+      - synergix-ia-juez
+      - synergix-ia-pensador
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
     restart: unless-stopped
 
 networks:
-  synergix-net:
-    driver: bridge
+  default:
+    name: synergix-net
