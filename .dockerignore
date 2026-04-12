@@ -1,20 +1,11 @@
-# Ignorar modelos pesados (se montan por volumen)
-*.gguf
-*.bin
-*.deb
-*.zip
-*.tar.gz
+cat << 'EOF' > /root/Synergix/.dockerignore
+.git
+**/*.gguf
+**/*.bin
+**/*.pth
+**/*.index
+__pycache__
+aisynergix/ai/models
+aisynergix/ai/data
+EOF
 
-# Ignorar datos y logs locales
-aisynergix/data/
-aisynergix/logs/
-aisynergix/SYNERGIXAI/
-
-# Ignorar entornos y dependencias locales
-venv/
-synergix_venv/
-node_modules/
-.git/
-.cache/
-__pycache__/
-*.pyc
