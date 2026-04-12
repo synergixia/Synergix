@@ -1,4 +1,3 @@
-cat << 'EOF' > /root/Synergix/docker/Dockerfile
 # ETAPA 1: EL MOTOR DE IA (C++)
 FROM ubuntu:22.04 AS motor-ia
 RUN apt-get update && apt-get install -y build-essential git cmake
@@ -19,4 +18,3 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 CMD ["python", "-m", "aisynergix.bot.bot"]
-EOF

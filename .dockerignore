@@ -1,4 +1,3 @@
-cat << 'EOF' > /root/Synergix/.dockerignore
 .git
 **/*.gguf
 **/*.bin
@@ -7,5 +6,3 @@ cat << 'EOF' > /root/Synergix/.dockerignore
 __pycache__
 aisynergix/ai/models
 aisynergix/ai/data
-EOF
-
