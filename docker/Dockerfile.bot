@@ -1,0 +1,22 @@
+FROM python:3.10-slim
+
+# Instalar Node.js y dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Instalar dependencias de Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Si usas el SDK de Greenfield en JS, instálalo aquí (opcional si lo tienes en el repo)
+# RUN npm install -g @bnb-chain/greenfield-js-sdk 
+
+COPY . .
+
+CMD ["python", "aisynergix/bot/bot.py"]
