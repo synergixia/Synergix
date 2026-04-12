@@ -72,26 +72,37 @@ async def ghost_identity_middleware(handler, event, data):
 # =====================================================================
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, user):
-    name = escape_markdown_v2(message.from_user.first_name)
+    # Aseguramos que el nombre no sea None antes de escapar
+    raw_name = message.from_user.first_name or "Soberano"
+    name = escape_markdown_v2(raw_name)
+    
+    # Verificamos que el idioma sea válido, si no, forzamos español
+    lang = getattr(user, "language", "es")
+    if lang not in T: lang = "es"
+    
     await message.answer(
-        T[user.language]["welcome"].format(name=name),
-        reply_markup=get_menu_kb(user.language), parse_mode="MarkdownV2"
+        T[lang]["welcome"].format(name=name),
+        reply_markup=get_menu_kb(lang), parse_mode="MarkdownV2"
     )
 
 @dp.message(F.text.in_([T["es"]["btn_status"], T["en"]["btn_status"], T["zh_cn"]["btn_status"], T["zh"]["btn_status"]]))
 async def view_status(message: types.Message, user):
+    lang = getattr(user, "language", "es")
+    if lang not in T: lang = "es"
+    
     info = user.get_rank_info()
-    prog = min(int((user.points / info["next_pts"]) * 10), 10) if info["next_pts"] > 0 else 10
+    next_pts = info.get("next_pts", 0)
+    prog = min(int((user.points / next_pts) * 10), 10) if next_pts > 0 else 10
     bar = "█" * prog + "░" * (10 - prog)
     
     # Escapamos solo las variables dinámicas para no romper el formato de la plantilla
-    txt = T[user.language]["status_msg"].format(
+    txt = T[lang]["status_msg"].format(
         pts=user.points, 
-        rank=escape_markdown_v2(info["name"]), 
-        benefit=escape_markdown_v2(info["benefit"]),
+        rank=escape_markdown_v2(str(info.get("name", "Nivel 0"))), 
+        benefit=escape_markdown_v2(str(info.get("benefit", "Ninguno"))),
         progress_bar=bar, 
-        next_rank=escape_markdown_v2(f"{info['next_pts'] - user.points} pts"),
-        mult=info["multiplier"], 
+        next_rank=escape_markdown_v2(f"{next_pts - user.points} pts") if next_pts > 0 else "MAX",
+        mult=info.get("multiplier", 1.0), 
         quota=user.daily_quota
     )
     await message.answer(txt, parse_mode="MarkdownV2")
