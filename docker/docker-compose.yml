@@ -1,11 +1,12 @@
 version: '3.8'
 
 services:
-  # Juez (1.5B) - Validación técnica
+  # Juez (1.5B) - Motor C++
   synergix-ia-juez:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..  # Ahora todo mira a la carpeta raíz
+      dockerfile: docker/Dockerfile
+      target: motor-ia  # <--- MAGIA: Solo usa la Etapa 1
     image: synergix-ai:local
     container_name: synergix-ia-juez
     command: "-m /models/qwen2.5-1.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8080 -c 1024 --mlock -t 2"
@@ -21,7 +22,7 @@ services:
       - synergix-net
     restart: unless-stopped
 
-  # Pensador (0.5B) - Chat Libre
+  # Pensador (0.5B) - Motor C++
   synergix-ia-pensador:
     image: synergix-ai:local
     container_name: synergix-ia-pensador
@@ -38,11 +39,12 @@ services:
       - synergix-net
     restart: unless-stopped
 
-  # EL BOT (Aquí estaba el fallo, ahora está integrado)
+  # El Bot - Python + Node
   synergix-bot:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.bot
+      dockerfile: docker/Dockerfile
+      target: bot-python  # <--- MAGIA: Solo usa la Etapa 2
     container_name: synergix-bot
     env_file: ../.env
     depends_on:
