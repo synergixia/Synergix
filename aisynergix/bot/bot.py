@@ -72,8 +72,9 @@ async def ghost_identity_middleware(handler, event, data):
 # =====================================================================
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, user):
+    name = escape_markdown_v2(message.from_user.first_name)
     await message.answer(
-        escape_markdown_v2(T[user.language]["welcome"].format(name=message.from_user.first_name)),
+        T[user.language]["welcome"].format(name=name),
         reply_markup=get_menu_kb(user.language), parse_mode="MarkdownV2"
     )
 
@@ -83,12 +84,17 @@ async def view_status(message: types.Message, user):
     prog = min(int((user.points / info["next_pts"]) * 10), 10) if info["next_pts"] > 0 else 10
     bar = "█" * prog + "░" * (10 - prog)
     
+    # Escapamos solo las variables dinámicas para no romper el formato de la plantilla
     txt = T[user.language]["status_msg"].format(
-        pts=user.points, rank=info["name"], benefit=info["benefit"],
-        progress_bar=bar, next_rank=f"{info['next_pts'] - user.points} pts",
-        mult=info["multiplier"], quota=user.daily_quota
+        pts=user.points, 
+        rank=escape_markdown_v2(info["name"]), 
+        benefit=escape_markdown_v2(info["benefit"]),
+        progress_bar=bar, 
+        next_rank=escape_markdown_v2(f"{info['next_pts'] - user.points} pts"),
+        mult=info["multiplier"], 
+        quota=user.daily_quota
     )
-    await message.answer(escape_markdown_v2(txt), parse_mode="MarkdownV2")
+    await message.answer(txt, parse_mode="MarkdownV2")
 
 @dp.message(F.text.in_([T["es"]["btn_language"], T["en"]["btn_language"], T["zh_cn"]["btn_language"], T["zh"]["btn_language"]]))
 async def lang_menu(message: types.Message, user):
@@ -96,7 +102,7 @@ async def lang_menu(message: types.Message, user):
         [InlineKeyboardButton(text="Español 🇪🇸", callback_data="sl_es"), InlineKeyboardButton(text="English 🇺🇸", callback_data="sl_en")],
         [InlineKeyboardButton(text="简体中文 🇨🇳", callback_data="sl_zh_cn"), InlineKeyboardButton(text="繁體中文 🇭🇰", callback_data="sl_zh")]
     ])
-    await message.answer(escape_markdown_v2(T[user.language]["choose_lang"]), reply_markup=kb, parse_mode="MarkdownV2")
+    await message.answer(T[user.language]["choose_lang"], reply_markup=kb, parse_mode="MarkdownV2")
 
 @dp.callback_query(F.data.startswith("sl_"))
 async def set_lang(callback: types.CallbackQuery, user):

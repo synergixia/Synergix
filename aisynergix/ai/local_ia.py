@@ -3,14 +3,16 @@ import json
 import re
 from aisynergix.config.system_prompts import JUDGE_PROMPT, THINKER_PROMPT
 
-# Endpoints locales de Docker (Sin salida a internet, 100% privado)
-JUDGE_URL = "http://localhost:8080/completion"
-THINKER_URL = "http://localhost:8081/completion"
+# Endpoints de IA conectados a la red interna de Docker
+JUDGE_URL = "http://synergix-ia-juez:8080/completion"
+THINKER_URL = "http://synergix-ia-pensador:8081/completion"
 
 def escape_markdown_v2(text: str) -> str:
-    """Limpieza absoluta para el parse_mode estricto de Telegram."""
-    escape_chars = r"_*[]()~`>#+-=|{}.!"
-    return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
+    """Escapa caracteres reservados de Telegram MarkdownV2 sin romper negritas ni código."""
+    # Lista de caracteres que Telegram exige escapar en MarkdownV2
+    # No escapamos * _ ` [ ] para permitir formato básico de la IA
+    special_chars = r"-.!>#+-=|{}()"
+    return re.sub(f"([{re.escape(special_chars)}])", r"\\\1", text)
 
 async def ask_judge(text: str) -> dict:
     """El Juez (1.5B) evalúa la calidad técnica del aporte. JSON puro."""
