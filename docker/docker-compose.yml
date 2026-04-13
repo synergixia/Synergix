@@ -1,62 +1,56 @@
 version: '3.8'
 
 services:
-  # Juez (1.5B) - Motor C++
   synergix-ia-juez:
-    build:
-      context: ..  # Ahora todo mira a la carpeta raíz
-      dockerfile: docker/Dockerfile
-      target: motor-ia  # <--- MAGIA: Solo usa la Etapa 1
-    image: synergix-ai:local
+    image: ghcr.io/ggerganov/llama.cpp:server
     container_name: synergix-ia-juez
-    command: "-m /models/qwen2.5-1.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8080 -c 1024 --mlock -t 2"
-    ports:
-      - "8080:8080"
+    # Juez Rápido (Qwen 0.5B - Validador de código)
+    command: "-m /models/qwen2.5-0.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8080 -c 512"
     volumes:
-      - ../aisynergix/ai/models:/models:ro
+      - ./aisynergix/ai/models:/models:ro
     deploy:
       resources:
         limits:
-          memory: 2G
-    networks:
-      - synergix-net
-    restart: unless-stopped
-
-  # Pensador (0.5B) - Motor C++
-  synergix-ia-pensador:
-    image: synergix-ai:local
-    container_name: synergix-ia-pensador
-    command: "-m /models/qwen2.5-0.5b-instruct-q8_0.gguf --host 0.0.0.0 --port 8081 -c 2048 --mlock -t 2"
-    ports:
-      - "8081:8081"
-    volumes:
-      - ../aisynergix/ai/models:/models:ro
-    deploy:
-      resources:
-        limits:
+          cpus: '1.0'
           memory: 1.5G
     networks:
       - synergix-net
     restart: unless-stopped
 
-  # El Bot - Python + Node
+  synergix-ia-pensador:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    container_name: synergix-ia-pensador
+    # Pensador Principal (Qwen 1.5B - Motor RAG y Respuestas)
+    command: "-m /models/qwen2.5-1.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8081 -c 2048 -t 2"
+    volumes:
+      - ./aisynergix/ai/models:/models:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 3.5G
+    networks:
+      - synergix-net
+    restart: unless-stopped
+
   synergix-bot:
     build:
-      context: ..
+      context: .
       dockerfile: docker/Dockerfile
-      target: bot-python  # <--- MAGIA: Solo usa la Etapa 2
     container_name: synergix-bot
-    env_file: ../.env
+    env_file:
+      - .env
     depends_on:
       - synergix-ia-juez
       - synergix-ia-pensador
     deploy:
       resources:
         limits:
-          memory: 1G
+          cpus: '1.0'
+          memory: 1.0G
     networks:
       - synergix-net
-    restart: unless-stopped
+    restart: always
 
 networks:
   synergix-net:

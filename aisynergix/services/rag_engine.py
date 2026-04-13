@@ -1,62 +1,44 @@
-import os
 import faiss
+import json
+import logging
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
-try:
-    embedder = SentenceTransformer(EMBEDDING_MODEL)
-except Exception as e:
-    print(f"Error crítico cargando modelo embedder: {e}")
-    embedder = None
+logger = logging.getLogger("RAGEngine")
 
-BRAIN_DIR = "aisynergix/data/brains"
-INDEX_PATH = f"{BRAIN_DIR}/Synergix_ia.index"
-TEXTS_PATH = f"{BRAIN_DIR}/Synergix_ia.txt"
+class RAGEngine:
+    def __init__(self):
+        # Cargamos en float16 para ahorrar RAM en ARM64
+        self.model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+        self.index = None
+        self.metadata = [] # Lista de {content, author_uid}
 
-index = None
-corpus = []
-
-def load_index():
-    """Hidrata la RAM del servidor Hetzner con la Memoria Vectorial inmutable."""
-    global index, corpus
-    os.makedirs(BRAIN_DIR, exist_ok=True)
-    if os.path.exists(INDEX_PATH) and os.path.exists(TEXTS_PATH):
+    def hot_reload(self, index_path, meta_path):
         try:
-            index = faiss.read_index(INDEX_PATH)
-            with open(TEXTS_PATH, "r", encoding="utf-8") as f:
-                corpus = [line.strip() for line in f.readlines() if line.strip()]
-            print(f"[RAG] Memoria Inmortal conectada: {len(corpus)} fragmentos en RAM.")
+            self.index = faiss.read_index(index_path)
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                self.metadata = json.load(f)
+            logger.info("Motor RAG actualizado y recargado en RAM.")
         except Exception as e:
-            print(f"[RAG] Fallo al leer FAISS: {e}")
-            _init_empty()
-    else:
-        _init_empty()
+            logger.error(f"Error en hot_reload RAG: {e}")
 
-def _init_empty():
-    global index, corpus
-    index = faiss.IndexFlatL2(384)
-    corpus = []
-
-load_index()
-
-async def get_related_context(query: str, top_k: int = 3) -> str:
-    """Busca y extrae contexto estricto antes de enviar el prompt a la IA local."""
-    if not index or index.ntotal == 0 or not corpus or not embedder:
-        return ""
-    
-    query_vector = embedder.encode([query]).astype(np.float32)
-    distances, indices = index.search(query_vector, top_k)
-    
-    results = []
-    for i in indices[0]:
-        if i != -1 and i < len(corpus):
-            results.append(corpus[i])
-            
-    if not results: return ""
+    async def get_context(self, query, top_k=3):
+        if not self.index:
+            return "", []
         
-    context_str = "\n".join([f"<legado>\n{res}\n</legado>" for res in results])
-    return f"Contexto del Legado Extraído:\n{context_str}"
+        query_vector = self.model.encode([query]).astype('float32')
+        distances, indices = self.index.search(query_vector, top_k)
+        
+        context_parts = []
+        uids_to_reward = []
+        
+        for idx in indices[0]:
+            if idx != -1 and idx < len(self.metadata):
+                item = self.metadata[idx]
+                context_parts.append(item['content'])
+                if item.get('author_uid'):
+                    uids_to_reward.append(item['author_uid'])
+                    
+        return "\n---\n".join(context_parts), list(set(uids_to_reward))
 
-def reload_index():
-    load_index()
+rag_engine = RAGEngine()

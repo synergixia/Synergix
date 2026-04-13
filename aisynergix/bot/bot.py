@@ -3,206 +3,239 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from dotenv import load_dotenv
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from aisynergix.bot.identity import hydrate_user, dehydrate_user
-from aisynergix.bot.fsm import set_state
-from aisynergix.services.greenfield import upload_aporte
-from aisynergix.services.rag_engine import get_related_context
-from aisynergix.ai.local_ia import ask_judge, ask_thinker, escape_markdown_v2
-from aisynergix.config.constants import MASTER_UIDS, RANK_TABLE
-from aisynergix.ai.manager import sem
+from aisynergix.bot.identity import hydrate_user
+from aisynergix.bot.fsm import set_state, get_state
+from aisynergix.services.greenfield import greenfield
+from aisynergix.services.rag_engine import rag_engine
+from aisynergix.ai.local_ia import ask_judge, ask_thinker
+from aisynergix.ai.manager import brain_manager
 
-# Configuración de Logging Híbrido (Consola local + Archivo auditable)
+# Configuración de Logs (Consola y Archivo para DCellar)
 os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
     level=logging.INFO, 
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler("logs/synergix.log", encoding="utf-8"),
+        logging.FileHandler(f"logs/{datetime.now().strftime('%Y-%m-%d')}.log", encoding="utf-8"),
         logging.StreamHandler(sys.stdout)
     ]
 )
-logger = logging.getLogger("SynergixCore")
+logger = logging.getLogger("SynergixNode")
 
-load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-
-if not TELEGRAM_TOKEN:
-    logger.critical("TELEGRAM_TOKEN no encontrado. Revisa tu archivo .env")
-    sys.exit(1)
-
-bot = Bot(token=TELEGRAM_TOKEN)
+bot = Bot(token=os.getenv("TELEGRAM_TOKEN"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-# Carga en RAM del diccionario maestro
+# Cargar traducciones
 with open("aisynergix/config/locales.json", "r", encoding="utf-8") as f:
     T = json.load(f)
 
-def get_menu_kb(lang: str) -> ReplyKeyboardMarkup:
-    kb = [
-        [KeyboardButton(text=T[lang]["btn_contribute"]), KeyboardButton(text=T[lang]["btn_status"])],
-        [KeyboardButton(text=T[lang]["btn_language"])]
-    ]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+# Tabla de 6 Rangos Oficial
+RANK_TABLE = [
+    {"name": "🌱 Iniciado",      "min_pts": 0,      "benefit": "Acceso base (5 aportes/día)", "limit": 5},
+    {"name": "📈 Activo",        "min_pts": 100,    "benefit": "Contribuidor regular (12 aportes/día)", "limit": 12},
+    {"name": "🧬 Sincronizado",  "min_pts": 500,    "benefit": "Conexión estable (25 aportes/día)", "limit": 25},
+    {"name": "🏗️ Arquitecto",    "min_pts": 1500,   "benefit": "Constructor de la red (40 aportes/día)", "limit": 40},
+    {"name": "🧠 Mente Colmena", "min_pts": 5000,   "benefit": "Sabiduría colectiva (60 aportes/día)", "limit": 60},
+    {"name": "🔮 Oráculo",       "min_pts": 15000,  "benefit": "Infinidad y control total (∞)", "limit": 99999}
+]
 
-# =====================================================================
-# MIDDLEWARE WEB3: Escudo Soberano (Ghost Protocol)
-# =====================================================================
-@dp.message.outer_middleware()
-async def ghost_identity_middleware(handler, event, data):
-    """Oculta la identidad del usuario, carga su estado desde Web3 y lo preserva al final."""
-    if not event.from_user: 
-        return await handler(event, data)
-        
-    uid = str(event.from_user.id)
-    user_context = await hydrate_user(uid)
-    data["user"] = user_context
+def _t(key: str, lang: str, **kwargs) -> str:
+    """Helper de traducción segura a HTML"""
+    raw_text = T.get(lang, T.get("es", {})).get(key, f"Missing: {key}")
     
-    try:
-        return await handler(event, data)
-    finally:
-        await dehydrate_user(user_context)
+    # Conversión del viejo MarkdownV2 de locales.json a HTML seguro
+    raw_text = raw_text.replace("\\-", "-").replace("\\.", ".").replace("\\!", "!")
+    # Transformar *texto* en <b>texto</b> (Implementación rápida de regex)
+    import re
+    raw_text = re.sub(r'\*(.*?)\*', r'<b>\1</b>', raw_text)
+    
+    if kwargs:
+        return raw_text.format(**kwargs)
+    return raw_text
 
-# =====================================================================
-# RUTAS Y COMANDOS (Lógica de Interfaz Unificada)
-# =====================================================================
+def get_menu(lang: str) -> ReplyKeyboardMarkup:
+    """Conserva tu interfaz visual con el selector de idioma"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=T.get(lang, T["es"]).get("btn_contribute", "🔥 Contribuir"))],
+            [
+                KeyboardButton(text=T.get(lang, T["es"]).get("btn_status", "📊 Mi Estado")), 
+                KeyboardButton(text=T.get(lang, T["es"]).get("btn_memory", "🧠 Mi Legado"))
+            ],
+            [KeyboardButton(text=T.get(lang, T["es"]).get("btn_language", "🌐 Idioma"))]
+        ],
+        resize_keyboard=True
+    )
+
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message, user):
-    # Aseguramos que el nombre no sea None antes de escapar
-    raw_name = message.from_user.first_name or "Soberano"
-    name = escape_markdown_v2(raw_name)
+async def cmd_start(message: types.Message):
+    user = await hydrate_user(str(message.from_user.id))
+    # Recuperamos el reto actual sin bloquear
+    reto_bytes = await greenfield.get_object("aisynergix/data/challenges/current.txt")
+    reto_txt = reto_bytes.decode('utf-8') if reto_bytes else "Buscando la siguiente frontera..."
     
-    # Verificamos que el idioma sea válido, si no, forzamos español
-    lang = getattr(user, "language", "es")
-    if lang not in T: lang = "es"
+    txt = _t("welcome", user.language, name=message.from_user.first_name, challenge=reto_txt)
+    await message.answer(txt, reply_markup=get_menu(user.language))
+
+@dp.message(lambda msg: msg.text in [t.get("btn_language", "") for t in T.values()])
+async def cmd_language_menu(message: types.Message):
+    user = await hydrate_user(str(message.from_user.id))
+    builder = InlineKeyboardBuilder()
+    if "es" in T: builder.button(text="🇪🇸 Español", callback_data="lang_es")
+    if "en" in T: builder.button(text="🇬🇧 English", callback_data="lang_en")
+    if "zh_cn" in T: builder.button(text="🇨🇳 简体中文", callback_data="lang_zh_cn")
+    if "zh" in T: builder.button(text="🇹🇼 繁體中文", callback_data="lang_zh")
+    builder.adjust(2)
     
-    await message.answer(
-        T[lang]["welcome"].format(name=name),
-        reply_markup=get_menu_kb(lang), parse_mode="MarkdownV2"
-    )
+    await message.answer(_t("choose_lang", user.language), reply_markup=builder.as_markup())
 
-@dp.message(F.text.in_([T["es"]["btn_status"], T["en"]["btn_status"], T["zh_cn"]["btn_status"], T["zh"]["btn_status"]]))
-async def view_status(message: types.Message, user):
-    lang = getattr(user, "language", "es")
-    if lang not in T: lang = "es"
+@dp.callback_query(F.data.startswith("lang_"))
+async def process_language(callback: types.CallbackQuery):
+    uid = str(callback.from_user.id)
+    new_lang = callback.data.replace("lang_", "")
+    user = await hydrate_user(uid)
     
-    info = user.get_rank_info()
-    next_pts = info.get("next_pts", 0)
-    prog = min(int((user.points / next_pts) * 10), 10) if next_pts > 0 else 10
-    bar = "█" * prog + "░" * (10 - prog)
+    user.language = new_lang
+    asyncio.create_task(greenfield.update_user_metadata(uid, {"lang": new_lang}))
     
-    # Escapamos solo las variables dinámicas para no romper el formato de la plantilla
-    txt = T[lang]["status_msg"].format(
-        pts=user.points, 
-        rank=escape_markdown_v2(str(info.get("name", "Nivel 0"))), 
-        benefit=escape_markdown_v2(str(info.get("benefit", "Ninguno"))),
-        progress_bar=bar, 
-        next_rank=escape_markdown_v2(f"{next_pts - user.points} pts") if next_pts > 0 else "MAX",
-        mult=info.get("multiplier", 1.0), 
-        quota=user.daily_quota
-    )
-    await message.answer(txt, parse_mode="MarkdownV2")
-
-@dp.message(F.text.in_([T["es"]["btn_language"], T["en"]["btn_language"], T["zh_cn"]["btn_language"], T["zh"]["btn_language"]]))
-async def lang_menu(message: types.Message, user):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Español 🇪🇸", callback_data="sl_es"), InlineKeyboardButton(text="English 🇺🇸", callback_data="sl_en")],
-        [InlineKeyboardButton(text="简体中文 🇨🇳", callback_data="sl_zh_cn"), InlineKeyboardButton(text="繁體中文 🇭🇰", callback_data="sl_zh")]
-    ])
-    await message.answer(T[user.language]["choose_lang"], reply_markup=kb, parse_mode="MarkdownV2")
-
-@dp.callback_query(F.data.startswith("sl_"))
-async def set_lang(callback: types.CallbackQuery, user):
-    new_l = callback.data.split("_")[1]
-    # Corrección para sub-dialectos de la UI
-    if new_l == "zh" and callback.data == "sl_zh_cn": new_l = "zh_cn"
-    user.language = new_l
-    await callback.message.edit_text(escape_markdown_v2(T[new_l]["lang_updated"]), parse_mode="MarkdownV2")
-    await callback.message.answer("Synergix Node 🔄", reply_markup=get_menu_kb(new_l))
-
-@dp.message(F.text.in_([T["es"]["btn_contribute"], T["en"]["btn_contribute"], T["zh_cn"]["btn_contribute"], T["zh"]["btn_contribute"]]))
-async def start_contribution_mode(message: types.Message, user):
-    await set_state(user, "AWAITING_CONTRIB")
-    await message.answer(escape_markdown_v2(T[user.language]["await_contrib"]), parse_mode="MarkdownV2")
+    await callback.message.answer(_t("lang_updated", new_lang), reply_markup=get_menu(new_lang))
+    await callback.answer()
 
 @dp.message(F.text)
-async def main_processor(message: types.Message, user):
+async def handle_message(message: types.Message):
+    uid = str(message.from_user.id)
+    user = await hydrate_user(uid)
     lang = user.language
-    
-    if int(user.uid) not in MASTER_UIDS and user.daily_quota <= 0:
-        return await message.answer(escape_markdown_v2(T[lang]["error_quota"].format(rank=user.rank)), parse_mode="MarkdownV2")
+    state = await get_state(user)
 
-    # CORRECCIÓN UX: El mensaje visual aparece de inmediato ANTES de evaluar IA o buscar RAG.
-    loading = await message.answer("🧬🔗🔮")
+    # 1. Menú: Contribuir
+    if message.text in [t.get("btn_contribute", "") for t in T.values()]:
+        await set_state(user, "AWAITING_CONTRIB")
+        await message.answer(_t("await_contrib", lang))
+        return
 
-    try:
-        # MODO 1: Evaluación de Aportes
-        if user.fsm_state == "AWAITING_CONTRIB":
-            if len(message.text) < 20:
-                await loading.delete()
-                return await message.answer(escape_markdown_v2(T[lang]["contrib_short"]), parse_mode="MarkdownV2")
-            
-            # Semáforo para proteger CPU de Hetzner
-            async with sem:
-                res = await ask_judge(message.text)
+    # 2. Menú: Estado (Integra los 6 rangos)
+    if message.text in [t.get("btn_status", "") for t in T.values()]:
+        next_rank_info = "🔮 Cúspide Alcanzada"
+        for i, rank in enumerate(RANK_TABLE):
+            if user.points < rank["min_pts"]:
+                next_rank_info = f"Faltan {rank['min_pts'] - user.points} pts para {rank['name']}"
+                break
                 
-            await loading.delete()
-            
-            if res.get("score", 0) >= 5.0:
-                info = user.get_rank_info()
-                # Aplicamos el multiplicador del nivel correspondiente
-                pts = int(res["score"] * 10 * info["multiplier"])
-                
-                user.points += pts
-                user.impact_index += 1
-                await set_state(user, "IDLE")
-                
-                # Promoción de rango en caliente
-                for rank in RANK_TABLE:
-                    if user.points >= rank["min_pts"]: user.rank = rank["name"]
-                
-                await upload_aporte(user.uid, message.text, {"score": str(res["score"])})
-                await message.answer(escape_markdown_v2(T[lang]["contrib_ok"].format(pts=pts)), parse_mode="MarkdownV2")
-            else:
-                await set_state(user, "IDLE")
-                await message.answer(escape_markdown_v2(T[lang]["contrib_rejected"]), parse_mode="MarkdownV2")
+        # Obtenemos challenge sin bloquear
+        reto_b = await greenfield.get_object("aisynergix/data/challenges/current.txt")
+        
+        txt = _t("status_msg", lang, 
+                 total="Sincronizado", 
+                 challenge=reto_b.decode('utf-8')[:30]+"..." if reto_b else "Activo",
+                 name=message.from_user.first_name,
+                 pts=user.points, 
+                 contribs="Ver On-Chain", 
+                 impact="Activo", 
+                 rank=user.rank, 
+                 benefit=next((r["benefit"] for r in reversed(RANK_TABLE) if user.points >= r["min_pts"]), ""),
+                 progress_bar="▓▓▓░░░", 
+                 next_rank=next_rank_info)
+        await message.answer(txt)
+        return
+
+    # 3. Flujo de FSM: Recibiendo Aporte Técnico
+    if state == "AWAITING_CONTRIB":
+        if len(message.text) < 20:
+            await message.answer(_t("contrib_short", lang))
             return
+            
+        # Velocidad Letal: Evaluación de Juez local (0.5B)
+        res = await ask_judge(message.text)
+        if res.get("score", 0) > 7.0:
+            pts_earned = int(res["score"] * 10)
+            user.points += pts_earned
+            await set_state(user, "IDLE")
+            
+            # Recalcular Rango
+            for rank in reversed(RANK_TABLE):
+                if user.points >= rank["min_pts"]:
+                    user.rank = rank["name"]
+                    break
+                    
+            # Lazy Updates a Greenfield (No bloquean el bot)
+            tags = {"score": res["score"], "category": "code"}
+            asyncio.create_task(greenfield.upload_aporte(uid, message.text, tags))
+            asyncio.create_task(greenfield.update_user_metadata(uid, {"points": user.points, "rank": user.rank}))
+            
+            await message.answer(_t("contrib_ok", lang, pts=pts_earned))
+        else:
+            await set_state(user, "IDLE")
+            await message.answer(_t("contrib_rejected", lang))
+        return
 
-        # MODO 2: Chat Libre Soberano (Pensador + RAG)
-        async with sem:
-            # Recuperar contexto
-            context = await get_related_context(message.text)
-            
-            # Inferencia LLM
-            answer = await ask_thinker(message.text, context, lang)
-            
-            if int(user.uid) not in MASTER_UIDS: 
-                user.daily_quota -= 1
+    # 4. Flujo Chat RAG (Pregunta Libre)
+    if user.daily_quota <= 0 and user.points < 15000: # Oráculos son infinitos
+        await message.answer(_t("error_quota", lang, rank=user.rank))
+        return
+
+    # Procesamiento protegido por Semáforo ARM64
+    async with brain_manager.sem:
+        context, authors = await rag_engine.get_context(message.text)
+        # Velocidad Letal: Consulta al Pensador local (1.5B)
+        respuesta = await ask_thinker(message.text, context, lang)
+        
+        # Puntos Residuales Automáticos
+        for auth_uid in authors:
+            if auth_uid != uid: # Evitar granja propia
+                await brain_manager.reward_queue.put(auth_uid)
                 
-            # Elimina el indicador visual e imprime
-            await loading.delete()
-            await message.answer(answer, parse_mode="MarkdownV2")
+        if user.points < 15000:
+            user.daily_quota -= 1
+            asyncio.create_task(greenfield.update_user_metadata(uid, {"quota": user.daily_quota}))
+            
+        await message.answer(respuesta)
 
-    except Exception as e:
-        logger.error(f"Error procesando NLP: {e}")
-        try: await loading.delete()
-        except: pass
-        await message.answer(escape_markdown_v2("⚠️ Se produjo una anomalía en el nodo. Reintenta."), parse_mode="MarkdownV2")
 
-# =====================================================================
-# INICIALIZADOR
-# =====================================================================
+# === TAREAS EN SEGUNDO PLANO (APScheduler) ===
+
+async def loop_fusion_10m():
+    logger.info("🧬 Ejecutando Fusión de Cerebro Asíncrona (10m)...")
+    from scripts.fusion_brain import fusion_loop
+    await fusion_loop()
+
+async def loop_logs_24h():
+    logger.info("📦 Ejecutando respaldo de logs a DCellar...")
+    today = datetime.now().strftime('%Y-%m-%d')
+    filepath = f"logs/{today}.log"
+    if os.path.exists(filepath):
+        await greenfield.upload_log(filepath)
+
+async def loop_weekly_challenge():
+    logger.info("🏆 Generando Reto Automático...")
+    prompt = "Genera un reto de código técnico sobre Web3, IA Descentralizada o Solidity. Que sea un párrafo conciso."
+    reto = await ask_thinker(prompt, "No context", "es")
+    await greenfield.put_object("aisynergix/data/challenges/current.txt", reto.encode('utf-8'))
+
 async def main():
-    logger.info("Iniciando secuencia de ignición del Nodo Synergix...")
+    logger.info("🚀 Synergix Phantom Node Ignition...")
+    
+    # Demonios
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(loop_fusion_10m, 'interval', minutes=10)
+    scheduler.add_job(loop_logs_24h, 'cron', hour=0)
+    scheduler.add_job(loop_weekly_challenge, 'cron', day_of_week='mon', hour=0)
+    scheduler.start()
+    
+    # Worker de regalías Web3
+    asyncio.create_task(brain_manager.process_residual_rewards())
+    
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Nodo desconectado manualmente.")
+    asyncio.run(main())
