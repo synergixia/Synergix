@@ -2,55 +2,45 @@ version: '3.8'
 
 services:
   synergix-ia-juez:
-    image: ghcr.io/ggerganov/llama.cpp:server
-    container_name: synergix-ia-juez
-    # Juez Rápido (Qwen 0.5B - Validador de código)
-    command: "-m /models/qwen2.5-0.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8080 -c 512"
+    image: ghcr.io/ggerganov/llama.cpp:light
     volumes:
-      - ./aisynergix/ai/models:/models:ro
+      - ../models:/models
+    entrypoint: ["/llama-server"]
+    command: "-m /models/qwen2.5-0.5b.gguf -c 2048 --port 8080 --host 0.0.0.0"
     deploy:
       resources:
         limits:
-          cpus: '1.0'
           memory: 1.5G
     networks:
       - synergix-net
-    restart: unless-stopped
 
   synergix-ia-pensador:
-    image: ghcr.io/ggerganov/llama.cpp:server
-    container_name: synergix-ia-pensador
-    # Pensador Principal (Qwen 1.5B - Motor RAG y Respuestas)
-    command: "-m /models/qwen2.5-1.5b-instruct-q4_k_m.gguf --host 0.0.0.0 --port 8081 -c 2048 -t 2"
+    image: ghcr.io/ggerganov/llama.cpp:light
     volumes:
-      - ./aisynergix/ai/models:/models:ro
+      - ../models:/models
+    entrypoint: ["/llama-server"]
+    command: "-m /models/qwen2.5-1.5b.gguf -c 4096 --port 8081 --host 0.0.0.0"
     deploy:
       resources:
         limits:
-          cpus: '2.0'
           memory: 3.5G
     networks:
       - synergix-net
-    restart: unless-stopped
 
   synergix-bot:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile
-    container_name: synergix-bot
-    env_file:
-      - .env
+    env_file: .env
     depends_on:
       - synergix-ia-juez
       - synergix-ia-pensador
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1.0G
+          memory: 1G
     networks:
       - synergix-net
-    restart: always
 
 networks:
   synergix-net:
