@@ -1,25 +1,47 @@
-# Etapa 1: Base de dependencias del sistema
-FROM python:3.10-slim AS bot-python
+# ETAPA 1: Motor IA (Llama.cpp para ARM64)
+FROM debian:11-slim AS builder
 
-ENV PYTHONPATH=/app
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Instalar dependencias del sistema requeridas para FAISS CPU en ARM64
-RUN apt-get update && apt-get install -y --no-install-recommends \
+WORKDIR /app
+RUN git clone https://github.com/ggerganov/llama.cpp.git .
+RUN mkdir build && cd build && \
+    cmake .. -DLLAMA_CURL=ON && \
+    cmake --build . --config Release -j 4
+
+# ETAPA 2: Synergix Bot (Python)
+FROM python:3.10-slim
+
+# Dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    curl \
     libgomp1 \
-    gcc \
-    python3-dev \
+    libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt .
-# Actualizar pip e instalar numpy blindado (<2.0.0) antes que el resto
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Copiar ejecutables de la etapa 1
+COPY --from=builder /app/build/bin/llama-server /usr/local/bin/
 
+# Instalar dependencias Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar el código del proyecto
 COPY . .
 
-# Comando maestro: Primero el sync y luego el event-loop de Telegram
-CMD ["sh", "-c", "python scripts/sync_brain.py && python -m aisynergix.bot.bot"]
+# Configuración del entorno
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Exponer puertos (Thinker y Judge si corren en el mismo contenedor o via docker-compose)
+EXPOSE 8080 8081
+
+# Script de arranque
+CMD ["python", "aisynergix/bot/bot.py"]

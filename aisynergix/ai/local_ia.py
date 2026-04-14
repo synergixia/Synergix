@@ -1,49 +1,55 @@
 import httpx
 import json
-import os
+import logging
+from typing import Dict, Any, Optional
 
-THINKER_URL = os.getenv("THINKER_URL")
-JUDGE_URL = os.getenv("JUDGE_URL")
+logger = logging.getLogger("Synergix.LocalIA")
 
-async def ask_thinker(query, context, lang):
-    # Prompts en el idioma del usuario
-    system_prompts = {
-        "es": "Eres Synergix, una IA colectiva soberana. Responde de forma técnica y directa.",
-        "en": "You are Synergix, a sovereign collective AI. Respond technically and directly.",
-        "zh_cn": "你是 Synergix，一个主权集体人工智能。请进行技术性和直接的回答。",
-        "zh": "你是 Synergix，一個主權集體人工智能。請進行技術性和直接的回答。"
-    }
-    
-    prompt = f"### Sistema: {system_prompts.get(lang, system_prompts['es'])}\n### Contexto:\n{context}\n\n### Usuario: {query}\n### Synergix:"
-    
-    payload = {
-        "prompt": prompt,
-        "temperature": 0.3,
-        "top_k": 40,
-        "n_predict": 768,
-        "stop": ["###", "Usuario:"]
-    }
-    
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(f"{THINKER_URL}/completion", json=payload, timeout=60.0)
-        return resp.json()["content"].strip()
+class LocalIA:
+    """
+    Conector asíncrono optimizado para llama-server (GGUF).
+    """
+    def __init__(self, thinker_url: str, judge_url: str):
+        self.thinker_url = f"{thinker_url}/completion"
+        self.judge_url = f"{judge_url}/completion"
+        self.timeout = httpx.Timeout(45.0, connect=10.0)
 
-async def ask_judge(text):
-    prompt = f"### Sistema: Evalúa este aporte técnico. Responde SOLO un JSON con 'score' (0-10) y 'valido' (bool).\n### Aporte: {text}\n### JSON:"
-    
-    payload = {
-        "prompt": prompt,
-        "temperature": 0.1,
-        "n_predict": 128
-    }
-    
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(f"{JUDGE_URL}/completion", json=payload, timeout=15.0)
-        try:
-            content = resp.json()["content"]
-            # Limpieza básica por si el modelo añade texto extra
-            json_start = content.find("{")
-            json_end = content.rfind("}") + 1
-            return json.loads(content[json_start:json_end])
-        except:
-            return {"score": 0, "valido": False}
+    async def ask_thinker(self, prompt: str, system_prompt: str = "") -> str:
+        """Petición al Pensador (Qwen 1.5B) con temperatura 0.3 para velocidad."""
+        payload = {
+            "prompt": f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n",
+            "temperature": 0.3,
+            "top_k": 40,
+            "n_predict": 1024,
+            "stop": ["<|im_end|>"]
+        }
+        
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            try:
+                response = await client.post(self.thinker_url, json=payload)
+                data = response.json()
+                return data.get("content", "Error en el Pensador.")
+            except Exception as e:
+                logger.error(f"Error en el Pensador AI: {e}")
+                return "Cerebro desconectado temporalmente."
+
+    async def ask_judge(self, content: str) -> Dict[str, Any]:
+        """Petición al Juez (Qwen 0.5B) para validación hiper-rápida."""
+        system = "Eres un Juez de calidad. Responde ÚNICAMENTE en JSON con los campos: 'score' (0-10), 'category', 'status' ('approved'/'rejected')."
+        prompt = f"Contenido a evaluar: {content}"
+        
+        payload = {
+            "prompt": f"<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n{{",
+            "temperature": 0.1,
+            "n_predict": 256,
+            "stop": ["<|im_end|>"]
+        }
+        
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            try:
+                response = await client.post(self.judge_url, json=payload)
+                raw_json = "{" + response.json().get("content", "").split("}")[0] + "}"
+                return json.loads(raw_json)
+            except Exception as e:
+                logger.error(f"Error en el Juez AI: {e}")
+                return {"score": 0, "status": "rejected"}

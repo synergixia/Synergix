@@ -2,11 +2,16 @@ version: '3.8'
 
 services:
   synergix-ia-juez:
-    image: ghcr.io/ggerganov/llama.cpp:full
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: synergix-ia-juez
+    restart: always
+    ports:
+      - "8080:8080"
     volumes:
-      - ../models:/models
-    entrypoint: ["/llama-server"]
-    command: "-m /models/qwen2.5-0.5b.gguf -c 2048 --port 8080 --host 0.0.0.0"
+      - ../aisynergix/ai/models:/models
+    command: llama-server -m /models/qwen2.5-0.5b.gguf --host 0.0.0.0 --port 8080 -c 1024 -np 256
     deploy:
       resources:
         limits:
@@ -15,11 +20,16 @@ services:
       - synergix-net
 
   synergix-ia-pensador:
-    image: ghcr.io/ggerganov/llama.cpp:full
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: synergix-ia-pensador
+    restart: always
+    ports:
+      - "8081:8081"
     volumes:
-      - ../models:/models
-    entrypoint: ["/llama-server"]
-    command: "-m /models/qwen2.5-1.5b.gguf -c 4096 --port 8081 --host 0.0.0.0"
+      - ../aisynergix/ai/models:/models
+    command: llama-server -m /models/qwen2.5-1.5b.gguf --host 0.0.0.0 --port 8081 -c 4096 -np 1024
     deploy:
       resources:
         limits:
@@ -31,7 +41,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    env_file: .env
+    container_name: synergix-bot
+    restart: always
+    env_file: ../.env
     depends_on:
       - synergix-ia-juez
       - synergix-ia-pensador

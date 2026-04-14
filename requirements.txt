@@ -1,7 +1,10 @@
-aiogram==3.4.1
-httpx==0.27.0
-faiss-cpu==1.8.0
-sentence-transformers==2.6.1
-eth-account==0.11.0
+# Synergix Ghost Node Dependencies
 numpy<2.0.0
-APScheduler==3.10.4
+aiogram==3.4.1
+httpx[http2]==0.27.0
+faiss-cpu==1.7.4
+sentence-transformers==2.5.1
+eth-account==0.11.0
+apscheduler==3.10.4
+python-dotenv==1.0.1
+pyyaml==6.0.1
