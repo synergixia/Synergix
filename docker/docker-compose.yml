@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   synergix-ia-juez:
-    image: ghcr.io/ggerganov/llama.cpp:light
+    image: ghcr.io/ggerganov/llama.cpp:full
     volumes:
       - ../models:/models
     entrypoint: ["/llama-server"]
@@ -15,7 +15,7 @@ services:
       - synergix-net
 
   synergix-ia-pensador:
-    image: ghcr.io/ggerganov/llama.cpp:light
+    image: ghcr.io/ggerganov/llama.cpp:full
     volumes:
       - ../models:/models
     entrypoint: ["/llama-server"]
