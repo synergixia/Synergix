@@ -1,59 +1,114 @@
-version: '3.8'
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Synergix — Nodo Fantasma (Hetzner ARM64, 8GB RAM)
+# Arquitectura: Stateless | BNB Greenfield como única fuente de verdad.
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  synergix-net:
+    driver: bridge
+
+volumes:
+  brain_data:
+    driver: local
 
 services:
+
+  # ───────────────────────────────────────────
+  # IA JUEZ — Modelo 0.5B en puerto 8080
+  # Valida y puntúa aportes de conocimiento.
+  # ───────────────────────────────────────────
   synergix-ia-juez:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
+    image: ollama/ollama:latest
     container_name: synergix-ia-juez
-    restart: always
+    restart: unless-stopped
+    networks:
+      - synergix-net
     ports:
-      - "8080:8080"
+      - "8080:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_MODELS=/root/.ollama/models
     volumes:
-      - ../aisynergix/ai/models:/models
-    command: llama-server -m /models/qwen2.5-0.5b.gguf --host 0.0.0.0 --port 8080 -c 1024 -np 256
+      - ./models/juez:/root/.ollama/models
     deploy:
       resources:
         limits:
-          memory: 1.5G
-    networks:
-      - synergix-net
+          memory: 1536M   # 1.5 GB
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
+  # ───────────────────────────────────────────
+  # IA PENSADOR — Modelo 1.5B en puerto 8081
+  # Genera respuestas expertas y multilingües.
+  # ───────────────────────────────────────────
   synergix-ia-pensador:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
+    image: ollama/ollama:latest
     container_name: synergix-ia-pensador
-    restart: always
+    restart: unless-stopped
+    networks:
+      - synergix-net
     ports:
-      - "8081:8081"
+      - "8081:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_MODELS=/root/.ollama/models
     volumes:
-      - ../aisynergix/ai/models:/models
-    command: llama-server -m /models/qwen2.5-1.5b.gguf --host 0.0.0.0 --port 8081 -c 4096 -np 1024
+      - ./models/pensador:/root/.ollama/models
     deploy:
       resources:
         limits:
-          memory: 3.5G
-    networks:
-      - synergix-net
+          memory: 3584M   # 3.5 GB
+        reservations:
+          memory: 1024M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
 
+  # ───────────────────────────────────────────
+  # BOT — Nodo principal de Synergix
+  # Aiogram + RAG + Greenfield + Scheduler.
+  # ───────────────────────────────────────────
   synergix-bot:
     build:
       context: ..
       dockerfile: docker/Dockerfile
     container_name: synergix-bot
-    restart: always
-    env_file: ../.env
+    restart: unless-stopped
+    networks:
+      - synergix-net
     depends_on:
-      - synergix-ia-juez
-      - synergix-ia-pensador
+      synergix-ia-juez:
+        condition: service_healthy
+      synergix-ia-pensador:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      - IA_JUEZ_URL=http://synergix-ia-juez:8080
+      - IA_PENSADOR_URL=http://synergix-ia-pensador:8081
+      - LOCAL_BRAIN_DIR=/app/brain
+    volumes:
+      - brain_data:/app/brain
     deploy:
       resources:
         limits:
-          memory: 1G
-    networks:
-      - synergix-net
-
-networks:
-  synergix-net:
-    driver: bridge
+          memory: 1024M   # 1 GB
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

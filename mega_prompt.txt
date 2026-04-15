@@ -1,0 +1,39 @@
+Actúa como el Arquitecto Web3 y Desarrollador Senior de "Synergix". Tu misión absoluta es programar el backend definitivo, 100% funcional y de grado de producción del Nodo Fantasma (Hetzner ARM64, 8GB RAM).
+⚠️ REGLA DE EJECUCIÓN CRÍTICA: Las carpetas del repositorio ya están creadas. UTILIZA TU HERRAMIENTA escribir_archivo para generar y guardar el código de CADA módulo directamente en mi sistema. NO resumas, NO cortes el código, NO comprimas, NO uses "pass" ni "TODO". Escribe el código funcional completo, incluyendo imports, try/excepts, asincronía y logs detallados. Si alcanzas tu límite físico de tokens, detente limpiamente y yo te escribiré "MÁS" para que continúes.
+🔴 1. REGLAS FUNDAMENTALES Y SOBERANÍA:
+Stateless Absoluto: Cero bases de datos locales. La ÚNICA fuente de verdad es BNB Greenfield (synergixai). Los usuarios son archivos de 0 bytes en aisynergix/users/{uid}.
+IA Dual Local: Pensador (1.5B) en puerto 8081; Juez (0.5B) en puerto 8080. Red interna Docker: http://synergix-ia-pensador:8081 y http://synergix-ia-juez:8080.
+Comunicación Web3 Pura: Sin Node.js. Implementa firmas ECDSA V4 nativas en Python (eth-account y hmac). Incluye comentarios detallados sobre la construcción del Canonical Request para la firma.
+👤 2. IDENTIDAD, ONBOARDING Y RANKING:
+Hidratador y Middleware: Implementa un middleware en Aiogram que llame a identity.hydrate_user(uid) en cada mensaje.
+Idempotencia (0-bytes): Si un usuario es nuevo (404 en HEAD request), crea el archivo en aisynergix/users/{uid} con Tags por defecto: points: 0, rank: Iniciado, welcomed: false, language: auto.
+Nombre Real y Bienvenida: Saluda por first_name. Si welcomed es false, envía el onboarding y actualiza a true.
+Ranking Real-time (#S): Al escribir #S, muestra el Top 10 de usuarios (Puntos/Nombre) y el número total de usuarios registrados en el bucket.
+🧠 3. MOTOR RAG Y PUNTOS RESIDUALES:
+RAG Engine: Usa faiss-cpu y all-MiniLM-L6-v2 en float16. Devuelve el texto y el author_uid.
+Puntos Residuales: Si RAG usa un aporte, dispara un Lazy Update asíncrono sumando puntos al author_uid.
+Notificación Diaria (23:59): Notifica al usuario (en su idioma) cuántas veces fue útil su conocimiento ese día.
+⚙️ 4. CONFIGURACIÓN Y CONSTANTES (EL ADN):
+constants.py: URLs de SP, umbrales de rango (Iniciado 0, Activo 100, Sincronizado 500, Arquitecto 1500, Mente Colmena 5000, Oráculo 15000), rutas de DCellar y límites de Gas.
+system_prompts.py: >     * Juez: Debe obligar a devolver un JSON con calificacion (0-10), validez_tecnica y categoria.
+Pensador: Personalidad experta, técnica, multilingüe y con uso estratégico de emojis.
+🗺️ 5. MANIFIESTO DE GENERACIÓN (POR MÓDULOS):
+MÓDULO 1: Infraestructura y DNA
+requirements.txt: numpy<2.0.0, aiogram, httpx, faiss-cpu, sentence-transformers, eth-account, APScheduler.
+aisynergix/config/constants.py y aisynergix/config/system_prompts.py.
+docker/docker-compose.yml (Límites: Juez 1.5G, Pensador 3.5G, Bot 1G).
+MÓDULO 2: Servicios Web3 (aisynergix/services/)
+greenfield.py: Firma V4 nativa, get_user_metadata (HEAD), update_user_metadata, upload_aporte, list_objects, get_object, put_object.
+rag_engine.py: FAISS, get_context, reload_index (Hot-Reload).
+MÓDULO 3: Inteligencia y Gestión (aisynergix/ai/)
+local_ia.py: Conector HTTP asíncrono. ask_judge (score de calidad), ask_thinker.
+manager.py: Semaphore(2), cola de prioridad por Rango, salud de RAM y orquestación de puntos residuales.
+MÓDULO 4: El Bot de Telegram (aisynergix/bot/)
+identity.py: Clase UserContext, hydrate_user y dehydrate_user.
+fsm.py: Estados Web3-Only.
+bot.py: Middleware de identidad, handlers multilingües, comando #S, y Scheduler (10m Fusión, 24h Logs, 23:59 Notificación, Lunes 00:00 Retos).
+MÓDULO 5: Evolución e Ignición (scripts/)
+sync_brain.py: Descarga inicial con verificación de integridad SHA-256.
+fusion_brain.py: Tarea de 10m. Filtra solo aportes con quality_score > 7. Genera nuevo .index, sube a DCellar y actualiza brain_pointer.
+main.py: Punto de entrada asíncrono.
+Utiliza tu herramienta escribir_archivo. No quiero explicaciones.
