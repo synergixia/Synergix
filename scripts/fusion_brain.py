@@ -1,86 +1,97 @@
+"""
+fusion_brain.py — Tarea de 10m de Evolución del Cerebro.
+Filtra aportes de Greenfield con calidad > 7 y reconstruye el índice FAISS.
+Sube el nuevo índice a DCellar (Greenfield) y actualiza el Brain Pointer.
+"""
+
 import os
-import faiss
-import numpy as np
+import json
 import logging
-from datetime import datetime
-from sentence_transformers import SentenceTransformer
+import asyncio
+from typing import List, Dict, Any
 
-from aisynergix.services.greenfield import GreenfieldClient
-from aisynergix.services.rag_engine import RAGEngine
+from aisynergix.services.greenfield import (
+    list_objects,
+    get_object,
+    put_object,
+)
+from aisynergix.services.rag_engine import rag_engine
+from aisynergix.config.constants import (
+    APORTES_PREFIX,
+    BRAIN_PREFIX,
+    BRAIN_POINTER_OBJECT,
+    LOCAL_BRAIN_DIR,
+    LOCAL_INDEX_FILE,
+    LOCAL_INDEX_META,
+    RAG_MIN_QUALITY_SCORE
+)
 
-logger = logging.getLogger("Synergix.Fusion")
+logger = logging.getLogger(__name__)
 
-async def fuse_now(greenfield: GreenfieldClient, rag: RAGEngine):
-    """
-    Evolución Acelerada: Inyecta nuevos conocimientos en el cerebro cada 10 min.
-    """
-    logger.info("Iniciando proceso de Fusión Cerebral...")
-    
-    # 1. Recuperar la versión actual desde el Brain Pointer
-    pointer_data = await greenfield.get_user_metadata(0) # Usamos UID 0 para config global
-    last_v = pointer_data.get("latest_v", "v0")
-    
-    # 2. Buscar nuevos aportes (Simplificado: En producción se filtraría por fecha)
-    # Para este ejemplo, simulamos que hay conocimiento en local 'brain_updates.txt'
-    update_file = "data/brain_updates.txt"
-    if not os.path.exists(update_file) or os.path.getsize(update_file) == 0:
-        logger.info("No hay nuevos aportes para fusionar.")
+async def run_fusion():
+    """Ejecuta el ciclo de fusión cerebral."""
+    logger.info("[Fusion] Iniciando ciclo de fusión de conocimiento...")
+
+    # 1. Listar todos los aportes en el bucket
+    all_aportes_keys = await list_objects(APORTES_PREFIX)
+    if not all_aportes_keys:
+        logger.info("[Fusion] No se encontraron aportes en Greenfield.")
         return
 
-    # 3. Cargar nuevos datos y deduplicar
-    new_docs = []
-    with open(update_file, "r") as f:
-        for line in f:
-            if "|" in line:
-                uid, content = line.split("|", 1)
-                # Check similitud con el cerebro actual
-                context, _ = rag.get_context(content, top_k=1)
-                # Si es muy similar (>0.92), lo ignoramos
-                new_docs.append((uid.strip(), content.strip()))
+    high_quality_data = []
 
-    if not new_docs:
+    # 2. Filtrar aportes por calidad > 7
+    # Nota: Los aportes se guardan como JSON con metadata.score
+    for key in all_aportes_keys:
+        try:
+            raw_data = await get_object(key)
+            if not raw_data:
+                continue
+            
+            aporte_json = json.loads(raw_data.decode('utf-8'))
+            content = aporte_json.get("content")
+            metadata = aporte_json.get("metadata", {})
+            score = float(metadata.get("quality_score", 0))
+            author = metadata.get("author_uid", "unknown")
+
+            if score >= RAG_MIN_QUALITY_SCORE:
+                high_quality_data.append({
+                    "text": content,
+                    "author_uid": author,
+                    "score": score
+                })
+        except Exception as e:
+            logger.error(f"[Fusion] Error procesando aporte {key}: {e}")
+
+    if not high_quality_data:
+        logger.info("[Fusion] Ningún aporte nuevo superó el umbral de calidad.")
         return
 
-    # 4. Actualizar FAISS e Index
-    model = rag.model
-    new_contents = [d[1] for d in new_docs]
-    new_vectors = model.encode(new_contents)
-    
-    if rag.index is None:
-        rag.index = faiss.IndexFlatL2(new_vectors.shape[1])
-    
-    rag.index.add(new_vectors.astype("float32"))
-    
-    # 5. Guardar nueva versión localmente
-    new_v_num = int(last_v.replace("v", "")) + 1
-    new_v = f"v{new_v_num}"
-    
-    index_path = f"data/Synergix_ia_{new_v}.index"
-    txt_path = f"data/Synergix_ia_{new_v}.txt"
-    
-    faiss.write_index(rag.index, index_path)
-    
-    # Actualizar el TXT consolidado
-    with open(txt_path, "a") as f:
-        for uid, content in new_docs:
-            f.write(f"{uid}|{content}\n")
+    logger.info(f"[Fusion] Fusionando {len(high_quality_data)} aportes de alta calidad.")
 
-    # 6. Subir a Greenfield
-    with open(index_path, "rb") as f:
-        await greenfield.put_object(f"aisynergix/cerebros/Synergix_ia_{new_v}.index", f.read())
-    
-    with open(txt_path, "rb") as f:
-        await greenfield.put_object(f"aisynergix/cerebros/Synergix_ia_{new_v}.txt", f.read())
+    # 3. Reconstruir índice local
+    rag_engine.rebuild_index(high_quality_data)
 
-    # 7. Actualizar Brain Pointer
-    await greenfield.update_user_metadata(0, {"latest_v": new_v})
-    
-    # Limpiar actualizaciones
-    open(update_file, 'w').close()
-    
-    # 8. Hot Reload
-    rag.index_path = index_path
-    rag.txt_path = txt_path
-    rag.hot_reload()
-    
-    logger.info(f"Fusión completada: Cerebro evolucionado a {new_v}")
+    # 4. Subir archivos de índice a Greenfield (DCellar)
+    idx_path = os.path.join(LOCAL_BRAIN_DIR, LOCAL_INDEX_FILE)
+    meta_path = os.path.join(LOCAL_BRAIN_DIR, LOCAL_INDEX_META)
+
+    try:
+        with open(idx_path, 'rb') as f:
+            await put_object(f"{BRAIN_PREFIX}/{LOCAL_INDEX_FILE}", f.read(), content_type="application/octet-stream")
+        
+        with open(meta_path, 'rb') as f:
+            await put_object(f"{BRAIN_PREFIX}/{LOCAL_INDEX_META}", f.read(), content_type="application/json")
+
+        # 5. Actualizar Brain Pointer (indicando la versión/timestamp actual)
+        timestamp = str(int(asyncio.get_event_loop().time()))
+        await put_object(BRAIN_POINTER_OBJECT, timestamp.encode('utf-8'), content_type="text/plain")
+        
+        logger.info("[Fusion] ✅ Cerebro sincronizado con éxito en Greenfield.")
+    except Exception as e:
+        logger.error(f"[Fusion] ❌ Error subiendo el cerebro evolucionado: {e}")
+
+if __name__ == "__main__":
+    # Configuración de logging para ejecución manual
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(run_fusion())
