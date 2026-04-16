@@ -1,9 +1,10 @@
 """
 constants.py — ADN de Synergix.
-Define URLs de Storage Providers, umbrales de rango, rutas de DCellar y límites de Gas.
+Define URLs de Storage Providers, umbrales de rango, rutas de DCellar, máscara de ofuscación y límites de Gas.
 """
 
 import os
+from typing import Dict
 
 # ─────────────────────────────────────────────
 # BNB GREENFIELD — STORAGE PROVIDER ENDPOINTS
@@ -24,10 +25,14 @@ GREENFIELD_CHAIN_RPC: str = os.getenv(
 # Nombre del bucket principal del proyecto en Greenfield
 GREENFIELD_BUCKET: str = os.getenv("GREENFIELD_BUCKET", "synergixai")
 
-# Ruta base para los archivos de usuario (0-bytes idempotentes)
+# ─────────────────────────────────────────────
+# RUTAS DCELIAR — ESTRUCTURA DE ALMACENAMIENTO
+# ─────────────────────────────────────────────
+
+# Ruta base para los archivos de usuario (0-bytes idempotentes) con UID ofuscado
 USERS_PREFIX: str = "aisynergix/users"
 
-# Ruta base para los aportes de conocimiento
+# Ruta base para los aportes de conocimiento (YYYY-MM/uid_ofuscado_ts.txt)
 APORTES_PREFIX: str = "aisynergix/aportes"
 
 # Ruta base para los índices FAISS del cerebro
@@ -36,18 +41,38 @@ BRAIN_PREFIX: str = "aisynergix/brain"
 # Nombre del objeto puntero que indica el índice activo
 BRAIN_POINTER_OBJECT: str = "aisynergix/brain/brain_pointer.txt"
 
+# Ruta del archivo de ranking estático Top 10 (generado cada 10m)
+TOP10_JSON_OBJECT: str = "aisynergix/data/top10.json"
+
 # ─────────────────────────────────────────────
-# DCELLER — RUTAS DE ALMACENAMIENTO DE ÍNDICES
+# OFUSCACIÓN DE IDENTIDAD — PRIVACIDAD PbD
 # ─────────────────────────────────────────────
 
-# Directorio local donde se almacenan los índices descargados
+# Máscara XOR de 64 bits para ofuscar UIDs de Telegram
+# Número mágico derivado de la constante áurea φ (0x9E3779B97F4A7C15)
+SECRET_MASK: int = int(os.getenv("SECRET_MASK", "0x9E3779B97F4A7C15"), 16)
+
+# TTL del caché LRU en segundos (10 minutos)
+CACHE_TTL_SECONDS: int = int(os.getenv("CACHE_TTL_SECONDS", "600"))
+
+# ─────────────────────────────────────────────
+# DIRECTORIOS LOCALES (Ghost Node)
+# ─────────────────────────────────────────────
+
+# Directorio donde se almacenan los índices FAISS descargados
 LOCAL_BRAIN_DIR: str = os.getenv("LOCAL_BRAIN_DIR", "/app/brain")
+
+# Directorio donde se almacenan datos estáticos (top10.json)
+LOCAL_DATA_DIR: str = os.getenv("LOCAL_DATA_DIR", "/app/data")
 
 # Nombre del archivo de índice FAISS local activo
 LOCAL_INDEX_FILE: str = "synergix.index"
 
 # Nombre del archivo de metadatos del índice (mapa uid → chunk)
 LOCAL_INDEX_META: str = "synergix_meta.json"
+
+# Ruta local del archivo Top 10
+LOCAL_TOP10_JSON_PATH: str = os.path.join(LOCAL_DATA_DIR, "top10.json")
 
 # ─────────────────────────────────────────────
 # CREDENCIALES WEB3 (cargadas desde entorno)
@@ -74,7 +99,7 @@ GAS_PRICE: str = os.getenv("GAS_PRICE", "5000000000")  # 5 Gwei
 # ─────────────────────────────────────────────
 
 # Mapa ordenado: nombre_rango → puntos_mínimos
-RANK_THRESHOLDS: dict[str, int] = {
+RANK_THRESHOLDS: Dict[str, int] = {
     "Iniciado":      0,
     "Activo":        100,
     "Sincronizado":  500,
@@ -141,7 +166,7 @@ RAG_MIN_QUALITY_SCORE: float = float(os.getenv("RAG_MIN_QUALITY_SCORE", "7.0"))
 # Número máximo de resultados que devuelve el RAG por consulta
 RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "5"))
 
-# Modelo de embeddings a usar (HuggingFace)
+# Modelo de embeddings a usar (HuggingFace) con precisión float16
 EMBEDDING_MODEL: str = os.getenv(
     "EMBEDDING_MODEL",
     "sentence-transformers/all-MiniLM-L6-v2"

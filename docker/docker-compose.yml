@@ -1,114 +1,149 @@
-version: "3.9"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Synergix — Nodo Fantasma (Hetzner ARM64, 8GB RAM)
-# Arquitectura: Stateless | BNB Greenfield como única fuente de verdad.
-# ─────────────────────────────────────────────────────────────────────────────
-
-networks:
-  synergix-net:
-    driver: bridge
-
-volumes:
-  brain_data:
-    driver: local
+version: '3.8'
 
 services:
-
-  # ───────────────────────────────────────────
-  # IA JUEZ — Modelo 0.5B en puerto 8080
-  # Valida y puntúa aportes de conocimiento.
-  # ───────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────────────────────
+  # IA JUEZ (0.5B) — Puerto 8080
+  # Evaluador de calidad de aportes con límite estricto de 1.5GB RAM
+  # ──────────────────────────────────────────────────────────────────────────────
   synergix-ia-juez:
     image: ollama/ollama:latest
     container_name: synergix-ia-juez
-    restart: unless-stopped
-    networks:
-      - synergix-net
     ports:
       - "8080:11434"
+    volumes:
+      - ./aisynergix/ai/models:/root/.ollama/models
+      - juez-data:/root/.ollama
+    command: >
+      sh -c "
+      ollama pull qwen2:0.5b &&
+      ollama run qwen2:0.5b &
+      /bin/ollama serve
+      "
     environment:
       - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_MODELS=/root/.ollama/models
-    volumes:
-      - ./models/juez:/root/.ollama/models
-    deploy:
-      resources:
-        limits:
-          memory: 1536M   # 1.5 GB
-        reservations:
-          memory: 512M
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_KEEP_ALIVE=24h
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    networks:
+      - synergix-net
+    restart: unless-stopped
 
-  # ───────────────────────────────────────────
-  # IA PENSADOR — Modelo 1.5B en puerto 8081
-  # Genera respuestas expertas y multilingües.
-  # ───────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────────────────────
+  # IA PENSADOR (1.5B) — Puerto 8081
+  # Generador de respuestas expertas con límite de 3.5GB RAM
+  # ──────────────────────────────────────────────────────────────────────────────
   synergix-ia-pensador:
     image: ollama/ollama:latest
     container_name: synergix-ia-pensador
-    restart: unless-stopped
-    networks:
-      - synergix-net
     ports:
       - "8081:11434"
+    volumes:
+      - ./aisynergix/ai/models:/root/.ollama/models
+      - pensador-data:/root/.ollama
+    command: >
+      sh -c "
+      ollama pull qwen2:1.5b &&
+      ollama run qwen2:1.5b &
+      /bin/ollama serve
+      "
     environment:
       - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_MODELS=/root/.ollama/models
-    volumes:
-      - ./models/pensador:/root/.ollama/models
-    deploy:
-      resources:
-        limits:
-          memory: 3584M   # 3.5 GB
-        reservations:
-          memory: 1024M
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_KEEP_ALIVE=24h
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 90s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 3.5G
+          cpus: '2.0'
+        reservations:
+          memory: 2.5G
+          cpus: '1.0'
+    networks:
+      - synergix-net
+    restart: unless-stopped
 
-  # ───────────────────────────────────────────
-  # BOT — Nodo principal de Synergix
-  # Aiogram + RAG + Greenfield + Scheduler.
-  # ───────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────────────────────
+  # BOT SYNERGIX — Nodo Fantasma Principal
+  # Orquestador de Telegram, Web3 y gestión de recursos (1GB RAM)
+  # ──────────────────────────────────────────────────────────────────────────────
   synergix-bot:
     build:
       context: ..
       dockerfile: docker/Dockerfile
     container_name: synergix-bot
-    restart: unless-stopped
-    networks:
-      - synergix-net
     depends_on:
       synergix-ia-juez:
         condition: service_healthy
       synergix-ia-pensador:
         condition: service_healthy
-    env_file:
-      - ../.env
-    environment:
-      - IA_JUEZ_URL=http://synergix-ia-juez:8080
-      - IA_PENSADOR_URL=http://synergix-ia-pensador:8081
-      - LOCAL_BRAIN_DIR=/app/brain
     volumes:
-      - brain_data:/app/brain
+      - ../aisynergix/data:/app/data
+      - ../.env:/app/.env:ro
+      - brain-volume:/app/brain
+      - logs-volume:/app/logs
+    environment:
+      - GREENFIELD_SP_ENDPOINT=${GREENFIELD_SP_ENDPOINT}
+      - GREENFIELD_BUCKET=${GREENFIELD_BUCKET}
+      - OPERATOR_PRIVATE_KEY=${OPERATOR_PRIVATE_KEY}
+      - OPERATOR_ADDRESS=${OPERATOR_ADDRESS}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - SECRET_MASK=${SECRET_MASK}
+      - PYTHONUNBUFFERED=1
     deploy:
       resources:
         limits:
-          memory: 1024M   # 1 GB
+          memory: 1G
+          cpus: '0.5'
         reservations:
-          memory: 256M
-    healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+          memory: 512M
+          cpus: '0.25'
+    networks:
+      - synergix-net
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# VOLÚMENES PERSISTENTES
+# ──────────────────────────────────────────────────────────────────────────────
+volumes:
+  juez-data:
+    driver: local
+  pensador-data:
+    driver: local
+  brain-volume:
+    driver: local
+  logs-volume:
+    driver: local
+
+# ──────────────────────────────────────────────────────────────────────────────
+# RED INTERNA DOCKER
+# ──────────────────────────────────────────────────────────────────────────────
+networks:
+  synergix-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
