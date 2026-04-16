@@ -1,200 +1,78 @@
 """
 constants.py — ADN de Synergix.
-Define URLs de Storage Providers, umbrales de rango, rutas de DCellar, máscara de ofuscación y límites de Gas.
+Define URLs de Storage Providers, umbrales de rango, rutas de DCellar, 
+límites de configuración y la máscara secreta para ofuscación de identidad.
 """
 
 import os
-from typing import Dict
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ─────────────────────────────────────────────
+# IDENTIDAD Y OFUSCACIÓN (Privacidad PbD)
+# ─────────────────────────────────────────────
+# Máscara XOR de 64 bits para ofuscar UIDs de Telegram
+SECRET_MASK: int = int(os.getenv("SECRET_MASK", "0x5A9A7B8C9D0E1F2A"), 16)
+
+# ─────────────────────────────────────────────
+# UMBRALES DE RANGO (Gamificación)
+# ─────────────────────────────────────────────
+RANKS = {
+    0: "Iniciado",
+    100: "Activo",
+    500: "Sincronizado",
+    1500: "Arquitecto",
+    5000: "Mente Colmena",
+    15000: "Oráculo"
+}
+
+def get_rank_for_points(points: int) -> str:
+    """Devuelve el rango correspondiente según los puntos actuales."""
+    current_rank = "Iniciado"
+    for threshold, rank_name in sorted(RANKS.items()):
+        if points >= threshold:
+            current_rank = rank_name
+        else:
+            break
+    return current_rank
 
 # ─────────────────────────────────────────────
 # BNB GREENFIELD — STORAGE PROVIDER ENDPOINTS
 # ─────────────────────────────────────────────
-
-# URL pública del SP principal (API REST de Greenfield)
-GREENFIELD_SP_ENDPOINT: str = os.getenv(
-    "GREENFIELD_SP_ENDPOINT",
-    "https://gnfd-testnet-sp1.bnbchain.org"
-)
-
-# URL de la API de cadena (RPC) de Greenfield
-GREENFIELD_CHAIN_RPC: str = os.getenv(
-    "GREENFIELD_CHAIN_RPC",
-    "https://gnfd-testnet-fullnode-tendermint-us.bnbchain.org"
-)
-
-# Nombre del bucket principal del proyecto en Greenfield
+GREENFIELD_SP_ENDPOINT: str = os.getenv("GREENFIELD_SP_ENDPOINT", "https://gnfd-testnet-sp1.bnbchain.org")
+GREENFIELD_CHAIN_RPC: str = os.getenv("GREENFIELD_CHAIN_RPC", "https://gnfd-testnet-fullnode-tendermint-us.bnbchain.org")
 GREENFIELD_BUCKET: str = os.getenv("GREENFIELD_BUCKET", "synergixai")
-
-# ─────────────────────────────────────────────
-# RUTAS DCELIAR — ESTRUCTURA DE ALMACENAMIENTO
-# ─────────────────────────────────────────────
-
-# Ruta base para los archivos de usuario (0-bytes idempotentes) con UID ofuscado
-USERS_PREFIX: str = "aisynergix/users"
-
-# Ruta base para los aportes de conocimiento (YYYY-MM/uid_ofuscado_ts.txt)
-APORTES_PREFIX: str = "aisynergix/aportes"
-
-# Ruta base para los índices FAISS del cerebro
-BRAIN_PREFIX: str = "aisynergix/brain"
-
-# Nombre del objeto puntero que indica el índice activo
-BRAIN_POINTER_OBJECT: str = "aisynergix/brain/brain_pointer.txt"
-
-# Ruta del archivo de ranking estático Top 10 (generado cada 10m)
-TOP10_JSON_OBJECT: str = "aisynergix/data/top10.json"
-
-# ─────────────────────────────────────────────
-# OFUSCACIÓN DE IDENTIDAD — PRIVACIDAD PbD
-# ─────────────────────────────────────────────
-
-# Máscara XOR de 64 bits para ofuscar UIDs de Telegram
-# Número mágico derivado de la constante áurea φ (0x9E3779B97F4A7C15)
-SECRET_MASK: int = int(os.getenv("SECRET_MASK", "0x9E3779B97F4A7C15"), 16)
-
-# TTL del caché LRU en segundos (10 minutos)
-CACHE_TTL_SECONDS: int = int(os.getenv("CACHE_TTL_SECONDS", "600"))
-
-# ─────────────────────────────────────────────
-# DIRECTORIOS LOCALES (Ghost Node)
-# ─────────────────────────────────────────────
-
-# Directorio donde se almacenan los índices FAISS descargados
-LOCAL_BRAIN_DIR: str = os.getenv("LOCAL_BRAIN_DIR", "/app/brain")
-
-# Directorio donde se almacenan datos estáticos (top10.json)
-LOCAL_DATA_DIR: str = os.getenv("LOCAL_DATA_DIR", "/app/data")
-
-# Nombre del archivo de índice FAISS local activo
-LOCAL_INDEX_FILE: str = "synergix.index"
-
-# Nombre del archivo de metadatos del índice (mapa uid → chunk)
-LOCAL_INDEX_META: str = "synergix_meta.json"
-
-# Ruta local del archivo Top 10
-LOCAL_TOP10_JSON_PATH: str = os.path.join(LOCAL_DATA_DIR, "top10.json")
-
-# ─────────────────────────────────────────────
-# CREDENCIALES WEB3 (cargadas desde entorno)
-# ─────────────────────────────────────────────
-
-# Clave privada ECDSA del operador del nodo (hex sin 0x)
+OPERATOR_ADDRESS: str = os.getenv("OPERATOR_ADDRESS", "")
 OPERATOR_PRIVATE_KEY: str = os.getenv("OPERATOR_PRIVATE_KEY", "")
 
-# Dirección pública del operador (checksum Ethereum-compatible)
-OPERATOR_ADDRESS: str = os.getenv("OPERATOR_ADDRESS", "")
+# ─────────────────────────────────────────────
+# DCELLER — RUTAS DE ALMACENAMIENTO (Stateless)
+# ─────────────────────────────────────────────
+USERS_PREFIX: str = "aisynergix/users"
+APORTES_PREFIX: str = "aisynergix/aportes"
+BRAIN_PREFIX: str = "aisynergix/data/brains"
+TOP10_OBJECT: str = "aisynergix/data/top10.json"
+BRAIN_POINTER_OBJECT: str = "aisynergix/data/brain_pointer"
 
 # ─────────────────────────────────────────────
-# LÍMITES DE GAS (BNB GREENFIELD)
+# INFRAESTRUCTURA LOCAL (Contenedores Docker)
 # ─────────────────────────────────────────────
-
-# Gas máximo permitido por transacción de escritura
-GAS_LIMIT: int = int(os.getenv("GAS_LIMIT", "1200000"))
-
-# Precio de gas en atto-BNB (1 BNB = 1e18 atto-BNB)
-GAS_PRICE: str = os.getenv("GAS_PRICE", "5000000000")  # 5 Gwei
+IA_JUEZ_URL: str = os.getenv("IA_JUEZ_URL", "http://synergix-ia-juez:8080")
+IA_PENSADOR_URL: str = os.getenv("IA_PENSADOR_URL", "http://synergix-ia-pensador:8081")
+IA_TIMEOUT_SECONDS: float = float(os.getenv("IA_TIMEOUT_SECONDS", "120.0"))
 
 # ─────────────────────────────────────────────
-# UMBRALES DE RANGO (Sistema de Puntos Synergix)
+# MOTOR RAG
 # ─────────────────────────────────────────────
-
-# Mapa ordenado: nombre_rango → puntos_mínimos
-RANK_THRESHOLDS: Dict[str, int] = {
-    "Iniciado":      0,
-    "Activo":        100,
-    "Sincronizado":  500,
-    "Arquitecto":    1500,
-    "Mente Colmena": 5000,
-    "Oráculo":       15000,
-}
-
-# Lista ordenada de rangos de menor a mayor (útil para cálculo de ascenso)
-RANK_ORDER: list[str] = list(RANK_THRESHOLDS.keys())
-
-
-def get_rank_for_points(points: int) -> str:
-    """
-    Devuelve el nombre del rango correspondiente a una cantidad de puntos.
-
-    Itera los rangos de mayor a menor umbral y retorna el primero
-    cuyo umbral sea <= points.
-
-    Args:
-        points (int): Puntos acumulados del usuario.
-
-    Returns:
-        str: Nombre del rango (ej. 'Activo', 'Arquitecto').
-    """
-    for rank_name in reversed(RANK_ORDER):
-        if points >= RANK_THRESHOLDS[rank_name]:
-            return rank_name
-    return "Iniciado"
-
-
-# ─────────────────────────────────────────────
-# TELEGRAM BOT
-# ─────────────────────────────────────────────
-
-TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-
-# ─────────────────────────────────────────────
-# IA LOCAL — ENDPOINTS INTERNOS DOCKER
-# ─────────────────────────────────────────────
-
-# Juez (0.5B) — valida y puntúa aportes
-IA_JUEZ_URL: str = os.getenv(
-    "IA_JUEZ_URL",
-    "http://synergix-ia-juez:8080"
-)
-
-# Pensador (1.5B) — genera respuestas expertas
-IA_PENSADOR_URL: str = os.getenv(
-    "IA_PENSADOR_URL",
-    "http://synergix-ia-pensador:8081"
-)
-
-# Timeout en segundos para llamadas a las IAs locales
-IA_TIMEOUT_SECONDS: int = int(os.getenv("IA_TIMEOUT_SECONDS", "60"))
-
-# ─────────────────────────────────────────────
-# RAG ENGINE
-# ─────────────────────────────────────────────
-
-# Umbral mínimo de quality_score para que un aporte entre al índice FAISS
 RAG_MIN_QUALITY_SCORE: float = float(os.getenv("RAG_MIN_QUALITY_SCORE", "7.0"))
-
-# Número máximo de resultados que devuelve el RAG por consulta
 RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "5"))
-
-# Modelo de embeddings a usar (HuggingFace) con precisión float16
-EMBEDDING_MODEL: str = os.getenv(
-    "EMBEDDING_MODEL",
-    "sentence-transformers/all-MiniLM-L6-v2"
-)
+EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+LOCAL_BRAIN_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "brains")
+TOP10_LOCAL_PATH: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "top10.json")
 
 # ─────────────────────────────────────────────
-# SCHEDULER — INTERVALOS DE TAREAS
+# SCHEDULER
 # ─────────────────────────────────────────────
-
-# Intervalo de fusión del cerebro (minutos)
 FUSION_INTERVAL_MINUTES: int = int(os.getenv("FUSION_INTERVAL_MINUTES", "10"))
-
-# Hora de notificación diaria de puntos residuales (HH:MM UTC)
 DAILY_NOTIFICATION_TIME: str = os.getenv("DAILY_NOTIFICATION_TIME", "23:59")
-
-# Día y hora de generación de retos semanales (lunes, 00:00 UTC)
-WEEKLY_CHALLENGE_DAY: str = os.getenv("WEEKLY_CHALLENGE_DAY", "mon")
-WEEKLY_CHALLENGE_TIME: str = os.getenv("WEEKLY_CHALLENGE_TIME", "00:00")
-
-# ─────────────────────────────────────────────
-# FIRMA V4 — CONSTANTES DE CANONICAL REQUEST
-# ─────────────────────────────────────────────
-
-# Nombre del servicio para la firma ECDSA V4 de Greenfield
-SIGNING_SERVICE: str = "greenfield"
-
-# Región del SP (Greenfield usa siempre "us-east-1" como placeholder)
-SIGNING_REGION: str = "us-east-1"
-
-# Algoritmo de firma utilizado
-SIGNING_ALGORITHM: str = "GNFD1-ECDSA"

@@ -1,7 +1,7 @@
 """
 local_ia.py — Conector HTTP asíncrono para las IAs locales de Synergix.
-Gestiona la comunicación con el Juez (0.5B, puerto 8080) y el Pensador (1.5B, puerto 8081).
-Implementa validación estricta de JSON para el Juez y manejo robusto de errores.
+Gestiona la comunicación con el Juez (Qwen 0.5B, puerto 8080) y el Pensador (Qwen 1.5B/3B, puerto 8081).
+Implementa resiliencia, control de timeouts y parseo estricto para salidas JSON.
 """
 
 import json
@@ -17,252 +17,119 @@ from aisynergix.config.constants import (
 from aisynergix.config.system_prompts import (
     JUEZ_SYSTEM_PROMPT,
     PENSADOR_SYSTEM_PROMPT,
-    validate_judge_response,
 )
 
 logger = logging.getLogger(__name__)
 
-# Modelos Ollama configurados en Docker Compose
-JUDGE_MODEL = "qwen2:0.5b"
-THINKER_MODEL = "qwen2:1.5b"
-
-# Timeout de conexión y lectura (separados)
-CONNECT_TIMEOUT = 10.0
-READ_TIMEOUT = float(IA_TIMEOUT_SECONDS)
-
+# Modelos locales a utilizar (alineados con Ollama/llama.cpp)
+JUDGE_MODEL = "qwen2.5:0.5b"
+THINKER_MODEL = "qwen2.5:1.5b"
 
 class JudgeResult:
-    """Resultado estructurado de la evaluación del Juez."""
-    
+    """Estructura de datos tipada para la validación del modelo Juez."""
     def __init__(self, raw: Dict[str, Any]) -> None:
-        """
-        Inicializa el resultado del Juez con validación estricta.
-        
-        Args:
-            raw: Diccionario con campos calificacion, validez_tecnica y categoria
-        """
-        self.calificacion = float(raw.get("calificacion", 0))
-        self.validez_tecnica = bool(raw.get("validez_tecnica", False))
+        try:
+            self.calificacion = float(raw.get("calificacion", 0.0))
+        except (ValueError, TypeError):
+            self.calificacion = 0.0
+            
+        vt = raw.get("validez_tecnica", False)
+        self.validez_tecnica = vt if isinstance(vt, bool) else str(vt).lower() in ("true", "1", "si", "sí")
         self.categoria = str(raw.get("categoria", "otro"))
         self.raw = raw
-        
-        # Validar rangos
-        if self.calificacion < 0 or self.calificacion > 10:
-            logger.warning(f"Calificación fuera de rango: {self.calificacion}. Ajustando a [0,10]")
-            self.calificacion = max(0, min(10, self.calificacion))
-    
+
     def __repr__(self) -> str:
-        return f"JudgeResult(calificacion={self.calificacion}, validez={self.validez_tecnica}, cat='{self.categoria}')"
-    
-    def is_high_quality(self, threshold: float = 7.0) -> bool:
-        """Determina si el aporte es de alta calidad según umbral."""
-        return self.calificacion >= threshold and self.validez_tecnica
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convierte el resultado a diccionario para serialización."""
-        return {
-            "calificacion": self.calificacion,
-            "validez_tecnica": self.validez_tecnica,
-            "categoria": self.categoria
-        }
+        return f"JudgeResult(score={self.calificacion}, valid={self.validez_tecnica}, cat={self.categoria})"
 
-
-async def _ollama_request(
-    base_url: str,
-    model: str,
-    system_prompt: str,
-    user_prompt: str,
-    temperature: float = 0.3
-) -> str:
-    """
-    Realiza una petición HTTP asíncrona a un endpoint Ollama.
-    
-    Args:
-        base_url: URL base del servicio (ej: http://synergix-ia-juez:8080)
-        model: Nombre del modelo (ej: "qwen2:0.5b")
-        system_prompt: Prompt del sistema (rol y reglas)
-        user_prompt: Prompt del usuario (consulta específica)
-        temperature: Temperatura para la generación (0.1-1.0)
-    
-    Returns:
-        str: Respuesta del modelo (texto plano)
-    
-    Raises:
-        httpx.HTTPStatusError: Si la petición HTTP falla
-        httpx.TimeoutException: Si se excede el timeout
-        ValueError: Si la respuesta no es válida
-    """
+async def _ollama_request(base_url: str, model: str, system: str, prompt: str, require_json: bool = False) -> str:
+    """Ejecuta una petición asíncrona a la API HTTP de Ollama/Llama-server."""
     url = f"{base_url}/api/chat"
     payload = {
         "model": model,
         "stream": False,
-        "temperature": temperature,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt}
         ]
     }
     
-    # Configurar timeout separado para conexión y lectura
-    timeout = httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT)
-    
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    # Forzar formato JSON en el Juez si el modelo soporta format="json"
+    if require_json:
+        payload["format"] = "json"
+
+    async with httpx.AsyncClient(timeout=IA_TIMEOUT_SECONDS) as client:
         try:
-            logger.debug(f"Enviando petición a {url} con modelo {model}")
             response = await client.post(url, json=payload)
             response.raise_for_status()
-            
             data = response.json()
-            content = data.get("message", {}).get("content", "").strip()
-            
-            if not content:
-                raise ValueError("Respuesta vacía del modelo")
-            
-            logger.debug(f"Respuesta recibida de {model}: {content[:100]}...")
-            return content
-            
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Error HTTP en petición a {model}: {e.response.status_code} - {e.response.text}")
+            return data.get("message", {}).get("content", "").strip()
+        except httpx.ReadTimeout:
+            logger.error(f"[IA Local] Timeout excedido ({IA_TIMEOUT_SECONDS}s) al contactar {model} en {base_url}")
             raise
-        except httpx.TimeoutException:
-            logger.error(f"Timeout en petición a {model} después de {READ_TIMEOUT}s")
-            raise
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON inválido en respuesta de {model}: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Error inesperado en petición a {model}: {e}", exc_info=True)
+        except httpx.HTTPError as e:
+            logger.error(f"[IA Local] Error HTTP contactando {model}: {e}")
             raise
 
-
-async def ask_judge(text: str, max_retries: int = 2) -> JudgeResult:
+async def ask_judge(text: str) -> JudgeResult:
     """
-    Consulta al Juez (0.5B) para evaluar la calidad de un aporte.
-    
-    Args:
-        text: Texto del aporte a evaluar
-        max_retries: Intentos máximos en caso de error
-    
-    Returns:
-        JudgeResult: Resultado estructurado de la evaluación
-    """
-    retry_count = 0
-    
-    while retry_count <= max_retries:
-        try:
-            logger.info(f"Consultando al Juez sobre aporte: '{text[:50]}...'")
-            
-            # Petición al Juez
-            raw_response = await _ollama_request(
-                base_url=IA_JUEZ_URL,
-                model=JUDGE_MODEL,
-                system_prompt=JUEZ_SYSTEM_PROMPT,
-                user_prompt=text,
-                temperature=0.1  # Baja temperatura para consistencia
-            )
-            
-            # Validar y parsear respuesta
-            validated_data = validate_judge_response(raw_response)
-            result = JudgeResult(validated_data)
-            
-            logger.info(f"Juez evaluó: calificación={result.calificacion}, "
-                       f"válido={result.validez_tecnica}, categoría={result.categoria}")
-            
-            return result
-            
-        except ValueError as e:
-            logger.warning(f"Respuesta del Juez inválida (intento {retry_count+1}/{max_retries+1}): {e}")
-            retry_count += 1
-            
-            if retry_count > max_retries:
-                logger.error(f"Fallo después de {max_retries+1} intentos con el Juez")
-                return JudgeResult({"calificacion": 0, "validez_tecnica": False, "categoria": "error"})
-            
-            # Esperar antes de reintentar
-            import asyncio
-            await asyncio.sleep(1 * retry_count)  # Backoff exponencial
-            
-        except Exception as e:
-            logger.error(f"Error consultando al Juez: {e}", exc_info=True)
-            
-            # En caso de error de conexión, retornar resultado por defecto
-            if retry_count >= max_retries:
-                return JudgeResult({"calificacion": 0, "validez_tecnica": False, "categoria": "error"})
-            
-            retry_count += 1
-            import asyncio
-            await asyncio.sleep(2 * retry_count)
-    
-    # Fallback final
-    return JudgeResult({"calificacion": 0, "validez_tecnica": False, "categoria": "error"})
-
-
-async def ask_thinker(
-    prompt: str,
-    context: Optional[str] = None,
-    language_hint: Optional[str] = None,
-    temperature: float = 0.7
-) -> str:
-    """
-    Consulta al Pensador (1.5B) para generar respuestas expertas.
-    
-    Args:
-        prompt: Pregunta o consulta del usuario
-        context: Contexto RAG adicional (opcional)
-        language_hint: Sugerencia de idioma para el Pensador (ej: "es", "en", "zh")
-        temperature: Temperatura para la generación (0.1-1.0)
-    
-    Returns:
-        str: Respuesta del Pensador formateada
+    Envía un aporte al Juez (0.5B) para evaluación.
+    Busca, extrae y parsea el primer bloque JSON de la respuesta.
     """
     try:
-        logger.info(f"Consultando al Pensador: '{prompt[:50]}...'")
-        
-        # Construir prompt completo con contexto si está disponible
-        if context and context.strip():
-            full_prompt = f"Contexto del cerebro colectivo:\n{context}\n\nPregunta del usuario:\n{prompt}"
-            logger.debug(f"Pensador recibió contexto RAG de {len(context)} caracteres")
-        else:
-            full_prompt = prompt
-        
-        # Añadir hint de idioma si se proporciona
-        if language_hint:
-            language_hints = {
-                "es": "Responde en español.",
-                "en": "Respond in English.",
-                "zh": "用中文回答。",
-                "zh_cn": "用简体中文回答。"
-            }
-            if language_hint in language_hints:
-                full_prompt = f"{language_hints[language_hint]}\n\n{full_prompt}"
-        
-        # Petición al Pensador
-        response = await _ollama_request(
-            base_url=IA_PENSADOR_URL,
-            model=THINKER_MODEL,
-            system_prompt=PENSADOR_SYSTEM_PROMPT,
-            user_prompt=full_prompt,
-            temperature=temperature
+        logger.debug(f"[Juez] Evaluando aporte de {len(text)} caracteres...")
+        raw_response = await _ollama_request(
+            base_url=IA_JUEZ_URL, 
+            model=JUDGE_MODEL, 
+            system=JUEZ_SYSTEM_PROMPT, 
+            prompt=text,
+            require_json=True
         )
         
-        # Post-procesamiento básico
-        response = response.strip()
+        # Limpieza y extracción estricta de JSON en caso de que el modelo alucine texto extra
+        start = raw_response.find("{")
+        end = raw_response.rfind("}") + 1
         
-        # Log resumido
-        logger.info(f"Pensador respondió con {len(response)} caracteres")
-        if len(response) > 100:
-            logger.debug(f"Primeros 100 caracteres: {response[:100]}...")
+        if start == -1 or end == 0:
+            raise ValueError("No se encontró una estructura JSON en la respuesta del Juez.")
+            
+        json_str = raw_response[start:end]
+        data = json.loads(json_str)
         
-        return response
+        result = JudgeResult(data)
+        logger.info(f"[Juez] Evaluación completada: {result}")
+        return result
         
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Error HTTP en Pensador: {e.response.status_code}")
-        return "⚠️ El Pensador está temporalmente indisponible. Intenta nuevamente en unos momentos."
-    
-    except httpx.TimeoutException:
-        logger.error("Timeout en consulta al Pensador")
-        return "⏱️ El Pensador está procesando una consulta compleja. Por favor, sé paciente o reformula tu pregunta."
-    
+    except json.JSONDecodeError as e:
+        logger.error(f"[Juez] Error decodificando JSON: {e} | Raw: {raw_response}")
+        return JudgeResult({"calificacion": 0, "validez_tecnica": False, "categoria": "error_parseo"})
     except Exception as e:
-        logger.error(f"Error inesperado en Pensador: {e}", exc_info=True)
-        return "🧠 El cerebro colectivo está experimentando dificultades técnicas. Tu consulta ha sido registrada."
+        logger.error(f"[Juez] Error general: {e}")
+        return JudgeResult({"calificacion": 0, "validez_tecnica": False, "categoria": "error_red"})
+
+async def ask_thinker(prompt: str, context: Optional[str] = None) -> str:
+    """
+    Envía una consulta al Pensador (1.5B/3B).
+    Si se provee contexto (vía RAG), lo inyecta en el prompt.
+    """
+    if context:
+        full_prompt = (
+            f"Contexto recuperado del Cerebro Colmena:\n{context}\n\n"
+            f"Pregunta del usuario:\n{prompt}\n\n"
+            f"Responde basándote estrictamente en el contexto cuando sea aplicable. "
+            f"Si el contexto no ayuda, utiliza tu conocimiento general, pero aclara que no está en los registros."
+        )
+    else:
+        full_prompt = prompt
+
+    try:
+        logger.debug(f"[Pensador] Generando respuesta (Contexto: {'Sí' if context else 'No'})")
+        response = await _ollama_request(
+            base_url=IA_PENSADOR_URL, 
+            model=THINKER_MODEL, 
+            system=PENSADOR_SYSTEM_PROMPT, 
+            prompt=full_prompt
+        )
+        return response
+    except Exception as e:
+        logger.error(f"[Pensador] Error en inferencia: {e}")
+        return "⚠️ *Anomalía detectada.* Mis nodos cognitivos locales están temporalmente inaccesibles. Intenta de nuevo en unos instantes."
