@@ -1,1 +1,0 @@
-# Synergix Package Root

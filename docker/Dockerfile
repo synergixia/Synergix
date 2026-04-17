@@ -1,114 +1,94 @@
-# docker/Dockerfile
-# Synergix Ghost Node — Dockerfile optimizado para ARM64 (Hetzner 8GB RAM)
-# Python 3.11 + Alpine Linux para imagen mínima con soporte ARM64 completo
+# syntax=docker/dockerfile:1.8
+# Multi-stage build for Synergix on ARM64
+# Stage 1: Build llama.cpp for ARM64 (CPU only)
+FROM ubuntu:24.04 AS llama-builder
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ETAPA 1: CONSTRUCCIÓN — Instalación de dependencias y compilación
-# ──────────────────────────────────────────────────────────────────────────────
-FROM python:3.11-alpine AS builder
-
-# Variables de entorno para construcción
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONHASHSEED=random \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
-
-# Instalar herramientas de compilación necesarias para dependencias nativas
-RUN apk add --no-cache \
-    gcc \
-    g++ \
-    musl-dev \
-    linux-headers \
-    make \
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
     cmake \
     git \
-    curl \
-    && rm -rf /var/cache/apk/*
+    python3 \
+    python3-pip \
+    pkg-config \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Crear directorio de trabajo
 WORKDIR /app
 
-# Copiar requirements.txt primero para aprovechar caché de Docker
+# Clone llama.cpp (latest stable)
+RUN git clone https://github.com/ggml-org/llama.cpp.git --depth 1 --branch master .
+
+# Build with optimizations for ARM64
+RUN cmake -B build -DLLAMA_CURL=ON -DLLAMA_NATIVE=ON -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_FLAGS="-march=armv8-a -mtune=cortex-a76 -O3" \
+    -DCMAKE_CXX_FLAGS="-march=armv8-a -mtune=cortex-a76 -O3"
+
+RUN cmake --build build --config Release -j$(nproc) --target llama-server
+
+# Stage 2: Python environment builder
+FROM python:3.12-slim-bookworm AS python-builder
+
+WORKDIR /app
+
+# Install system dependencies for Python packages
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libgomp1 \
+    libopenblas-dev \
+    libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
 COPY requirements.txt .
 
-# Instalar dependencias de Python con optimizaciones ARM64
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir \
-        --only-binary :none: \
-        --extra-index-url https://www.piwheels.org/simple \
-        -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ETAPA 2: IMAGEN FINAL — Imagen mínima con solo lo necesario
-# ──────────────────────────────────────────────────────────────────────────────
-FROM python:3.11-alpine AS runtime
+# Stage 3: Runtime image
+FROM python:3.12-slim-bookworm AS runtime
 
-# Metadatos de la imagen
-LABEL maintainer="Synergix Ghost Node <synergix@ghostnode.ai>" \
-      version="1.0.0" \
-      description="Synergix Ghost Node — Nodo Fantasma Web3 con IA local" \
-      architecture="arm64"
-
-# Variables de entorno de producción
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONHASHSEED=random \
-    PYTHONPATH=/app \
-    PIP_NO_CACHE_DIR=1 \
-    TZ=UTC
-
-# Instalar dependencias del sistema necesarias para runtime
-# - libgomp: OpenMP para FAISS CPU
-# - curl: Health checks y debugging
-# - tzdata: Zona horaria UTC
-RUN apk add --no-cache \
-    libgomp \
-    curl \
-    tzdata \
-    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
-    && echo $TZ > /etc/timezone \
-    && rm -rf /var/cache/apk/*
-
-# Crear usuario no-root para seguridad
-RUN addgroup -g 1000 synergix && \
-    adduser -u 1000 -G synergix -D -h /app synergix
-
-# Crear directorios necesarios con permisos correctos
-RUN mkdir -p /app/brain /app/data /app/logs /app/aisynergix/data && \
-    chown -R synergix:synergix /app && \
-    chmod 755 /app
-
-# Cambiar al usuario no-root
-USER synergix
-
-# Directorio de trabajo
 WORKDIR /app
 
-# Copiar dependencias instaladas desde la etapa builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
-COPY --from=builder /usr/local/bin/ /usr/local/bin/
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libgomp1 \
+    libopenblas0 \
+    libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copiar código fuente del proyecto
-COPY --chown=synergix:synergix . .
+# Copy llama-server binary from builder
+COPY --from=llama-builder /app/build/bin/llama-server /usr/local/bin/llama-server
 
-# Verificar estructura de directorios
-RUN echo "=== Verificando estructura del proyecto ===" && \
-    ls -la && \
-    echo "aisynergix/" && ls -la aisynergix/ && \
-    echo "docker/" && ls -la docker/ && \
-    echo "scripts/" && ls -la scripts/
+# Copy Python dependencies from python-builder
+COPY --from=python-builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=python-builder /usr/local/bin /usr/local/bin
 
-# ──────────────────────────────────────────────────────────────────────────────
-# HEALTH CHECK — Verificación de salud del contenedor
-# ──────────────────────────────────────────────────────────────────────────────
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+# Create non-root user
+RUN useradd -m -u 1000 synergix && \
+    chown -R synergix:synergix /app
+
+USER synergix
+
+# Copy application code (context is project root)
+COPY --chown=synergix:synergix .. .
+
+# Create necessary directories
+RUN mkdir -p /home/synergix/.cache /home/synergix/.local && \
+    chown -R synergix:synergix /home/synergix/.cache /home/synergix/.local
+
+# Environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV UVICORN_LOG_LEVEL=warning
+ENV TRANSFORMERS_CACHE=/home/synergix/.cache/huggingface
+
+# Health check for llama-server
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PUNTO DE ENTRADA — Comando principal de ejecución
-# ──────────────────────────────────────────────────────────────────────────────
-ENTRYPOINT ["python", "-m", "aisynergix.bot.bot"]
-
-# Comando por defecto (puede ser sobrescrito en docker-compose)
-CMD []
+# Default command (overridden in docker-compose)
+CMD ["python", "main.py"]
