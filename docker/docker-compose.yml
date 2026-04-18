@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Pensador (1.5B model) - Main AI reasoning
   pensador:
@@ -18,13 +16,12 @@ services:
       --n-gpu-layers 0
       --parallel 4
       --cont-batching
-      --memory-f32
     ports:
       - "8081:8081"
     networks:
       - synergix-internal
     volumes:
-      - ai-models-volume:/aisynergix/ai/models
+      - /root/Synergix/aisynergix/ai/models:/aisynergix/ai/models
     environment:
       - LLAMA_KV_CACHE_TYPE=f16
       - LLAMA_LOG_LEVEL=error
@@ -64,7 +61,7 @@ services:
     networks:
       - synergix-internal
     volumes:
-      - ai-models-volume:/aisynergix/ai/models
+      - /root/Synergix/aisynergix/ai/models:/aisynergix/ai/models
     environment:
       - LLAMA_KV_CACHE_TYPE=f16
       - LLAMA_LOG_LEVEL=error
@@ -95,7 +92,7 @@ services:
     networks:
       - synergix-internal
     volumes:
-      - ai-models-volume:/aisynergix/ai/models
+      - /root/Synergix/aisynergix/ai/models:/aisynergix/ai/models
       - data-volume:/aisynergix/data
     environment:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
@@ -133,15 +130,16 @@ networks:
     internal: true
 
 volumes:
-  ai-models-volume:
-    driver: local
-    driver_opts:
-      type: none
-      device: ${PWD}/../aisynergix/ai/models
-      o: bind
   data-volume:
     driver: local
     driver_opts:
       type: none
-      device: ${PWD}/../aisynergix/data
+      device: /root/Synergix/aisynergix/data
+      o: bind
+
+  ai-models-volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: /root/Synergix/aisynergix/ai/models
       o: bind

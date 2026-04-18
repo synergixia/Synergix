@@ -1,6 +1,3 @@
-# syntax=docker/dockerfile:1.8
-# Multi-stage build for Synergix on ARM64
-# Stage 1: Build llama.cpp for ARM64 (CPU only)
 FROM ubuntu:24.04 AS llama-builder
 
 # Install build dependencies
@@ -27,68 +24,72 @@ RUN cmake -B build -DLLAMA_CURL=ON -DLLAMA_NATIVE=ON -DCMAKE_BUILD_TYPE=Release 
 
 RUN cmake --build build --config Release -j$(nproc) --target llama-server
 
-# Stage 2: Python environment builder
-FROM python:3.12-slim-bookworm AS python-builder
+# Stage 2: Python environment builder (Unificado a Ubuntu 24.04)
+FROM ubuntu:24.04 AS python-builder
 
 WORKDIR /app
 
-# Install system dependencies for Python packages
+# Instalar Python y herramientas de compilación
 RUN apt-get update && apt-get install -y \
+    python3.12 \
+    python3-pip \
+    python3-venv \
     gcc \
     g++ \
     libgomp1 \
     libopenblas-dev \
-    libcurl4 \
+    libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Copiar requerimientos
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+# Instalar dependencias en /usr/local (Usando --break-system-packages para contenedores Ubuntu)
+RUN pip3 install --upgrade pip --break-system-packages && \
+    pip3 install --no-cache-dir -r requirements.txt --prefix=/usr/local --break-system-packages
 
 # Stage 3: Runtime image
-FROM python:3.12-slim-bookworm AS runtime
+FROM ubuntu:24.04 AS runtime
 
 WORKDIR /app
 
-# Install runtime dependencies
+# Instalar solo dependencias de ejecución
 RUN apt-get update && apt-get install -y \
+    python3.12 \
+    python3-pip \
     libgomp1 \
     libopenblas0 \
     libcurl4 \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python3
 
-# Copy llama-server binary from builder
+# Copiar binarios de llama-server
 COPY --from=llama-builder /app/build/bin/llama-server /usr/local/bin/llama-server
+COPY --from=llama-builder /app/build/bin/*.so* /usr/local/lib/
 
-# Copy Python dependencies from python-builder
-COPY --from=python-builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=python-builder /usr/local/bin /usr/local/bin
+# Copiar TODO el contenido de /usr/local desde el builder (Librerías compatibles)
+COPY --from=python-builder /usr/local /usr/local
+
+# Configuración del sistema para Ubuntu 24.04
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+# En Ubuntu, las librerías se instalan en dist-packages por defecto
+ENV PYTHONPATH=/usr/local/lib/python3.12/dist-packages:/app
+ENV PYTHONUNBUFFERED=1
+ENV TRANSFORMERS_CACHE=/home/synergix/.cache/huggingface
 
 # Create non-root user
-RUN useradd -m -u 1000 synergix && \
+RUN useradd -m -u 1001 synergix && \
     chown -R synergix:synergix /app
 
 USER synergix
 
-# Copy application code (context is project root)
-COPY --chown=synergix:synergix .. .
+# Copy application code
+COPY . .
 
 # Create necessary directories
 RUN mkdir -p /home/synergix/.cache /home/synergix/.local && \
     chown -R synergix:synergix /home/synergix/.cache /home/synergix/.local
 
-# Environment variables
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-ENV UVICORN_LOG_LEVEL=warning
-ENV TRANSFORMERS_CACHE=/home/synergix/.cache/huggingface
-
-# Health check for llama-server
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
-
-# Default command (overridden in docker-compose)
-CMD ["python", "main.py"]
+# Default command
+CMD ["python3", "main.py"]
