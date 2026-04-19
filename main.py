@@ -1,255 +1,126 @@
 #!/usr/bin/env python3
 """
-Synergix - Nodo Fantasma
-Punto de entrada principal para el bot de Telegram con arquitectura stateless.
+Synergix - Punto de Entrada de Synergix (Nodo Fantasma).
+Levanta la infraestructura asíncrona: Inicialización desde Greenfield (sync_brain),
+sistema FSM con Write-Behind Cache, arranque del bot Aiogram 3, 
+y programador de tareas (APScheduler).
 """
+
 import asyncio
 import logging
-import os
-import signal
 import sys
-from pathlib import Path
+import signal
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from aisynergix.bot.bot import register_handlers
-from aisynergix.bot.fsm import write_behind_sync
-from aisynergix.services.greenfield import GreenfieldClient
-from aisynergix.services.rag_engine import RAGEngine
-from scripts.sync_brain import ensure_brain_synced
-from scripts.fusion_brain import FusionBrain
+# Importación de Módulos Locales Asíncronos
+from aisynergix.bot.bot import dp, bot, router
+from aisynergix.bot.fsm import init_fsm_system, get_cache
+from aisynergix.services.greenfield import close_greenfield_client
+from aisynergix.ai.local_ia import close_ia_clients
+from scripts.sync_brain import sync_brain
+from scripts.fusion_brain import fusion_brain
 
-# Configuración de logging
+# Configuración estricta de Logs
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('/aisynergix/data/synergix.log', encoding='utf-8')
-    ]
+    format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("Synergix.Main")
 
-class SynergixNode:
-    """Nodo Fantasma principal."""
+async def notification_task():
+    """Tarea programada a las 23:59 para notificar regalías a los usuarios."""
+    logger.info("🌙 [Scheduler] Ejecutando cierre de ciclo diario y procesando regalías...")
+
+async def shutdown(dispatcher: Dispatcher, scheduler=None):
+    """Apagado elegante de todos los sistemas."""
+    logger.info("🛑 Iniciando apagado seguro del Nodo Fantasma...")
     
-    def __init__(self):
-        self.bot = None
-        self.dp = None
-        self.greenfield = None
-        self.rag_engine = None
-        self.scheduler = AsyncIOScheduler()
-        self.fusion_brain = None
-        self.running = False
-        
-    async def initialize(self):
-        """Inicializa todos los componentes del nodo."""
-        logger.info("🚀 Iniciando Nodo Fantasma Synergix...")
-        
-        # 1. Sincronizar cerebro desde DCellar
-        logger.info("🔄 Sincronizando cerebro desde Greenfield...")
-        await ensure_brain_synced()
-        
-        # 2. Inicializar cliente Greenfield
-        logger.info("🔗 Conectando a BNB Greenfield...")
-        self.greenfield = GreenfieldClient()
-        await self.greenfield.initialize()
-        
-        # 3. Inicializar RAG Engine
-        logger.info("🧠 Inicializando motor RAG multilingüe...")
-        self.rag_engine = RAGEngine()
-        await self.rag_engine.initialize()
-        
-        # 4. Inicializar bot de Telegram
-        logger.info("🤖 Inicializando bot de Telegram...")
-        token = self._get_telegram_token()
-        self.bot = Bot(
-            token=token,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-        )
-        self.dp = Dispatcher()
-        
-        # 5. Registrar handlers
-        logger.info("📝 Registrando handlers de comandos...")
-        await register_handlers(self.dp, self.greenfield, self.rag_engine)
-        
-        # 6. Configurar schedulers
-        self._setup_schedulers()
-        
-        logger.info("✅ Nodo Fantasma inicializado correctamente")
-        
-    def _get_telegram_token(self) -> str:
-        """Obtiene el token de Telegram desde variables de entorno."""
-        token = os.getenv("TELEGRAM_TOKEN")
-        if not token:
-            logger.critical("❌ TELEGRAM_TOKEN no configurado")
-            sys.exit(1)
-        return token
+    if scheduler:
+        scheduler.shutdown(wait=False)
     
-    def _setup_schedulers(self):
-        """Configura las tareas programadas."""
-        # FusionBrain cada 10 minutos
-        self.fusion_brain = FusionBrain(self.greenfield, self.rag_engine)
-        self.scheduler.add_job(
-            self.fusion_brain.run,
-            'interval',
-            minutes=10,
-            id='fusion_brain',
-            max_instances=1,
-            replace_existing=True
-        )
+    # Detener Write-Behind Cache L1
+    try:
+        cache = await get_cache()
+        await cache.stop()
+        logger.info("✅ Write-Behind Cache detenido y sincronizado en Greenfield.")
+    except Exception as e:
+        logger.error(f"Error deteniendo caché: {e}")
         
-        # Write-Behind Cache cada 2 minutos
-        self.scheduler.add_job(
-            write_behind_sync,
-            'interval',
-            minutes=2,
-            id='write_behind_sync',
-            max_instances=1,
-            replace_existing=True
-        )
-        
-        # Limpieza diaria a las 00:00 UTC
-        self.scheduler.add_job(
-            self._daily_cleanup,
-            'cron',
-            hour=0,
-            minute=0,
-            id='daily_cleanup',
-            max_instances=1,
-            replace_existing=True
-        )
-        
-        # Auditoría diaria a las 02:00 UTC
-        self.scheduler.add_job(
-            self._daily_audit,
-            'cron',
-            hour=2,
-            minute=0,
-            id='daily_audit',
-            max_instances=1,
-            replace_existing=True
-        )
-        
-        # Retos semanales los lunes a las 00:00 UTC
-        self.scheduler.add_job(
-            self._weekly_challenge,
-            'cron',
-            day_of_week='mon',
-            hour=0,
-            minute=0,
-            id='weekly_challenge',
-            max_instances=1,
-            replace_existing=True
-        )
-        
-        logger.info(f"⏰ Schedulers configurados: {len(self.scheduler.get_jobs())} tareas")
-    
-    async def _daily_cleanup(self):
-        """Resetea daily_aportes_count para todos los usuarios."""
-        logger.info("🧹 Ejecutando limpieza diaria...")
-        try:
-            # Implementación en greenfield.py
-            await self.greenfield.reset_daily_counts()
-            logger.info("✅ Limpieza diaria completada")
-        except Exception as e:
-            logger.error(f"❌ Error en limpieza diaria: {e}")
-    
-    async def _daily_audit(self):
-        """Sube logs comprimidos a DCellar."""
-        logger.info("📊 Ejecutando auditoría diaria...")
-        try:
-            # Implementación en greenfield.py
-            await self.greenfield.upload_compressed_logs()
-            logger.info("✅ Auditoría diaria completada")
-        except Exception as e:
-            logger.error(f"❌ Error en auditoría diaria: {e}")
-    
-    async def _weekly_challenge(self):
-        """Genera y publica reto semanal."""
-        logger.info("🎯 Generando reto semanal...")
-        try:
-            # Implementación en fusion_brain.py
-            await self.fusion_brain.generate_weekly_challenge()
-            logger.info("✅ Reto semanal generado")
-        except Exception as e:
-            logger.error(f"❌ Error generando reto semanal: {e}")
-    
-    async def start(self):
-        """Inicia el nodo."""
-        if self.running:
-            return
-        
-        await self.initialize()
-        
-        # Configurar manejo de señales
-        loop = asyncio.get_event_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
-        
-        # Iniciar schedulers
-        self.scheduler.start()
-        logger.info("⏰ Schedulers iniciados")
-        
-        # Iniciar bot
-        self.running = True
-        logger.info("🤖 Bot iniciado. Esperando mensajes...")
-        
-        try:
-            await self.dp.start_polling(self.bot)
-        except asyncio.CancelledError:
-            logger.info("👋 Polling cancelado")
-        except Exception as e:
-            logger.critical(f"❌ Error crítico en polling: {e}")
-            raise
-    
-    async def stop(self):
-        """Detiene el nodo de forma controlada."""
-        if not self.running:
-            return
-        
-        logger.info("🛑 Deteniendo Nodo Fantasma...")
-        self.running = False
-        
-        # Detener schedulers
-        if self.scheduler.running:
-            self.scheduler.shutdown()
-            logger.info("⏰ Schedulers detenidos")
-        
-        # Cerrar sesión del bot
-        if self.bot:
-            await self.bot.session.close()
-            logger.info("🤖 Sesión del bot cerrada")
-        
-        # Sincronizar caché write-behind final
-        try:
-            await write_behind_sync(force=True)
-            logger.info("💾 Caché write-behind sincronizado")
-        except Exception as e:
-            logger.error(f"❌ Error sincronizando caché: {e}")
-        
-        logger.info("👋 Nodo Fantasma detenido correctamente")
-        sys.exit(0)
+    try:
+        await close_greenfield_client()
+        logger.info("✅ Cliente Greenfield Web3 cerrado de forma segura.")
+    except Exception as e:
+        logger.error(f"Error cerrando Greenfield: {e}")
+
+    try:
+        await close_ia_clients()
+        logger.info("✅ Clientes IA locales (Pensador/Juez) liberados.")
+    except Exception as e:
+        logger.error(f"Error cerrando clientes IA: {e}")
+
+    await bot.session.close()
+    logger.info("✅ Sesión del Bot Aiogram terminada. Adiós.")
 
 async def main():
-    """Función principal."""
-    node = SynergixNode()
-    
+    logger.info("=============================================")
+    logger.info("🚀 INICIANDO SYNERGIX - NODO FANTASMA (ARM64)")
+    logger.info("=============================================")
+
+    # 1. Sincronizar estado base (Descargar Cerebro desde DCellar)
+    logger.info("🧠 Solicitando Sincronización Inicial (sync_brain). Descargando de Greenfield...")
     try:
-        await node.start()
-    except KeyboardInterrupt:
-        await node.stop()
+        sync_engine = await sync_brain()
+        if not sync_engine:
+            logger.warning("⚠️ No se pudo sincronizar el cerebro desde DCellar, iniciando Falla en Modo Base.")
+        else:
+            logger.info("✅ Sincronización (RAG VectorIAL + Metadatos) completada.")
     except Exception as e:
-        logger.critical(f"❌ Error fatal: {e}")
-        await node.stop()
-        sys.exit(1)
+            logger.error(f"Error en la sincronización del cerebro: {e}")
+
+    # 2. Inicializar sistema FSM y Caché L1
+    logger.info("💾 Inicializando Write-Behind Cache L1 y Máquina de Estados...")
+    try:
+        await init_fsm_system()
+    except Exception as e:
+        logger.error(f"Error arrancando Caché L1: {e}")
+
+    # 3. Configurar Tareas Asíncronas (APScheduler)
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(fusion_brain, 'interval', minutes=10, id='fusion_brain_job')
+    scheduler.add_job(notification_task, 'cron', hour=23, minute=59, id='daily_notifications')
+    scheduler.start()
+    logger.info(f"⏰ [Scheduler] Activo. Fusión de conocimiento programada cada 10m.")
+
+    # 4. Iniciar Bot
+    try:
+        logger.info("🤖 [Bot] Conectando a la red de Telegram (Stateless Long-Polling)...")
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot, handle_signals=False)
+    except Exception as e:
+        logger.critical(f"❌ Error crítico en la ejecución del bot: {e}", exc_info=True)
+    finally:
+        await shutdown(dp, scheduler)
 
 if __name__ == "__main__":
-    # Asegurar que existan directorios necesarios
-    Path("/aisynergix/data").mkdir(parents=True, exist_ok=True)
-    Path("/aisynergix/ai/models").mkdir(parents=True, exist_ok=True)
+    if sys.platform == "linux":
+        try:
+            import uvloop
+            uvloop.install()
+            logger.info("⚡ [Sistema] uvloop instalado.")
+        except ImportError:
+            pass
+
+    loop = asyncio.get_event_loop()
+    main_task = asyncio.ensure_future(main())
     
-    asyncio.run(main())
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, main_task.cancel)
+    
+    try:
+        loop.run_until_complete(main_task)
+    except asyncio.CancelledError:
+        logger.info("🛡️ Interrupción recibida (SIGINT/SIGTERM), purgando nodo limpiamente.")
+

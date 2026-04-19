@@ -23,7 +23,6 @@ from tenacity import (
 )
 
 from aisynergix.services.greenfield import get_object, list_objects
-from config import cfg
 
 logger = logging.getLogger("synergix.rag")
 
@@ -75,9 +74,11 @@ class MultilingualRAG:
             latest_version = pointer.get("latest_v", "v1")
             index_path = f"aisynergix/data/brains/{latest_version}.index"
             meta_path = f"aisynergix/data/brains/{latest_version}.meta"
+            
             # Descargar índice y metadatos
             index_bytes, _ = await get_object(index_path)
             meta_bytes, _ = await get_object(meta_path)
+            
             # Cargar en memoria
             with tempfile.NamedTemporaryFile(suffix=".index", delete=False) as tmp_idx:
                 tmp_idx.write(index_bytes)
@@ -177,18 +178,13 @@ class MultilingualRAG:
         Retorna uno de: 'es', 'en', 'zh-hans', 'zh-hant'.
         """
         # Heurística básica basada en caracteres
-        # En producción podríamos usar langdetect o similar
         query_lower = query.lower()
         if any(c in query_lower for c in ['的', '是', '在', '有', '了']):
-            return 'zh-hans'
-        if any(c in query_lower for c in ['的', '是', '在', '有', '了']):
-            # Diferenciar simplificado/tradicional es complejo; usamos simplificado por defecto
             return 'zh-hans'
         if any(word in query_lower for word in ['the', 'and', 'is', 'are', 'you']):
             return 'en'
         if any(word in query_lower for word in ['el', 'la', 'los', 'las', 'que']):
             return 'es'
-        # Por defecto español
         return 'es'
 
     async def get_stats(self) -> Dict[str, any]:
@@ -200,7 +196,6 @@ class MultilingualRAG:
             "is_trained": self.index.is_trained,
             "metadata_count": len(self.metadata),
         }
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # INSTANCIA GLOBAL
@@ -224,10 +219,7 @@ async def get_rag() -> MultilingualRAG:
 async def rag_search(
     query: str, k: int = 5, min_similarity: float = 0.5
 ) -> Tuple[List[str], List[str]]:
-    """
-    Busca en el RAG y retorna (contextos, author_uids).
-    Esta es la función principal que usará el manager.py.
-    """
+    """Busca en el RAG y retorna (contextos, author_uids)."""
     rag = await get_rag()
     return await rag.search(query, k, min_similarity)
 

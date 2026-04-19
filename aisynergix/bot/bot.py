@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -35,7 +36,6 @@ from aisynergix.bot.identity import (
     increment_daily_contributions,
 )
 from aisynergix.services.greenfield import get_object, hash_uid, upload_aporte
-from config import cfg
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURACIÓN
@@ -49,12 +49,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("synergix.bot")
 
-TOKEN = cfg.credentials.TELEGRAM_TOKEN
+# Se obtiene directamente desde el entorno (docker-compose)
+TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
-    logger.error("Falta TELEGRAM_TOKEN en .env")
+    logger.error("Falta TELEGRAM_TOKEN en .env o entorno Docker")
     sys.exit(1)
 
-bot = Bot(token=TOKEN, parse_mode="HTML")
+# Compatibilidad Aiogram >= 3.7.0 usando DefaultBotProperties
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+
 dp = Dispatcher(storage=MemoryStorage())
 router = Router()
 dp.include_router(router)
@@ -242,13 +245,11 @@ TEXTS = {
     },
 }
 
-
 def get_text(user_lang: str, key: str, **kwargs) -> str:
     """Obtiene texto traducido, con fallback a español."""
     lang_dict = TEXTS.get(user_lang, TEXTS["es"])
     text = lang_dict.get(key, TEXTS["es"].get(key, key))
     return text.format(**kwargs) if kwargs else text
-
 
 def build_menu_keyboard(user_lang: str) -> ReplyKeyboardMarkup:
     """Construye el menú permanente (ReplyKeyboardMarkup)."""
@@ -269,7 +270,6 @@ def build_menu_keyboard(user_lang: str) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         is_persistent=True,
     )
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # HANDLERS PRINCIPALES
@@ -303,7 +303,6 @@ async def cmd_start(message: Message):
     )
     logger.info("👋 Usuario %d (%s) inició sesión", telegram_uid, user.first_name)
 
-
 @router.message(F.text == "🔥 Contribuir")
 @router.message(F.text == "🔥 Contribute")
 @router.message(F.text == "🔥 贡献")
@@ -334,7 +333,6 @@ async def btn_contribute(message: Message):
         reply_markup=ReplyKeyboardRemove(),
     )
 
-
 @router.message(F.text == "💭 Chat Libre")
 @router.message(F.text == "💭 Free Chat")
 @router.message(F.text == "💭 自由聊天")
@@ -354,7 +352,6 @@ async def btn_chat(message: Message):
         ),
     )
 
-
 @router.message(F.text == "📊 Ver estado")
 @router.message(F.text == "📊 Status")
 @router.message(F.text == "📊 查看狀態")
@@ -363,8 +360,8 @@ async def btn_status(message: Message):
     telegram_uid = message.from_user.id
     user_info = await hydrate_user(telegram_uid)
     user_lang = user_info["language"]
-    # TODO: Obtener estadísticas globales (total de aportes)
-    total_contributions = 0  # Placeholder - se obtendrá de Greenfield
+    
+    total_contributions = 0  # Se obtendrá de Greenfield
     benefit_key = f"benefit_{user_info['rank_level'] + 1}"
     status_text = get_text(
         user_lang,
@@ -373,7 +370,7 @@ async def btn_status(message: Message):
         total=total_contributions,
         challenge=get_text(user_lang, "challenge_text"),
         pts=user_info["points"],
-        contribs=user_info["daily_aportes_count"],  # TODO: cambiar por contribuciones totales
+        contribs=user_info["daily_aportes_count"], 
         impact=user_info["total_uses_count"],
         rank=user_info["rank_tag"],
         benefit=get_text(user_lang, benefit_key),
@@ -384,11 +381,91 @@ async def btn_status(message: Message):
     )
     await ensure_menu_state(telegram_uid)
 
-
 @router.message(F.text == "🌐 Idioma")
 @router.message(F.text == "🌐 Language")
 @router.message(F.text == "🌐 语言")
 async def btn_language(message: Message):
     """Handler para botón 'Idioma' - muestra selector de idioma."""
     telegram_uid = message.from_user.id
-    user_info = await hydrate_user(tele
+    user_info = await hydrate_user(telegram_uid)
+    user_lang = user_info["language"]
+    
+    await set_user_state(telegram_uid, "seleccion_idioma", sync_now=False)
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="es"), KeyboardButton(text="en")],
+            [KeyboardButton(text="zh-hans"), KeyboardButton(text="zh-hant")],
+            [KeyboardButton(text="/menu")]
+        ], 
+        resize_keyboard=True
+    )
+    await message.answer(get_text(user_lang, "select_lang"), reply_markup=kb)
+
+@router.message(F.text == "/menu")
+async def btn_menu(message: Message):
+    """Fallback explícito para volver al menú principal"""
+    telegram_uid = message.from_user.id
+    user_info = await hydrate_user(telegram_uid)
+    user_lang = user_info["language"]
+    await ensure_menu_state(telegram_uid)
+    await message.answer(
+        get_text(user_lang, "menu_welcome"), 
+        reply_markup=build_menu_keyboard(user_lang)
+    )
+
+@router.message()
+async def action_receiver(message: Message):
+    """Router central FSM Catch-all basado en estado"""
+    telegram_uid = message.from_user.id
+    state = await get_user_state(telegram_uid)
+    user_info = await hydrate_user(telegram_uid)
+    lang = user_info["language"]
+
+    if state == "esperando_aporte":
+        content = message.text or ""
+        if len(content) < 20: 
+            return await message.answer(get_text(lang, "contrib_short", chars=len(content)))
+        
+        score_dat = await evaluate_contribution(content)
+        
+        if score_dat["score"] < 5:
+            await ensure_menu_state(telegram_uid)
+            return await message.answer(
+                get_text(lang, "contrib_rejected", score=score_dat["score"], reason=score_dat["reason"]),
+                reply_markup=build_menu_keyboard(lang)
+            )
+        
+        # Superó el Juez, subir a BNB Greenfield
+        path = await upload_aporte(user_info["uid_ofuscado"], content, score_dat["score"], score_dat["category"], 1.0, lang)
+        
+        await increment_daily_contributions(telegram_uid)
+        await add_points(telegram_uid, score_dat["score"])
+        await ensure_menu_state(telegram_uid)
+        
+        await message.answer(
+            get_text(lang, "contrib_ok", name=message.from_user.first_name, path=path) + 
+            get_text(lang, "contrib_elite", score=score_dat["score"], points=score_dat["score"]), 
+            reply_markup=build_menu_keyboard(lang)
+        )
+
+    elif state == "chat_libre":
+        resp = await process_user_query(telegram_uid, user_info, message.text, 0.5)
+        await message.answer(resp)
+        
+    elif state == "seleccion_idioma":
+        new_lang = message.text.lower()
+        if new_lang in ["es", "en", "zh-hans", "zh-hant"]:
+            await hydrate_user(telegram_uid, language_hint=new_lang)
+            await ensure_menu_state(telegram_uid)
+            await message.answer(get_text(new_lang, "lang_set"), reply_markup=build_menu_keyboard(new_lang))
+        else:
+            await message.answer(get_text(lang, "select_lang"))
+
+    else:
+        # Fallback de seguridad al menú si interactúa fuera de un estado activo
+        await btn_menu(message)
+
+
+# Router vital a registrar
+def register_handlers(dispatcher: Dispatcher):
+    dispatcher.include_router(router)

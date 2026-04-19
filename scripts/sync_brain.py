@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Módulo de Sincronización - Sync Brain
 Ejecutado al iniciar el nodo para:
@@ -21,11 +20,11 @@ from sentence_transformers import SentenceTransformer
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from aisynergix.services.greenfield import get_object, put_object
-from aisynergix.services.rag_engine import RAGEngine
+from aisynergix.services.rag_engine import MultilingualRAG
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctiasctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -61,13 +60,20 @@ class SyncBrain:
             success = await self._download_latest_brain()
             
             if success:
-                # 5. Inicializar RAG Engine
-                self.rag_engine = RAGEngine()
-                await self.rag_engine.initialize(
-                    model=self.model,
-                    index=self.faiss_index,
-                    metadata_map=self.metadata_map
-                )
+                # 5. Inicializar RAG Engine (ahora MultilingualRAG)
+                # OJO: Aquí se asume que si MultilingualRAG tuviera su re-inicialización, se llama así.
+                # Como definimos que MultilingualRAG descarga por defecto en rag_engine.py,
+                # simplemente instanciamos y llamamos a su inicializador base para inyectarle el modelo recién descargado si es necesario,
+                # o dejar que MultilingualRAG use los archivos físicos de la ruta por defecto.
+                self.rag_engine = MultilingualRAG(model_name=MODEL_NAME)
+                await self.rag_engine.initialize()
+                
+                # Inyección opcional (Si logramos cargar antes directo, RAG las tomará si es un Singleton, si no, lo dejamos seguir su curso original)
+                if self.model and self.faiss_index:
+                    self.rag_engine.model = self.model
+                    self.rag_engine.index = self.faiss_index
+                    self.rag_engine.metadata = self.metadata_map
+                    
                 logger.info("SyncBrain inicializado exitosamente")
                 return True
             else:
@@ -117,7 +123,7 @@ class SyncBrain:
     async def _download_system_config(self):
         """Descarga la configuración del sistema desde DCellar"""
         try:
-            config_content = await get_object("aisynergix/data/system_config.json")
+            config_content, _ = await get_object("aisynergix/data/system_config.json")
             config_data = json.loads(config_content.decode())
             
             # Guardar localmente
@@ -172,7 +178,7 @@ class SyncBrain:
         """Descarga la última versión del cerebro desde DCellar"""
         try:
             # 1. Leer brain_pointer para obtener la versión actual
-            pointer_content = await get_object("aisynergix/data/brain_pointer")
+            pointer_content, _ = await get_object("aisynergix/data/brain_pointer")
             pointer_data = json.loads(pointer_content.decode())
             self.latest_version = pointer_data.get("latest_v", "v0")
             
@@ -180,7 +186,7 @@ class SyncBrain:
             
             # 2. Descargar índice FAISS
             index_path = f"aisynergix/data/brains/{self.latest_version}.index"
-            index_content = await get_object(index_path)
+            index_content, _ = await get_object(index_path)
             
             # Guardar localmente
             local_index_file = LOCAL_BRAIN_PATH / f"{self.latest_version}.index"
@@ -192,7 +198,7 @@ class SyncBrain:
             
             # 3. Descargar mapeo de metadatos
             metadata_path = f"aisynergix/data/brains/{self.latest_version}.pkl"
-            metadata_content = await get_object(metadata_path)
+            metadata_content, _ = await get_object(metadata_path)
             
             # Guardar localmente
             local_metadata_file = LOCAL_BRAIN_PATH / f"{self.latest_version}.pkl"
@@ -204,7 +210,7 @@ class SyncBrain:
             
             # 4. Descargar top10.json para cache local
             try:
-                top10_content = await get_object("aisynergix/data/top10.json")
+                top10_content, _ = await get_object("aisynergix/data/top10.json")
                 local_top10_file = LOCAL_BRAIN_PATH / "top10.json"
                 with open(local_top10_file, 'wb') as f:
                     f.write(top10_content)
@@ -287,13 +293,13 @@ class SyncBrain:
             await put_object(
                 f"aisynergix/data/brains/{version}.index",
                 index_bytes,
-                content_type="application/octet-stream"
+                tags=None
             )
             
             await put_object(
                 f"aisynergix/data/brains/{version}.pkl",
                 metadata_bytes,
-                content_type="application/octet-stream"
+                tags=None
             )
             
             # Crear brain_pointer
@@ -301,7 +307,7 @@ class SyncBrain:
             await put_object(
                 "aisynergix/data/brain_pointer",
                 json.dumps(pointer_data).encode(),
-                content_type="application/json"
+                tags=None
             )
             
             # Crear top10.json inicial
@@ -315,7 +321,7 @@ class SyncBrain:
             await put_object(
                 "aisynergix/data/top10.json",
                 json.dumps(top10_data, indent=2).encode(),
-                content_type="application/json"
+                tags=None
             )
             
             logger.info("Cerebro inicial creado en DCellar")
@@ -359,7 +365,7 @@ async def sync_brain():
         return None
 
 # ==================== INTEGRACIÓN CON RAG ENGINE ====================
-async def initialize_rag_engine() -> Optional[RAGEngine]:
+async def initialize_rag_engine() -> Optional[MultilingualRAG]:
     """
     Función de conveniencia para inicializar el RAG Engine
     Usada por el módulo principal del bot

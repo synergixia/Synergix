@@ -28,7 +28,6 @@ from aisynergix.services.greenfield import (
     put_object,
     get_user_metadata,
     _hash_uid,
-    update_object_metadata,
 )
 from aisynergix.bot.identity import RANGOS
 
@@ -76,13 +75,13 @@ class FusionBrain:
         """Carga el índice FAISS existente desde DCellar"""
         try:
             # Leer brain_pointer para saber la versión actual
-            pointer_content = await get_object("aisynergix/data/brain_pointer")
+            pointer_content, _ = await get_object("aisynergix/data/brain_pointer")
             pointer_data = json.loads(pointer_content.decode())
             latest_version = pointer_data.get("latest_v", "v0")
             
             # Descargar índice y mapeo
-            index_data = await get_object(f"aisynergix/data/brains/{latest_version}.index")
-            mapping_data = await get_object(f"aisynergix/data/brains/{latest_version}.pkl")
+            index_data, _ = await get_object(f"aisynergix/data/brains/{latest_version}.index")
+            mapping_data, _ = await get_object(f"aisynergix/data/brains/{latest_version}.pkl")
             
             # Cargar índice FAISS
             self.index = faiss.deserialize_index(index_data)
@@ -216,7 +215,7 @@ class FusionBrain:
         # Listar todos los aportes en el bucket
         aportes_paths = await list_objects("aisynergix/aportes/")
         
-        for aporte_path in aportes_paths:
+        for aporte_path, _ in aportes_paths:
             try:
                 # Extraer metadata del path
                 parts = aporte_path.split('/')
@@ -229,7 +228,7 @@ class FusionBrain:
                     continue
                 
                 # Descargar aporte
-                content = await get_object(aporte_path)
+                content, _ = await get_object(aporte_path)
                 texto = content.decode('utf-8', errors='ignore')
                 
                 # Obtener metadata de tags
@@ -266,7 +265,7 @@ class FusionBrain:
             
             # Obtener metadata de cada usuario
             user_stats = []
-            for user_path in users:
+            for user_path, _ in users:
                 try:
                     uid_hash = user_path.split('/')[-1]
                     metadata = await get_user_metadata(uid_hash)
@@ -339,17 +338,17 @@ class FusionBrain:
             # Serializar metadatos
             metadata_bytes = pickle.dumps(self.id_to_metadata)
             
-            # Subir archivos
+            # Subir archivos usando la nueva forma (tags puede ser omitido o ser un diccionario)
             await put_object(
                 f"aisynergix/data/brains/{version}.index",
                 index_bytes,
-                content_type="application/octet-stream"
+                tags={"content_type": "application/octet-stream"}
             )
             
             await put_object(
                 f"aisynergix/data/brains/{version}.pkl",
                 metadata_bytes,
-                content_type="application/octet-stream"
+                tags={"content_type": "application/octet-stream"}
             )
             
             # Actualizar brain_pointer
@@ -357,7 +356,7 @@ class FusionBrain:
             await put_object(
                 "aisynergix/data/brain_pointer",
                 json.dumps(pointer_data).encode(),
-                content_type="application/json"
+                tags={"content_type": "application/json"}
             )
             
             # Generar y subir top10.json
@@ -365,7 +364,7 @@ class FusionBrain:
             await put_object(
                 "aisynergix/data/top10.json",
                 json.dumps(top10_data, indent=2).encode(),
-                content_type="application/json"
+                tags={"content_type": "application/json"}
             )
             
             logger.info(f"Evolución guardada: versión {version}, {self.index.ntotal} vectores")
@@ -381,7 +380,7 @@ class FusionBrain:
             
             # Extraer versiones de archivos .index
             versions = []
-            for file_path in brain_files:
+            for file_path, _ in brain_files:
                 if file_path.endswith('.index'):
                     version = file_path.split('/')[-1].replace('.index', '')
                     if version.startswith('v'):
