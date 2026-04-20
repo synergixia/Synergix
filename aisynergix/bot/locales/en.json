@@ -1,0 +1,60 @@
+{
+  "lang_code": "en",
+  "lang_name": "English",
+  "flag": "🇬🇧",
+
+  "btn_contribute": "🔥 Contribute",
+  "btn_status":     "📊 View status",
+  "btn_memory":     "🧠 My memory",
+  "btn_language":   "🌐 Language",
+
+  "welcome": "Welcome to <b>Synergix</b>, {name}! 🧠🔥\n\nWe are the first decentralized collective intelligence on BNB Greenfield.\nEvery contribution you make is immortalized on the blockchain and strengthens a network that grows with you. 🌐\n\nYour knowledge has real value. Share it and be part of something greater. 🚀",
+
+  "welcome_back": "Welcome back, <b>{name}</b>! 🔥\nWhat knowledge shall we immortalize today?",
+
+  "contribute_activated": "🎯 <b>Contribution mode activated!</b>\nWrite your idea. It will be recorded on the network forever. 💡\nMinimum 20 characters.",
+
+  "status_msg": "📊 <b>Synergix Collective Intelligence</b>\n\n📦 Immortal Contributions: <b>{total_aportes}</b>\n🏆 Challenge: <b>{tema_actual}</b>\n\n── Your Impact, <b>{name}</b> ──\n📈 Score: <b>{points} pts</b>\n🔗 Contributions: <b>{contribuciones}</b>\n🔁 Times your contributions were used: <b>{total_uses_count}</b>\n🏅 Rank: <b>{rank}</b> ({points_next} pts to next level)\n💡 Benefit: {beneficio}\n✖️ Multiplier: ×{multiplier} | 📅 Daily limit: {daily_limit} contributions",
+
+  "memory_header": "🧠 <b>Your legacy in the Synergix Immortal Memory:</b>\n",
+  "memory_entry":  "🏆 {n}. CID: <code>{cid}</code> ⭐{quality_score}/10\n   📝 {resumen_corto}\n",
+  "memory_footer": "\n📈 Score: <b>{points} pts</b> | Contributions: <b>{contribuciones}</b>",
+  "memory_empty":  "🧠 You have no contributions in Immortal Memory yet.\nPress <b>🔥 Contribute</b> to leave your mark! 🌐",
+
+  "language_menu": "🌐 <b>Choose your language:</b>",
+  "language_set":  "✅ Language set to <b>{lang_name}</b> {flag}",
+
+  "contribution_received": "Received! Your wisdom is being processed and immortalized. 🔗",
+
+  "contribution_success": "Thank you, <b>{name}</b>! 🌟\n\nYour contribution is part of the Synergix Immortal Memory 🔗\nCID: <code>{cid}</code>\n\nYour knowledge lives forever and strengthens the network. 🔥\n\n⭐ Elite contribution! Score {quality_score}/10 → +{points_gained} points",
+
+  "contribution_success_challenge": "Thank you, <b>{name}</b>! 🌟\n\nYour contribution is part of the Synergix Immortal Memory 🔗\nCID: <code>{cid}</code>\n\nYour knowledge lives forever and strengthens the network. 🔥\n\n⭐ Elite contribution! Score {quality_score}/10 → +{points_gained} points\n🏆 Related to the weekly Challenge! +5 extra points",
+
+  "contribution_rejected": "❌ <b>Contribution not accepted</b>\n\n📊 Score: <b>{quality_score}/10</b>\n💬 {reason}\n\nTry with deeper and more technical content. 🔥",
+
+  "contribution_too_short": "⚠️ Your contribution is too short.\nMinimum <b>20 characters</b> for the Judge to evaluate it.",
+
+  "contribution_duplicate": "♻️ This knowledge already exists in the collective memory with high similarity.\nTry contributing something new and different. 🌱",
+
+  "quota_exceeded": "⏳ <b>Daily limit reached</b>\n\nYour rank <b>{rank}</b> allows <b>{daily_limit}</b> contributions per day.\nCome back tomorrow or rank up by contributing more. 🚀",
+
+  "rank_up": "🎉 <b>You ranked up!</b>\n\n🏅 You are now <b>{new_rank}</b>\n⚡ New benefits unlocked: {beneficio}\n\nKeep contributing to the network! 🔥",
+
+  "top10_header": "🏆 <b>Top 10 — Synergix</b>\n\n👥 Total users on the network: <b>{total_users}</b>\n\n",
+  "top10_entry":  "{medal} {n}. <b>{name}</b> — {points} pts {rank}\n",
+  "top10_empty":  "📊 The leaderboard is still being compiled. Try in a few minutes.",
+
+  "challenge_broadcast": "🏆 <b>New Weekly Challenge!</b>\n\n{challenge_text}\n\nContribute related knowledge and earn <b>+5 extra points</b>! 🔥",
+
+  "residual_notify": "💰 Your contribution was used by AI to answer another user.\n+1 point credited to your account. Your legacy grows! 🌐",
+
+  "error_generic":  "⚠️ An unexpected error occurred. Please try again.",
+  "error_ia":       "⚠️ The AI node is starting up. Try in a few seconds.",
+  "error_gf":       "⚠️ Network connectivity error. Retrying automatically.",
+
+  "fsm_cancel": "↩️ Operation cancelled. Back to main menu.",
+
+  "points_suffix_elite":     "⭐ Elite contribution!",
+  "points_suffix_legendary": "🌟 Legendary contribution!"
+}
+

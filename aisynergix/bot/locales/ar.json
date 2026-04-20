@@ -1,0 +1,59 @@
+{
+  "lang_code": "ar",
+  "lang_name": "العربية",
+  "flag": "🇸🇦",
+
+  "btn_contribute": "🔥 المساهمة",
+  "btn_status":     "📊 عرض الحالة",
+  "btn_memory":     "🧠 ذاكرتي",
+  "btn_language":   "🌐 اللغة",
+
+  "welcome": "مرحباً بك في <b>Synergix</b>، {name}! 🧠🔥\n\nنحن أول ذكاء جماعي لامركزي على BNB Greenfield.\nكل مساهمة تقدمها تُخلَّد على البلوكشين وتقوي شبكة تنمو معك. 🌐\n\nمعرفتك لها قيمة حقيقية. شاركها وكن جزءاً من شيء أعظم. 🚀",
+
+  "welcome_back": "مرحباً بعودتك، <b>{name}</b>! 🔥\nما المعرفة التي سنخلّدها اليوم؟",
+
+  "contribute_activated": "🎯 <b>تم تفعيل وضع المساهمة!</b>\nاكتب فكرتك. ستُسجَّل في الشبكة إلى الأبد. 💡\n20 حرفاً على الأقل.",
+
+  "status_msg": "📊 <b>Synergix الذكاء الجماعي</b>\n\n📦 المساهمات الخالدة: <b>{total_aportes}</b>\n🏆 التحدي: <b>{tema_actual}</b>\n\n── تأثيرك، <b>{name}</b> ──\n📈 النقاط: <b>{points} نقطة</b>\n🔗 المساهمات: <b>{contribuciones}</b>\n🔁 مرات استخدام مساهماتك: <b>{total_uses_count}</b>\n🏅 الرتبة: <b>{rank}</b> ({points_next} نقطة للمستوى التالي)\n💡 الفائدة: {beneficio}\n✖️ المضاعف: ×{multiplier} | 📅 الحد اليومي: {daily_limit} مساهمة",
+
+  "memory_header": "🧠 <b>إرثك في ذاكرة Synergix الخالدة:</b>\n",
+  "memory_entry":  "🏆 {n}. CID: <code>{cid}</code> ⭐{quality_score}/10\n   📝 {resumen_corto}\n",
+  "memory_footer": "\n📈 النقاط: <b>{points} نقطة</b> | المساهمات: <b>{contribuciones}</b>",
+  "memory_empty":  "🧠 لا توجد مساهمات في الذاكرة الخالدة بعد.\nاضغط على <b>🔥 المساهمة</b> لتترك أثرك! 🌐",
+
+  "language_menu": "🌐 <b>اختر لغتك:</b>",
+  "language_set":  "✅ تم ضبط اللغة على <b>{lang_name}</b> {flag}",
+
+  "contribution_received": "تم الاستلام! حكمتك جارٍ معالجتها وتخليدها. 🔗",
+
+  "contribution_success": "شكراً لك، <b>{name}</b>! 🌟\n\nمساهمتك جزء من ذاكرة Synergix الخالدة 🔗\nCID: <code>{cid}</code>\n\nمعرفتك تعيش إلى الأبد وتقوي الشبكة. 🔥\n\n⭐ مساهمة نخبة! النتيجة {quality_score}/10 → +{points_gained} نقطة",
+
+  "contribution_success_challenge": "شكراً لك، <b>{name}</b>! 🌟\n\nمساهمتك جزء من ذاكرة Synergix الخالدة 🔗\nCID: <code>{cid}</code>\n\nمعرفتك تعيش إلى الأبد وتقوي الشبكة. 🔥\n\n⭐ مساهمة نخبة! النتيجة {quality_score}/10 → +{points_gained} نقطة\n🏆 مرتبطة بالتحدي الأسبوعي! +5 نقاط إضافية",
+
+  "contribution_rejected": "❌ <b>لم تُقبل المساهمة</b>\n\n📊 النتيجة: <b>{quality_score}/10</b>\n💬 {reason}\n\nجرب بمحتوى أعمق وأكثر تقنية. 🔥",
+
+  "contribution_too_short": "⚠️ مساهمتك قصيرة جداً.\n<b>20 حرفاً</b> على الأقل حتى يتمكن القاضي من تقييمها.",
+
+  "contribution_duplicate": "♻️ هذه المعرفة موجودة بالفعل في الذاكرة الجماعية بتشابه عالٍ.\nحاول المساهمة بشيء جديد ومختلف. 🌱",
+
+  "quota_exceeded": "⏳ <b>تم بلوغ الحد اليومي</b>\n\nرتبتك <b>{rank}</b> تسمح بـ <b>{daily_limit}</b> مساهمة يومياً.\nعد غداً أو ارفع رتبتك بمزيد من المساهمات. 🚀",
+
+  "rank_up": "🎉 <b>ترقية في الرتبة!</b>\n\n🏅 أنت الآن <b>{new_rank}</b>\n⚡ مزايا جديدة: {beneficio}\n\nواصل المساهمة في الشبكة! 🔥",
+
+  "top10_header": "🏆 <b>أفضل 10 — Synergix</b>\n\n👥 إجمالي المستخدمين في الشبكة: <b>{total_users}</b>\n\n",
+  "top10_entry":  "{medal} {n}. <b>{name}</b> — {points} نقطة {rank}\n",
+  "top10_empty":  "📊 جدول المتصدرين لا يزال يُجمَّع. حاول بعد دقائق.",
+
+  "challenge_broadcast": "🏆 <b>تحدي أسبوعي جديد!</b>\n\n{challenge_text}\n\nساهم بمعرفة ذات صلة واربح <b>+5 نقاط إضافية</b>! 🔥",
+
+  "residual_notify": "💰 استخدمت الذكاء الاصطناعي مساهمتك للرد على مستخدم آخر.\n+1 نقطة أُضيفت إلى حسابك. تراثك ينمو! 🌐",
+
+  "error_generic":  "⚠️ حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.",
+  "error_ia":       "⚠️ عقدة الذكاء الاصطناعي تبدأ التشغيل. حاول بعد ثوانٍ.",
+  "error_gf":       "⚠️ خطأ في الاتصال بالشبكة. جارٍ إعادة المحاولة تلقائياً.",
+
+  "fsm_cancel": "↩️ تم إلغاء العملية. العودة إلى القائمة الرئيسية.",
+
+  "points_suffix_elite":     "⭐ مساهمة نخبة!",
+  "points_suffix_legendary": "🌟 مساهمة أسطورية!"
+}

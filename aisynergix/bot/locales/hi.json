@@ -1,0 +1,59 @@
+{
+  "lang_code": "hi",
+  "lang_name": "हिन्दी",
+  "flag": "🇮🇳",
+
+  "btn_contribute": "🔥 योगदान करें",
+  "btn_status":     "📊 स्थिति देखें",
+  "btn_memory":     "🧠 मेरी स्मृति",
+  "btn_language":   "🌐 भाषा",
+
+  "welcome": "<b>Synergix</b> में आपका स्वागत है, {name}! 🧠🔥\n\nहम BNB Greenfield पर पहली विकेंद्रीकृत सामूहिक बुद्धिमत्ता हैं।\nआपका हर योगदान ब्लॉकचेन पर हमेशा के लिए दर्ज होता है। 🌐\n\nआपका ज्ञान वास्तविक मूल्य रखता है। इसे साझा करें। 🚀",
+
+  "welcome_back": "वापस स्वागत है, <b>{name}</b>! 🔥\nआज हम क्या ज्ञान अमर करेंगे?",
+
+  "contribute_activated": "🎯 <b>योगदान मोड सक्रिय!</b>\nअपना विचार लिखें। यह नेटवर्क पर हमेशा के लिए दर्ज होगा। 💡\nन्यूनतम 20 अक्षर।",
+
+  "status_msg": "📊 <b>Synergix सामूहिक बुद्धिमत्ता</b>\n\n📦 अमर योगदान: <b>{total_aportes}</b>\n🏆 चैलेंज: <b>{tema_actual}</b>\n\n── आपका प्रभाव, <b>{name}</b> ──\n📈 स्कोर: <b>{points} अंक</b>\n🔗 योगदान: <b>{contribuciones}</b>\n🔁 उपयोग की संख्या: <b>{total_uses_count}</b>\n🏅 रैंक: <b>{rank}</b> (अगले स्तर के लिए {points_next} अंक)\n💡 लाभ: {beneficio}\n✖️ गुणक: ×{multiplier} | 📅 दैनिक सीमा: {daily_limit} योगदान",
+
+  "memory_header": "🧠 <b>Synergix अमर स्मृति में आपकी विरासत:</b>\n",
+  "memory_entry":  "🏆 {n}. CID: <code>{cid}</code> ⭐{quality_score}/10\n   📝 {resumen_corto}\n",
+  "memory_footer": "\n📈 स्कोर: <b>{points} अंक</b> | योगदान: <b>{contribuciones}</b>",
+  "memory_empty":  "🧠 अभी तक कोई योगदान नहीं।\n<b>🔥 योगदान करें</b> दबाएं! 🌐",
+
+  "language_menu": "🌐 <b>अपनी भाषा चुनें:</b>",
+  "language_set":  "✅ भाषा <b>{lang_name}</b> {flag} में सेट की गई",
+
+  "contribution_received": "प्राप्त! आपकी बुद्धिमत्ता अमर हो रही है। 🔗",
+
+  "contribution_success": "धन्यवाद, <b>{name}</b>! 🌟\n\nआपका योगदान Synergix अमर स्मृति का हिस्सा है 🔗\nCID: <code>{cid}</code>\n\nआपका ज्ञान हमेशा जीवित है। 🔥\n\n⭐ एलीट योगदान! स्कोर {quality_score}/10 → +{points_gained} अंक",
+
+  "contribution_success_challenge": "धन्यवाद, <b>{name}</b>! 🌟\n\nआपका योगदान Synergix अमर स्मृति का हिस्सा है 🔗\nCID: <code>{cid}</code>\n\nआपका ज्ञान हमेशा जीवित है। 🔥\n\n⭐ एलीट योगदान! स्कोर {quality_score}/10 → +{points_gained} अंक\n🏆 साप्ताहिक चैलेंज से संबंधित! +5 अतिरिक्त अंक",
+
+  "contribution_rejected": "❌ <b>योगदान स्वीकार नहीं हुआ</b>\n\n📊 स्कोर: <b>{quality_score}/10</b>\n💬 {reason}\n\nअधिक गहरी और तकनीकी सामग्री के साथ प्रयास करें। 🔥",
+
+  "contribution_too_short": "⚠️ आपका योगदान बहुत छोटा है।\nन्यूनतम <b>20 अक्षर</b> आवश्यक हैं।",
+
+  "contribution_duplicate": "♻️ यह ज्ञान पहले से सामूहिक स्मृति में है।\nकुछ नया और अलग योगदान करें। 🌱",
+
+  "quota_exceeded": "⏳ <b>दैनिक सीमा पूरी</b>\n\n<b>{rank}</b> रैंक में प्रतिदिन <b>{daily_limit}</b> योगदान की अनुमति है।\nकल फिर आएं या अधिक योगदान करके रैंक बढ़ाएं। 🚀",
+
+  "rank_up": "🎉 <b>रैंक अपग्रेड!</b>\n\n🏅 अब आप <b>{new_rank}</b> हैं\n⚡ नए लाभ: {beneficio}\n\nयोगदान जारी रखें! 🔥",
+
+  "top10_header": "🏆 <b>शीर्ष 10 — Synergix</b>\n\n👥 नेटवर्क पर कुल उपयोगकर्ता: <b>{total_users}</b>\n\n",
+  "top10_entry":  "{medal} {n}. <b>{name}</b> — {points} अंक {rank}\n",
+  "top10_empty":  "📊 लीडरबोर्ड संकलित हो रहा है। कुछ मिनट बाद प्रयास करें।",
+
+  "challenge_broadcast": "🏆 <b>नया साप्ताहिक चैलेंज!</b>\n\n{challenge_text}\n\nसंबंधित ज्ञान योगदान करें और <b>+5 अतिरिक्त अंक</b> जीतें! 🔥",
+
+  "residual_notify": "💰 आपका योगदान AI द्वारा उपयोग किया गया।\nआपके खाते में +1 अंक जमा। आपकी विरासत बढ़ रही है! 🌐",
+
+  "error_generic":  "⚠️ अप्रत्याशित त्रुटि। कृपया पुनः प्रयास करें।",
+  "error_ia":       "⚠️ AI नोड शुरू हो रहा है। कुछ सेकंड बाद प्रयास करें।",
+  "error_gf":       "⚠️ नेटवर्क कनेक्टिविटी त्रुटि। स्वचालित रूप से पुनः प्रयास कर रहे हैं।",
+
+  "fsm_cancel": "↩️ ऑपरेशन रद्द। मुख्य मेनू पर वापस।",
+
+  "points_suffix_elite":     "⭐ एलीट योगदान!",
+  "points_suffix_legendary": "🌟 किंवदंती योगदान!"
+}

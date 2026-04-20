@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 """
 Synergix - Punto de Entrada de Synergix (Nodo Fantasma).
 Levanta la infraestructura asíncrona: Inicialización desde Greenfield (sync_brain),
-sistema FSM con Write-Behind Cache, arranque del bot Aiogram 3, 
+sistema FSM con Write-Behind Cache, arranque del bot Aiogram 3,
 y programador de tareas (APScheduler).
 """
 
@@ -37,10 +36,10 @@ async def notification_task():
 async def shutdown(dispatcher: Dispatcher, scheduler=None):
     """Apagado elegante de todos los sistemas."""
     logger.info("🛑 Iniciando apagado seguro del Nodo Fantasma...")
-    
+
     if scheduler:
         scheduler.shutdown(wait=False)
-    
+
     # Detener Write-Behind Cache L1
     try:
         cache = await get_cache()
@@ -48,7 +47,7 @@ async def shutdown(dispatcher: Dispatcher, scheduler=None):
         logger.info("✅ Write-Behind Cache detenido y sincronizado en Greenfield.")
     except Exception as e:
         logger.error(f"Error deteniendo caché: {e}")
-        
+
     try:
         await close_greenfield_client()
         logger.info("✅ Cliente Greenfield Web3 cerrado de forma segura.")
@@ -115,12 +114,11 @@ if __name__ == "__main__":
 
     loop = asyncio.get_event_loop()
     main_task = asyncio.ensure_future(main())
-    
+
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, main_task.cancel)
-    
+
     try:
         loop.run_until_complete(main_task)
     except asyncio.CancelledError:
         logger.info("🛡️ Interrupción recibida (SIGINT/SIGTERM), purgando nodo limpiamente.")
-

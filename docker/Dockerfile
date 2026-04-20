@@ -24,12 +24,12 @@ RUN cmake -B build -DLLAMA_CURL=ON -DLLAMA_NATIVE=ON -DCMAKE_BUILD_TYPE=Release 
 
 RUN cmake --build build --config Release -j$(nproc) --target llama-server
 
-# Stage 2: Python environment builder (Unificado a Ubuntu 24.04)
+# Stage 2: Python environment builder (USANDO VENV)
 FROM ubuntu:24.04 AS python-builder
 
 WORKDIR /app
 
-# Instalar Python y herramientas de compilación
+# Instalar Python y dependencias
 RUN apt-get update && apt-get install -y \
     python3.12 \
     python3-pip \
@@ -41,22 +41,26 @@ RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requerimientos
+# Crear entorno virtual (Aísla Aiogram y las demás gemas)
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copiar requirements
 COPY requirements.txt .
 
-# Instalar dependencias en /usr/local (Usando --break-system-packages para contenedores Ubuntu)
-RUN pip3 install --upgrade pip --break-system-packages && \
-    pip3 install --no-cache-dir -r requirements.txt --prefix=/usr/local --break-system-packages
+# Instalar dependencias en el entorno virtual
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Stage 3: Runtime image
 FROM ubuntu:24.04 AS runtime
 
 WORKDIR /app
 
-# Instalar solo dependencias de ejecución
+# Instalar base
 RUN apt-get update && apt-get install -y \
     python3.12 \
-    python3-pip \
+    python3-venv \
     libgomp1 \
     libopenblas0 \
     libcurl4 \
@@ -64,32 +68,20 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3.12 /usr/bin/python3
 
-# Copiar binarios de llama-server
+# Copiar Llama-server
 COPY --from=llama-builder /app/build/bin/llama-server /usr/local/bin/llama-server
 COPY --from=llama-builder /app/build/bin/*.so* /usr/local/lib/
 
-# Copiar TODO el contenido de /usr/local desde el builder (Librerías compatibles)
-COPY --from=python-builder /usr/local /usr/local
+# Copiar el entorno virtual COMPLETO de Python
+COPY --from=python-builder /opt/venv /opt/venv
 
-# Configuración del sistema para Ubuntu 24.04
+# Setear LD_LIBRARY y el PATH al VENV
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-# En Ubuntu, las librerías se instalan en dist-packages por defecto
-ENV PYTHONPATH=/usr/local/lib/python3.12/dist-packages:/app
+ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
-ENV TRANSFORMERS_CACHE=/home/synergix/.cache/huggingface
 
-# Create non-root user
-RUN useradd -m -u 1001 synergix && \
-    chown -R synergix:synergix /app
-
+# Crear usuario seguro
+RUN useradd -m -u 1001 synergix && chown -R synergix:synergix /app
 USER synergix
 
-# Copy application code
-COPY . .
-
-# Create necessary directories
-RUN mkdir -p /home/synergix/.cache /home/synergix/.local && \
-    chown -R synergix:synergix /home/synergix/.cache /home/synergix/.local
-
-# Default command
-CMD ["python3", "main.py"]
+# Copiar el código del bot                                                                           COPY . .                                                                                                                                                                                                  # Comando final (Ocupa el python del venv)                                                           CMD ["python", "main.py"]

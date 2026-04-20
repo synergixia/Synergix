@@ -1,471 +1,242 @@
 """
-Bot principal de Synergix (Aiogram V3) con arquitectura Nodo Fantasma.
-Implementa menús permanentes, comando secreto 'S', y UX supersónica.
-100% stateless: toda la persistencia está en Greenfield.
+Módulo Core: Córtex Telegram / Interacción y Flujo (bot.py)
+---------------------------------------------------------
+Integra los idiomas JSON (locales.py), la máquina de estado FSM (fsm.py) 
+y el conector de Web3/Identidad. 
+No posee comandos explícitos excepto /start y el easter egg 'S'. Flujo conversacional orgánico.
 """
 
-import asyncio
 import json
 import logging
-import os
-import sys
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.client.default import DefaultBotProperties
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import (
-    KeyboardButton,
-    Message,
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
-)
-from aiogram.utils.markdown import hbold, hitalic, hlink
-from dotenv import load_dotenv
 
-from aisynergix.ai.manager import evaluate_contribution, process_user_query
-from aisynergix.bot.fsm import ensure_menu_state, get_user_state, set_user_state
-from aisynergix.bot.identity import (
-    add_points,
-    get_daily_remaining,
-    hydrate_user,
-    increment_daily_contributions,
-)
-from aisynergix.services.greenfield import get_object, hash_uid, upload_aporte
+# Importaciones modulares hacia tu arquitectura original Synergix:
+from aisynergix.bot.locales import get_text, auto_detect_lang, LANGUAGES
+from aisynergix.bot.fsm import UserState      # Tu FSM y Caché L1
+from aisynergix.bot.identity import hydrate_user  # Resucitador o creador Web3
 
-# ──────────────────────────────────────────────────────────────────────────────
-# CONFIGURACIÓN
-# ──────────────────────────────────────────────────────────────────────────────
+# Control Neuronal y Web3 Parcheado:
+from aisynergix.ai.local_ia import get_juez_evaluation, get_pensador_chat 
+from aisynergix.services.greenfield import upload_aporte
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
 logger = logging.getLogger("synergix.bot")
-
-# Se obtiene directamente desde el entorno (docker-compose)
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-if not TOKEN:
-    logger.error("Falta TELEGRAM_TOKEN en .env o entorno Docker")
-    sys.exit(1)
-
-# Compatibilidad Aiogram >= 3.7.0 usando DefaultBotProperties
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-
-dp = Dispatcher(storage=MemoryStorage())
 router = Router()
-dp.include_router(router)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# TRADUCCIONES Y MENÚS PERMANENTES (spec oficial, mantenidos del bot actual)
-# ──────────────────────────────────────────────────────────────────────────────
+TOP10_JSON_PATH = Path("/app/aisynergix/data/top10.json")
 
-TEXTS = {
-    "es": {
-        "welcome": "¡Bienvenido, {name}! 🌟\n\nSoy Synergix, inteligencia colectiva descentralizada.\nTu conocimiento se guarda para siempre en BNB Greenfield y evoluciona nuestra IA. 🔗\n\n🏆 Challenge de la semana:\n{challenge}\n\nNo usas una app. Construyes una memoria comunitaria viva. 🚀",
-        "welcome_back": "¡Hola de nuevo, {name}! 🔥\n\n¿Qué conocimiento anclaremos hoy? 🚀",
-        "btn_contribute": "🔥 Contribuir",
-        "btn_chat": "💭 Chat Libre",
-        "btn_status": "📊 Ver estado",
-        "btn_language": "🌐 Idioma",
-        "btn_memory": "🧠 Mi memoria",
-        "select_lang": "🌐 Elige tu idioma:",
-        "lang_set": "✅ Idioma configurado a Español 🇪🇸",
-        "await_contrib": "🎯 Modo aporte activado!\n\nEscribe tu idea o envía una nota de voz. Quedará grabado en la red para siempre. 💡\n\nMínimo 20 caracteres.",
-        "contrib_ok": "¡Gracias, {name}! 🌟\n\nTu aporte forma parte de la Memoria Inmortal Synergix 🔗\nRuta: {path}\n\nTu conocimiento vive para siempre y fortalece la red. 🔥",
-        "contrib_elite": "\n\n⭐ ¡Aporte de élite! Score {score}/10 → +{points} puntos",
-        "contrib_bonus": "\n\n🏆 ¡Relacionado al Challenge semanal! +5 puntos extra.",
-        "contrib_fail": "⚠️ Hubo un problema al guardar tu aporte. Inténtalo de nuevo.",
-        "contrib_short": "🤔 Muy corto ({chars} chars). Mínimo 20 caracteres. 🔥",
-        "contrib_rejected": "🤔 Aporte con poca profundidad (score: {score}/10).\n\n💡 {reason}\n\nAmplía tu idea. 🔥",
-        "no_memory": "🧠 Sin aportes aún. ¡Contribuye para dejar tu huella! 🔥",
-        "memory_title": "🧠 Tu legado en la Memoria Inmortal Synergix:\n\n",
-        "memory_footer": "\n\n📈 Score: {pts} pts | Contribuciones: {contribs}",
-        "error": "⚠️ Problema temporal. Inténtalo de nuevo. 🔄",
-        "status_msg": "📊 Synergix Inteligencia Colectiva\n\n📦 Aportes Inmortales: {total}\n🏆 Challenge:\n{challenge}\n\n── Tu Impacto, {name} ──\n📈 Score: {pts} pts\n🔗 Contribuciones: {contribs}\n🔁 Usos de tus aportes: {impact}\n🏅 Rango: {rank}\n💡 Beneficio: {benefit}",
-        "rank_1": "🌱 Iniciado",
-        "rank_2": "📈 Activo",
-        "rank_3": "🧬 Sincronizado",
-        "rank_4": "🏗️ Arquitecto",
-        "rank_5": "🧠 Mente Colmena",
-        "rank_6": "🔮 Oráculo",
-        "challenge_text": "Mejor estrategia DeFi 2026",
-        "benefit_1": "Envío de aportes básicos a la red",
-        "benefit_2": "Acceso a Challenges mensuales 🏆",
-        "benefit_3": "Prioridad de procesamiento en el RAG ⚡",
-        "benefit_4": "Tus aportes pesan más en el Fusion Brain 🧠",
-        "benefit_5": "Puedes validar o rechazar ideas de otros 🗳️",
-        "benefit_6": "Influencia máxima sobre la inteligencia colectiva 🌐",
-        "received": "¡Recibido! Tu sabiduría está siendo procesada e inmortalizada. 🔗",
-        "transcribing": "🎙️ Transcribiendo tu nota de voz...",
-        "leaderboard_title": "🏆 LEADERBOARD SYNERGIX 🏆\n\n👥 Usuarios totales: {total_users}\n\n",
-        "leaderboard_row": "{rank}. {rank_tag} {points} pts\n",
-        "leaderboard_footer": "\n✨ ¡Sigue contribuyendo para subir en el ranking!",
-        "chat_welcome": "💭 Modo Chat Libre activado\n\nEscribe tu pregunta y conversaré contigo usando todo el conocimiento colectivo de Synergix. 🧠\n\n(Para volver al menú, usa /menu)",
-        "menu_welcome": "🏠 Menú Principal\n\nElige una opción:",
-        "daily_limit_reached": "⏳ Has alcanzado tu límite diario de aportes ({used}/{limit}).\n\nVuelve mañana o mejora tu rango para aumentar el límite. ⭐",
-    },
-    "en": {
-        "welcome": "Welcome, {name}! 🌟\n\nI'm Synergix, decentralized collective intelligence.\nYour knowledge is saved forever on BNB Greenfield. 🔗\n\n🏆 Weekly Challenge:\n{challenge}\n\nYou're building a living community memory. 🚀",
-        "welcome_back": "Welcome back, {name}! 🔥\n\nWhat knowledge will we anchor today? 🚀",
-        "btn_contribute": "🔥 Contribute",
-        "btn_chat": "💭 Free Chat",
-        "btn_status": "📊 Status",
-        "btn_language": "🌐 Language",
-        "btn_memory": "🧠 My memory",
-        "select_lang": "🌐 Choose your language:",
-        "lang_set": "✅ Language set to English 🇬🇧",
-        "await_contrib": "🎯 Contribution mode activated!\n\nWrite your idea or send a voice note. 💡\n\nMinimum 20 characters.",
-        "contrib_ok": "Thank you, {name}! 🌟\n\nYour contribution is now part of the Immortal Synergix Memory 🔗\nPath: {path}\n\nYour knowledge lives forever. 🔥",
-        "contrib_elite": "\n\n⭐ Elite contribution! Score {score}/10 → +{points} points",
-        "contrib_bonus": "\n\n🏆 Related to the weekly Challenge! +5 extra points.",
-        "contrib_fail": "⚠️ Problem saving your contribution. Please try again.",
-        "contrib_short": "🤔 Too short ({chars} chars). Minimum 20 characters. 🔥",
-        "contrib_rejected": "🤔 Needs more depth (score: {score}/10).\n\n💡 {reason}\n\nExpand your idea. 🔥",
-        "no_memory": "🧠 No contributions yet. Contribute to leave your mark! 🔥",
-        "memory_title": "🧠 Your legacy in the Immortal Synergix Memory:\n\n",
-        "memory_footer": "\n\n📈 Score: {pts} pts | Contributions: {contribs}",
-        "error": "⚠️ Temporary issue. Please try again. 🔄",
-        "status_msg": "📊 Synergix Collective Intelligence\n\n📦 Immortal Contributions: {total}\n🏆 Challenge:\n{challenge}\n\n── Your Impact, {name} ──\n📈 Score: {pts} pts\n🔗 Contributions: {contribs}\n🔁 Times used by community: {impact}\n🏅 Rank: {rank}\n💡 Benefit: {benefit}",
-        "rank_1": "🌱 Initiate",
-        "rank_2": "📈 Active",
-        "rank_3": "🧬 Synchronized",
-        "rank_4": "🏗️ Architect",
-        "rank_5": "🧠 Hive Mind",
-        "rank_6": "🔮 Oracle",
-        "challenge_text": "Best DeFi Strategy 2026",
-        "benefit_1": "Send basic contributions to the network",
-        "benefit_2": "Access to monthly Challenges 🏆",
-        "benefit_3": "Priority processing in the RAG ⚡",
-        "benefit_4": "Your contributions weigh more in the Fusion Brain 🧠",
-        "benefit_5": "You can validate or reject others' ideas 🗳️",
-        "benefit_6": "Maximum influence over collective intelligence 🌐",
-        "received": "Received! Your wisdom is being processed and immortalized. 🔗",
-        "transcribing": "🎙️ Transcribing your voice note...",
-        "leaderboard_title": "🏆 SYNERGIX LEADERBOARD 🏆\n\n👥 Total users: {total_users}\n\n",
-        "leaderboard_row": "{rank}. {rank_tag} {points} pts\n",
-        "leaderboard_footer": "\n✨ Keep contributing to climb the ranks!",
-        "chat_welcome": "💭 Free Chat mode activated\n\nWrite your question and I'll chat with you using all of Synergix's collective knowledge. 🧠\n\n(Use /menu to return to main menu)",
-        "menu_welcome": "🏠 Main Menu\n\nChoose an option:",
-        "daily_limit_reached": "⏳ You've reached your daily contribution limit ({used}/{limit}).\n\nCome back tomorrow or improve your rank to increase the limit. ⭐",
-    },
-    "zh-hans": {
-        "welcome": "欢迎，{name}！🌟\n\n我是 Synergix，去中心化集体智慧。\n您的知识永久保存在 BNB Greenfield。🔗\n\n🏆 本周挑战：\n{challenge}\n\n您正在建立活生生的社区记忆。🚀",
-        "welcome_back": "欢迎回来，{name}！🔥\n\n今天锚定什么知识？🚀",
-        "btn_contribute": "🔥 贡献",
-        "btn_chat": "💭 自由聊天",
-        "btn_status": "📊 查看状态",
-        "btn_language": "🌐 语言",
-        "btn_memory": "🧠 我的记忆",
-        "select_lang": "🌐 选择语言：",
-        "lang_set": "✅ 语言设定为简体中文 🇨🇳",
-        "await_contrib": "🎯 贡献模式已启动！\n\n写下想法或发送语音。💡\n\n最少20个字符。",
-        "contrib_ok": "谢谢，{name}！🌟\n\n贡献已永久保存 🔗\n路径：{path}\n\n您的知识永远存在。🔥",
-        "contrib_elite": "\n\n⭐ 精英贡献！评分 {score}/10 → +{points} 分",
-        "contrib_bonus": "\n\n🏆 与每周挑战相关！+5 分。",
-        "contrib_fail": "⚠️ 保存失败，请重试。",
-        "contrib_short": "🤔 太短（{chars} 字符）。最少20字符。🔥",
-        "contrib_rejected": "🤔 需要更多深度（{score}/10）。\n💡 {reason}\n🔥",
-        "no_memory": "🧠 尚无贡献。立即贡献！🔥",
-        "memory_title": "🧠 Synergix 不朽记忆：\n\n",
-        "memory_footer": "\n\n📈 总分：{pts} 分 | 贡献：{contribs}",
-        "error": "⚠️ 临时问题，请重试。🔄",
-        "status_msg": "📊 Synergix 集体智慧\n\n📦 不朽贡献：{total}\n🏆 挑战：\n{challenge}\n\n── {name} 的影响力 ──\n📈 分数：{pts}\n🔗 贡献：{contribs}\n🔁 被使用次数：{impact}\n🏅 等级：{rank}\n💡 权益：{benefit}",
-        "rank_1": "🌱 入门",
-        "rank_2": "📈 活跃",
-        "rank_3": "🧬 同步者",
-        "rank_4": "🏗️ 架构师",
-        "rank_5": "🧠 蜂巢思维",
-        "rank_6": "🔮 神谕",
-        "challenge_text": "2026年最佳DeFi策略",
-        "benefit_1": "向网络发送基本贡献",
-        "benefit_2": "参与每月挑战 🏆",
-        "benefit_3": "RAG处理优先权 ⚡",
-        "benefit_4": "您的贡献在融合大脑中权重更高 🧠",
-        "benefit_5": "可以验证或拒绝他人的想法 🗳️",
-        "benefit_6": "对集体智慧的最大影响力 🌐",
-        "received": "已收到！正在处理。🔗",
-        "transcribing": "🎙️ 转录中...",
-        "leaderboard_title": "🏆 SYNERGIX 排行榜 🏆\n\n👥 总用户数：{total_users}\n\n",
-        "leaderboard_row": "{rank}. {rank_tag} {points} 分\n",
-        "leaderboard_footer": "\n✨ 继续贡献以提升排名！",
-        "chat_welcome": "💭 自由聊天模式已激活\n\n写下您的问题，我将使用 Synergix 的所有集体知识与您聊天。🧠\n\n（使用 /menu 返回主菜单）",
-        "menu_welcome": "🏠 主菜单\n\n请选择：",
-        "daily_limit_reached": "⏳ 您已达到每日贡献限制（{used}/{limit}）。\n\n明天再来或提升等级以增加限制。⭐",
-    },
-    "zh-hant": {
-        "welcome": "歡迎，{name}！🌟\n\n我是 Synergix，去中心化集體智慧。\n您的知識永久保存在 BNB Greenfield。🔗\n\n🏆 本週挑戰：\n{challenge}\n\n您正在建立活生生的社群記憶。🚀",
-        "welcome_back": "歡迎回來，{name}！🔥\n\n今天錨定什麼知識？🚀",
-        "btn_contribute": "🔥 貢獻",
-        "btn_chat": "💭 自由聊天",
-        "btn_status": "📊 查看狀態",
-        "btn_language": "🌐 語言",
-        "btn_memory": "🧠 我的記憶",
-        "select_lang": "🌐 選擇語言：",
-        "lang_set": "✅ 語言設定為繁體中文 🇹🇼",
-        "await_contrib": "🎯 貢獻模式已啟動！\n\n寫下想法或發送語音。💡\n\n最少20個字元。",
-        "contrib_ok": "謝謝，{name}！🌟\n\n貢獻已永久保存 🔗\n路徑：{path}\n\n您的知識永遠存在。🔥",
-        "contrib_elite": "\n\n⭐ 精英貢獻！評分 {score}/10 → +{points} 分",
-        "contrib_bonus": "\n\n🏆 與每週挑戰相關！+5 分。",
-        "contrib_fail": "⚠️ 儲存失敗，請重試。",
-        "contrib_short": "🤔 太短（{chars} 字元）。最少20字元。🔥",
-        "contrib_rejected": "🤔 需要更多深度（{score}/10）。\n💡 {reason}\n🔥",
-        "no_memory": "🧠 尚無貢獻。立即貢獻！🔥",
-        "memory_title": "🧠 Synergix 不朽記憶：\n\n",
-        "memory_footer": "\n\n📈 總分：{pts} 分 | 貢獻：{contribs}",
-        "error": "⚠️ 暫時問題，請重試。🔄",
-        "status_msg": "📊 Synergix 集體智慧\n\n📦 不朽貢獻：{total}\n🏆 挑戰：\n{challenge}\n\n── {name} 的影響力 ──\n📈 分數：{pts}\n🔗 貢獻：{contribs}\n🔁 被使用次數：{impact}\n🏅 等級：{rank}\n💡 權益：{benefit}",
-        "rank_1": "🌱 入門",
-        "rank_2": "📈 活躍",
-        "rank_3": "🧬 同步者",
-        "rank_4": "🏗️ 架構師",
-        "rank_5": "🧠 蜂巢思維",
-        "rank_6": "🔮 神諭",
-        "challenge_text": "2026年最佳DeFi策略",
-        "benefit_1": "向網路發送基本貢獻",
-        "benefit_2": "參與每月挑戰 🏆",
-        "benefit_3": "RAG處理優先權 ⚡",
-        "benefit_4": "您的貢獻在融合大腦中權重更高 🧠",
-        "benefit_5": "可以驗證或拒絕他人的想法 🗳️",
-        "benefit_6": "對集體智慧的最大影響力 🌐",
-        "received": "已收到！正在處理。🔗",
-        "transcribing": "🎙️ 轉錄中...",
-        "leaderboard_title": "🏆 SYNERGIX 排行榜 🏆\n\n👥 總用戶數：{total_users}\n\n",
-        "leaderboard_row": "{rank}. {rank_tag} {points} 分\n",
-        "leaderboard_footer": "\n✨ 繼續貢獻以提升排名！",
-        "chat_welcome": "💭 自由聊天模式已激活\n\n寫下您的問題，我將使用 Synergix 的所有集體知識與您聊天。🧠\n\n（使用 /menu 返回主選單）",
-        "menu_welcome": "🏠 主選單\n\n請選擇：",
-        "daily_limit_reached": "⏳ 您已達到每日貢獻限制（{used}/{limit}）。\n\n明天再來或提升等級以增加限制。⭐",
-    },
-}
+def get_main_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Retorna los 4 botones maestros traducidos en tiempo real."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=get_text(lang, "btn_contribute"), callback_data="btn_contribute")],
+        [InlineKeyboardButton(text=get_text(lang, "btn_status"), callback_data="btn_status")],
+        [InlineKeyboardButton(text=get_text(lang, "btn_memory"), callback_data="btn_memory")],
+        [InlineKeyboardButton(text=get_text(lang, "btn_lang"), callback_data="btn_lang")]
+    ])
 
-def get_text(user_lang: str, key: str, **kwargs) -> str:
-    """Obtiene texto traducido, con fallback a español."""
-    lang_dict = TEXTS.get(user_lang, TEXTS["es"])
-    text = lang_dict.get(key, TEXTS["es"].get(key, key))
-    return text.format(**kwargs) if kwargs else text
-
-def build_menu_keyboard(user_lang: str) -> ReplyKeyboardMarkup:
-    """Construye el menú permanente (ReplyKeyboardMarkup)."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text=get_text(user_lang, "btn_contribute")),
-                KeyboardButton(text=get_text(user_lang, "btn_chat")),
-            ],
-            [
-                KeyboardButton(text=get_text(user_lang, "btn_status")),
-                KeyboardButton(text=get_text(user_lang, "btn_memory")),
-            ],
-            [
-                KeyboardButton(text=get_text(user_lang, "btn_language")),
-            ],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
-
-# ──────────────────────────────────────────────────────────────────────────────
-# HANDLERS PRINCIPALES
-# ──────────────────────────────────────────────────────────────────────────────
+# =========================================================================
+# FASE 1: IGNICIÓN Y PRESENTACIÓN ÚNICA
+# =========================================================================
 
 @router.message(CommandStart())
-async def cmd_start(message: Message):
-    """Handler para /start - Bienvenida y menú principal."""
-    user = message.from_user
-    telegram_uid = user.id
-    # Hidratar usuario (crea perfil si no existe)
-    user_info = await hydrate_user(telegram_uid, language_hint=user.language_code)
-    user_lang = user_info["language"]
-    # Establecer estado menu_principal
-    await set_user_state(telegram_uid, "menu_principal", sync_now=False)
-    # Determinar si es primera vez (por last_seen_ts)
-    first_time = user_info["last_seen_ts"] < (time.time() - 3600)  # >1 hora sin actividad
-    if first_time:
-        welcome_text = get_text(
-            user_lang,
-            "welcome",
-            name=user.first_name,
-            challenge=get_text(user_lang, "challenge_text"),
-        )
-    else:
-        welcome_text = get_text(user_lang, "welcome_back", name=user.first_name)
-    # Enviar mensaje con menú
-    await message.answer(
-        welcome_text,
-        reply_markup=build_menu_keyboard(user_lang),
-    )
-    logger.info("👋 Usuario %d (%s) inició sesión", telegram_uid, user.first_name)
-
-@router.message(F.text == "🔥 Contribuir")
-@router.message(F.text == "🔥 Contribute")
-@router.message(F.text == "🔥 贡献")
-async def btn_contribute(message: Message):
-    """Handler para botón 'Contribuir'."""
-    telegram_uid = message.from_user.id
-    user_info = await hydrate_user(telegram_uid)
-    user_lang = user_info["language"]
-    # Verificar límite diario
-    remaining = await get_daily_remaining(telegram_uid)
-    if remaining <= 0:
-        daily_used = user_info["daily_aportes_count"]
-        daily_limit = user_info["daily_limit"]
-        await message.answer(
-            get_text(
-                user_lang,
-                "daily_limit_reached",
-                used=daily_used,
-                limit=daily_limit,
-            ),
-            reply_markup=build_menu_keyboard(user_lang),
-        )
-        return
-    # Cambiar estado a esperando_aporte
-    await set_user_state(telegram_uid, "esperando_aporte", sync_now=False)
-    await message.answer(
-        get_text(user_lang, "await_contrib"),
-        reply_markup=ReplyKeyboardRemove(),
-    )
-
-@router.message(F.text == "💭 Chat Libre")
-@router.message(F.text == "💭 Free Chat")
-@router.message(F.text == "💭 自由聊天")
-async def btn_chat(message: Message):
-    """Handler para botón 'Chat Libre'."""
-    telegram_uid = message.from_user.id
-    user_info = await hydrate_user(telegram_uid)
-    user_lang = user_info["language"]
-    # Cambiar estado a chat_libre
-    await set_user_state(telegram_uid, "chat_libre", sync_now=False)
-    await message.answer(
-        get_text(user_lang, "chat_welcome"),
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="/menu")]],
-            resize_keyboard=True,
-            is_persistent=True,
-        ),
-    )
-
-@router.message(F.text == "📊 Ver estado")
-@router.message(F.text == "📊 Status")
-@router.message(F.text == "📊 查看狀態")
-async def btn_status(message: Message):
-    """Handler para botón 'Ver estado'."""
-    telegram_uid = message.from_user.id
-    user_info = await hydrate_user(telegram_uid)
-    user_lang = user_info["language"]
+async def cmd_start(msg: Message, state: FSMContext):
+    await state.clear()
+    data = await state.get_data()
     
-    total_contributions = 0  # Se obtendrá de Greenfield
-    benefit_key = f"benefit_{user_info['rank_level'] + 1}"
-    status_text = get_text(
-        user_lang,
-        "status_msg",
-        name=message.from_user.first_name,
-        total=total_contributions,
-        challenge=get_text(user_lang, "challenge_text"),
-        pts=user_info["points"],
-        contribs=user_info["daily_aportes_count"], 
-        impact=user_info["total_uses_count"],
-        rank=user_info["rank_tag"],
-        benefit=get_text(user_lang, benefit_key),
-    )
-    await message.answer(
-        status_text,
-        reply_markup=build_menu_keyboard(user_lang),
-    )
-    await ensure_menu_state(telegram_uid)
+    # Auto-identifica el lenguaje de Telegram si el usuario no tiene uno fijado en RAM
+    lang = data.get("lang")
+    if not lang:
+        lang = auto_detect_lang(msg.from_user.language_code)
+        await state.update_data(lang=lang)
 
-@router.message(F.text == "🌐 Idioma")
-@router.message(F.text == "🌐 Language")
-@router.message(F.text == "🌐 语言")
-async def btn_language(message: Message):
-    """Handler para botón 'Idioma' - muestra selector de idioma."""
-    telegram_uid = message.from_user.id
-    user_info = await hydrate_user(telegram_uid)
-    user_lang = user_info["language"]
+    name = msg.from_user.first_name or msg.from_user.username or "Viajero"
     
-    await set_user_state(telegram_uid, "seleccion_idioma", sync_now=False)
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="es"), KeyboardButton(text="en")],
-            [KeyboardButton(text="zh-hans"), KeyboardButton(text="zh-hant")],
-            [KeyboardButton(text="/menu")]
-        ], 
-        resize_keyboard=True
-    )
-    await message.answer(get_text(user_lang, "select_lang"), reply_markup=kb)
+    # 1. Hidratación en Segundo Plano: Revisa o crea su perfil fantasma de 0 bytes en Web3.
+    # Usamos try/except para que un fallo global de blockchain no impida enviar el mensaje en Telegram
+    try:
+        await hydrate_user(str(msg.from_user.id), language_hint=lang)
+    except Exception as e:
+        logger.warning(f"[Bot] Fallo menor intentando hidratar la cuenta {msg.from_user.id}: {e}")
 
-@router.message(F.text == "/menu")
-async def btn_menu(message: Message):
-    """Fallback explícito para volver al menú principal"""
-    telegram_uid = message.from_user.id
-    user_info = await hydrate_user(telegram_uid)
-    user_lang = user_info["language"]
-    await ensure_menu_state(telegram_uid)
-    await message.answer(
-        get_text(user_lang, "menu_welcome"), 
-        reply_markup=build_menu_keyboard(user_lang)
-    )
+    # 2. Mostramos el mensaje (parse_mode HTML vital para la estética)
+    txt_bienvenida = get_text(lang, "welcome", name=name)
+    await msg.answer(txt_bienvenida, reply_markup=get_main_keyboard(lang), parse_mode="HTML")
 
-@router.message()
-async def action_receiver(message: Message):
-    """Router central FSM Catch-all basado en estado"""
-    telegram_uid = message.from_user.id
-    state = await get_user_state(telegram_uid)
-    user_info = await hydrate_user(telegram_uid)
-    lang = user_info["language"]
 
-    if state == "esperando_aporte":
-        content = message.text or ""
-        if len(content) < 20: 
-            return await message.answer(get_text(lang, "contrib_short", chars=len(content)))
-        
-        score_dat = await evaluate_contribution(content)
-        
-        if score_dat["score"] < 5:
-            await ensure_menu_state(telegram_uid)
-            return await message.answer(
-                get_text(lang, "contrib_rejected", score=score_dat["score"], reason=score_dat["reason"]),
-                reply_markup=build_menu_keyboard(lang)
-            )
-        
-        # Superó el Juez, subir a BNB Greenfield
-        path = await upload_aporte(user_info["uid_ofuscado"], content, score_dat["score"], score_dat["category"], 1.0, lang)
-        
-        await increment_daily_contributions(telegram_uid)
-        await add_points(telegram_uid, score_dat["score"])
-        await ensure_menu_state(telegram_uid)
-        
-        await message.answer(
-            get_text(lang, "contrib_ok", name=message.from_user.first_name, path=path) + 
-            get_text(lang, "contrib_elite", score=score_dat["score"], points=score_dat["score"]), 
-            reply_markup=build_menu_keyboard(lang)
-        )
+# =========================================================================
+# FASE 2: GESTIÓN DE BOTONES
+# =========================================================================
 
-    elif state == "chat_libre":
-        resp = await process_user_query(telegram_uid, user_info, message.text, 0.5)
-        await message.answer(resp)
-        
-    elif state == "seleccion_idioma":
-        new_lang = message.text.lower()
-        if new_lang in ["es", "en", "zh-hans", "zh-hant"]:
-            await hydrate_user(telegram_uid, language_hint=new_lang)
-            await ensure_menu_state(telegram_uid)
-            await message.answer(get_text(new_lang, "lang_set"), reply_markup=build_menu_keyboard(new_lang))
-        else:
-            await message.answer(get_text(lang, "select_lang"))
+@router.callback_query(F.data == "btn_contribute")
+async def btn_contribute(call: CallbackQuery, state: FSMContext):
+    lang = (await state.get_data()).get("lang", "es")
+    
+    # Atrapamos al usuario en la Máquina de Estados -> Siguiente mensaje es un Aporte.
+    await state.set_state(UserState.waiting_for_aporte) 
+    
+    await call.message.answer(get_text(lang, "contribute_activated"), parse_mode="HTML")
+    await call.answer()
 
+@router.callback_query(F.data == "btn_status")
+async def btn_status(call: CallbackQuery, state: FSMContext):
+    lang = (await state.get_data()).get("lang", "es")
+    name = call.from_user.first_name or "Viajero"
+    
+    # En producción conectarás estos valores leyendo `get_user_metadata()` desde web3
+    # Por ahora se manda la plantilla visual con datos dummy para visualizar
+    txt = get_text(lang, "status_msg", 
+                   total_aportes="Calculando...", tema_challenge="Descentralización", 
+                   name=name, points=0, contribuciones=0, total_uses_count=0, 
+                   rank="Scout", points_next=10, beneficio="Ninguno", 
+                   multiplier=1.0, daily_limit=5)
+                   
+    await call.message.answer(txt, reply_markup=get_main_keyboard(lang), parse_mode="HTML")
+    await call.answer()
+
+@router.callback_query(F.data == "btn_memory")
+async def btn_memory(call: CallbackQuery, state: FSMContext):
+    lang = (await state.get_data()).get("lang", "es")
+    # Lógica base. Luego se sustituye por lectura al SmartContract
+    await call.message.answer(get_text(lang, "memory_empty"), reply_markup=get_main_keyboard(lang), parse_mode="HTML")
+    await call.answer()
+
+@router.callback_query(F.data == "btn_lang")
+async def btn_lang(call: CallbackQuery, state: FSMContext):
+    lang = (await state.get_data()).get("lang", "es")
+    
+    # Renderizamos dinamicamente los 10 idiomas
+    kb_list = [[InlineKeyboardButton(text=f"{l_name} {flag}", callback_data=f"setlang_{l_code}")] 
+               for l_code, (l_name, flag) in LANGUAGES.items()]
+               
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_list)
+    await call.message.answer(get_text(lang, "language_menu"), reply_markup=kb, parse_mode="HTML")
+    await call.answer()
+
+@router.callback_query(F.data.startswith("setlang_"))
+async def clb_set_lang(call: CallbackQuery, state: FSMContext):
+    new_lang = call.data.split("_")[1]
+    
+    # Fijamos el nuevo idioma en la RAM (Caché L1 del State)
+    await state.update_data(lang=new_lang)
+    lang_name, flag = LANGUAGES.get(new_lang, ("English", "🇬🇧"))
+    
+    # Responde en el nuevo idioma e inyecta los teclados mutados
+    txt = get_text(new_lang, "language_set", lang_name=lang_name, flag=flag)
+    await call.message.answer(txt, reply_markup=get_main_keyboard(new_lang), parse_mode="HTML")
+    await call.answer()
+
+
+# =========================================================================
+# FASE 3: EASTER EGG (COMANDO 'S') Y LECTURA DEL TOP 10 JSON
+# =========================================================================
+
+async def process_secret_command_s(msg: Message, lang: str):
+    """Intercepta la letra 'S' y devuelve el Top 10 formateado leyendo de RAM/JSON."""
+    try:
+        if not TOP10_JSON_PATH.exists():
+            await msg.answer(get_text(lang, "top10_empty"), parse_mode="HTML")
+            return
+            
+        with open(TOP10_JSON_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        total_users = data.get("total_users", 0)
+        top10_list = data.get("top10", [])
+        
+        # Construimos el texto del Header
+        response_text = get_text(lang, "top10_header", total_users=total_users)
+        
+        medals = ["🥇", "🥈", "🥉"]
+        
+        # Construimos la lista top 10
+        for i, user in enumerate(top10_list):
+            medal = medals[i] if i < 3 else "🎖️"
+            entry = get_text(lang, "top10_entry", 
+                             medal=medal, 
+                             n=i+1, 
+                             name=user.get("name", "Unknown"), 
+                             points=user.get("points", 0), 
+                             rank=user.get("rank", ""))
+            response_text += entry
+            
+        await msg.answer(response_text, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.error(f"[Comando S] Fallo al leer top10.json: {e}")
+        await msg.answer(get_text(lang, "top10_empty"), parse_mode="HTML")
+
+# =========================================================================
+# FASE 4: EL FLUJO LIBRE MAGNÉTICO (Aporte Inmortal vs Conversación Pensador)
+# =========================================================================
+
+@router.message(F.text)
+async def process_text(msg: Message, state: FSMContext):
+    state_actual = await state.get_state()
+    lang = (await state.get_data()).get("lang", "es")
+    name = msg.from_user.first_name or "Viajero"
+
+    # ========= A. MODO JUDICIAL: EVALUAR APORTE ==================
+    if state_actual == getattr(UserState, "waiting_for_aporte", None) or state_actual == getattr(UserState, "waiting_for_aporte", "").state if hasattr(UserState, "waiting_for_aporte") else getattr(getattr(UserState, "waiting_for_aporte", None), "state", None): # Manejo robusto FSM
+        
+        # Filtro estricto rápido en Telegram
+        if len(msg.text) < 20:
+            await msg.answer(get_text(lang, "contribution_too_short"), parse_mode="HTML")
+            return
+            
+        wait_msg = await msg.answer(get_text(lang, "contribution_received"), parse_mode="HTML")
+        
+        # Le enviamos el texto y su idioma al LLM (Qwen2.5) local para JSON Response
+        try:
+             eval_json = await get_juez_evaluation(msg.text, "Synergix Origin", lang)
+        except Exception:
+             eval_json = {"approved": False, "quality_score": 0, "reason": "Error en Juez AI. Nodos GGUF colapsados."}
+
+        # Juez Falló o Rechaza el aporte
+        if not eval_json.get("approved"):
+            rej_txt = get_text(lang, "contribution_rejected", 
+                               quality_score=eval_json.get("quality_score", 0), 
+                               reason=eval_json.get("reason", ""))
+            await wait_msg.edit_text(rej_txt, parse_mode="HTML")
+            await state.clear()
+            return
+
+        # ===== Aporte Aprobado: Cálculo de Modificadores =====
+        q_score = int(eval_json.get("quality_score", 5))
+        is_rel = eval_json.get("related_to_challenge", False)
+        
+        # Score Base (x2) + Reto (+5) + Legendario (+10)
+        pts = (q_score * 2) + (5 if is_rel else 0) + (10 if q_score >= 9 else 0)
+        
+        # Subida Definitiva a Greenfield (DCellar S3 Layer)
+        try:
+             # Retorna el Hash o la URL real de Web3
+             cid = await upload_aporte(str(msg.from_user.id), msg.text, q_score, eval_json.get("category", "General"), eval_json.get("impact_index", 0.5), lang)
+        except Exception:
+             cid = f"SP_Error_{hash(msg.text)}"
+
+        # Pinta la Victoria al usuario
+        template = "contribution_success_challenge" if is_rel else "contribution_success"
+        succ_txt = get_text(lang, template, name=name, cid=cid, quality_score=q_score, points_gained=pts)
+        
+        await wait_msg.edit_text(succ_txt, reply_markup=get_main_keyboard(lang), parse_mode="HTML")
+        await state.clear()
+
+    # ========= B. MODO CONVERSACIÓN: EL PENSADOR O COMANDO SECRETO=================
     else:
-        # Fallback de seguridad al menú si interactúa fuera de un estado activo
-        await btn_menu(message)
-
-
-# Router vital a registrar
-def register_handlers(dispatcher: Dispatcher):
-    dispatcher.include_router(router)
+        text_clean = msg.text.strip().lower()
+        
+        # Interceptamos "S" o "s" solas para el Huevo de Pascua (Top 10)
+        if text_clean == "s":
+            await process_secret_command_s(msg, lang)
+            return
+            
+        # Conversación Libre Normal: Pasa el texto a LLaMA.cpp
+        try:
+            bot_reply = await get_pensador_chat(msg.text, lang)
+            await msg.answer(bot_reply, parse_mode="HTML")
+        except Exception:
+            await msg.answer("🧠 <i>El Pensador está asimilando la red... [Error de LLM Local]</i>", parse_mode="HTML")

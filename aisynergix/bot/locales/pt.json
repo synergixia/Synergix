@@ -1,0 +1,59 @@
+{
+  "lang_code": "pt",
+  "lang_name": "Português",
+  "flag": "🇵🇹",
+
+  "btn_contribute": "🔥 Contribuir",
+  "btn_status":     "📊 Ver estado",
+  "btn_memory":     "🧠 Minha memória",
+  "btn_language":   "🌐 Idioma",
+
+  "welcome": "Bem-vindo ao <b>Synergix</b>, {name}! 🧠🔥\n\nSomos a primeira inteligência coletiva descentralizada na BNB Greenfield.\nCada contribuição que você faz é imortalizada na blockchain. 🌐\n\nSeu conhecimento tem valor real. Compartilhe-o. 🚀",
+
+  "welcome_back": "Bem-vindo de volta, <b>{name}</b>! 🔥\nQue conhecimento vamos imortalizar hoje?",
+
+  "contribute_activated": "🎯 <b>Modo contribuição ativado!</b>\nEscreva sua ideia. Ficará gravada na rede para sempre. 💡\nMínimo de 20 caracteres.",
+
+  "status_msg": "📊 <b>Synergix Inteligência Coletiva</b>\n\n📦 Contribuições Imortais: <b>{total_aportes}</b>\n🏆 Challenge: <b>{tema_actual}</b>\n\n── Seu Impacto, <b>{name}</b> ──\n📈 Score: <b>{points} pts</b>\n🔗 Contribuições: <b>{contribuciones}</b>\n🔁 Usos das suas contribuições: <b>{total_uses_count}</b>\n🏅 Rank: <b>{rank}</b> ({points_next} pts para o próximo nível)\n💡 Benefício: {beneficio}\n✖️ Multiplicador: ×{multiplier} | 📅 Limite diário: {daily_limit} contribuições",
+
+  "memory_header": "🧠 <b>Seu legado na Memória Imortal Synergix:</b>\n",
+  "memory_entry":  "🏆 {n}. CID: <code>{cid}</code> ⭐{quality_score}/10\n   📝 {resumen_corto}\n",
+  "memory_footer": "\n📈 Score: <b>{points} pts</b> | Contribuições: <b>{contribuciones}</b>",
+  "memory_empty":  "🧠 Ainda não há contribuições na Memória Imortal.\nPressione <b>🔥 Contribuir</b> para deixar sua marca! 🌐",
+
+  "language_menu": "🌐 <b>Escolha seu idioma:</b>",
+  "language_set":  "✅ Idioma configurado para <b>{lang_name}</b> {flag}",
+
+  "contribution_received": "Recebido! Sua sabedoria está sendo processada e imortalizada. 🔗",
+
+  "contribution_success": "Obrigado, <b>{name}</b>! 🌟\n\nSua contribuição faz parte da Memória Imortal Synergix 🔗\nCID: <code>{cid}</code>\n\nSeu conhecimento vive para sempre. 🔥\n\n⭐ Contribuição de elite! Score {quality_score}/10 → +{points_gained} pontos",
+
+  "contribution_success_challenge": "Obrigado, <b>{name}</b>! 🌟\n\nSua contribuição faz parte da Memória Imortal Synergix 🔗\nCID: <code>{cid}</code>\n\nSeu conhecimento vive para sempre. 🔥\n\n⭐ Contribuição de elite! Score {quality_score}/10 → +{points_gained} pontos\n🏆 Relacionada ao Challenge semanal! +5 pontos extras",
+
+  "contribution_rejected": "❌ <b>Contribuição não aceita</b>\n\n📊 Score: <b>{quality_score}/10</b>\n💬 {reason}\n\nTente com conteúdo mais profundo e técnico. 🔥",
+
+  "contribution_too_short": "⚠️ Sua contribuição é muito curta.\nMínimo de <b>20 caracteres</b> para que o Juiz possa avaliá-la.",
+
+  "contribution_duplicate": "♻️ Esse conhecimento já existe na memória coletiva.\nTente contribuir algo novo. 🌱",
+
+  "quota_exceeded": "⏳ <b>Limite diário atingido</b>\n\nSeu rank <b>{rank}</b> permite <b>{daily_limit}</b> contribuições por dia.\nVolte amanhã ou suba de rank. 🚀",
+
+  "rank_up": "🎉 <b>Subiu de rank!</b>\n\n🏅 Agora você é <b>{new_rank}</b>\n⚡ Novos benefícios: {beneficio}\n\nContinue contribuindo! 🔥",
+
+  "top10_header": "🏆 <b>Top 10 — Synergix</b>\n\n👥 Total de usuários na rede: <b>{total_users}</b>\n\n",
+  "top10_entry":  "{medal} {n}. <b>{name}</b> — {points} pts {rank}\n",
+  "top10_empty":  "📊 O leaderboard ainda está sendo compilado. Tente em alguns minutos.",
+
+  "challenge_broadcast": "🏆 <b>Novo Challenge Semanal!</b>\n\n{challenge_text}\n\nContribua conhecimento relacionado e ganhe <b>+5 pontos extras</b>! 🔥",
+
+  "residual_notify": "💰 Sua contribuição foi usada pela IA.\n+1 ponto creditado. Seu legado cresce! 🌐",
+
+  "error_generic":  "⚠️ Ocorreu um erro inesperado. Por favor, tente novamente.",
+  "error_ia":       "⚠️ O nó de IA está iniciando. Tente em alguns segundos.",
+  "error_gf":       "⚠️ Erro de conectividade de rede. Tentando novamente automaticamente.",
+
+  "fsm_cancel": "↩️ Operação cancelada. Voltou ao menu principal.",
+
+  "points_suffix_elite":     "⭐ Contribuição de elite!",
+  "points_suffix_legendary": "🌟 Contribuição lendária!"
+}

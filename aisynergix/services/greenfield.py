@@ -1,376 +1,170 @@
 """
-Cliente Greenfield asíncrono para Synergix (Nodo Fantasma).
-Implementa operaciones ECDSA V4 con eth‑account, reintentos exponenciales y ofuscación determinista.
-100% Python puro, cero Node.js. Apunta 100% a BNB Greenfield MAINNET.
+Módulo 1: Web3 (greenfield.py)
+---------------------------------------------------------
+Servicio Cliente de BNB Greenfield con Parche UTF-8 Puro
 """
-
-import asyncio
-import hashlib
-import json
-import logging
-import os
-import time
-from datetime import datetime, timezone
+importar sistema operativo
+hora de importación
+importar hashlib
+importar registro
 from typing import Any, Dict, List, Optional, Tuple
+import xml.etree.ElementTree as ET
+from urllib.parse import quote, unquote
 
-import httpx
+importar httpx
 from eth_account import Account
 from eth_account.messages import encode_defunct
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
-from tenacity.stop import stop_base
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponencial
 
-logger = logging.getLogger("synergix.greenfield")
+registrador = registro.getLogger("synergix.greenfield")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# OFUSCACIÓN DETERMINISTA
-# ──────────────────────────────────────────────────────────────────────────────
-
+GREENFIELD_RPC_URL = os.environ.get("GREENFIELD_RPC_URL", "https://greenfield-chain.bnbchain.org")
+NOMBRE_DEL_BUCKET = os.environ.get("NOMBRE_DEL_BUCKET", "synergixai")
 SALT_UID = "Synergix_"
 
-def _hash_uid(uid: int) -> str:
-    """
-    SHA‑256 truncado a 12 caracteres, determinista.
-    Se usa para TODAS las rutas y tags; el UID real nunca sale del servidor.
-    """
-    raw = f"{SALT_UID}{uid}".encode()
-    return hashlib.sha256(raw).hexdigest()[:12]
+def _hash_uid(raw_uid: int | str) -> str:
+    return hashlib.sha256(f"{SALT_UID}{raw_uid}".encode()).hexdigest()[:12]
 
-# ──────────────────────────────────────────────────────────────────────────────
-# CLIENTE GREENFIELD (ECDSA V4)
-# ──────────────────────────────────────────────────────────────────────────────
+async def hash_uid(raw_uid: int | str) -> str:
+    devolver _hash_uid(raw_uid)
 
-class GreenfieldClient:
-    """
-    Cliente asíncrono para BNB Greenfield (mainnet DCellar).
-    Todas las operaciones llevan reintentos exponenciales (3 intentos) y manejo robusto de excepciones.
-    """
-    def __init__(
-        self,
-        private_key: str,
-        rpc_url: Optional[str] = None,
-        chain_id: Optional[str] = None,
-        bucket_name: Optional[str] = None,
-    ):
-        self.account = Account.from_key(private_key)
-        
-        # Apuntando directo a Mainnet mediante variables de entorno u omisión
-        self.rpc_url = (rpc_url or os.getenv("GREENFIELD_RPC_URL", "https://greenfield-chain.bnbchain.org:443")).rstrip("/")
-        self.chain_id = int(chain_id or os.getenv("GREENFIELD_CHAIN_ID", "1017"))
-        self.bucket_name = bucket_name or os.getenv("BUCKET_NAME", "synergixai")
-        
-        self._client = None
-        self._auth_token = None
-        self._auth_expiry = 0
+def safe_encode_header(val: Any) -> str:
+    "UTF-8 es un código ASCII codificado en URL compatible con HTTPX."
+    devolver quote(str(val))
+
+def safe_decode_header(val: Any) -> str:
+    devolver unquote(str(val))
+
+Clase GreenfieldClient:
+    def __init__(self):
+        priv_key = os.environ.get("GREENFIELD_PRIVATE_KEY")
+        if not priv_key: raise ValueError("CRÉDITO: Falta GREENFIELD_PRIVATE_KEY")
+        self.account = Account.from_key(priv_key)
+        self.rpc_url = GREENFIELD_RPC_URL.rstrip("/")
+        self.bucket = NOMBRE_DEL_BUCKET
+        self._client: Optional[httpx.AsyncClient] = None
+        self._auth_token: Optional[str] = None
+        self._auth_expiry: int = 0
 
     async def _ensure_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            timeout = httpx.Timeout(float(os.getenv("UPLOAD_TIMEOUT", "30.0")))
-            self._client = httpx.AsyncClient(
-                base_url=self.rpc_url,
-                timeout=timeout,
-                headers={"User-Agent": "Synergix-NodoFantasma/1.0"},
-            )
-        return self._client
+        Si self._client es None:
+            self._client = httpx.AsyncClient(base_url=self.rpc_url, timeout=httpx.Timeout(30.0))
+        devolver self._client
 
     async def _acquire_auth_token(self) -> str:
-        """Obtiene un token de autenticación firmado (ECDSA V4)."""
-        now = int(time.time())
-        if self._auth_token and now < self._auth_expiry - 60:
-            return self._auth_token
+        ahora = int(tiempo.tiempo())
+        Si self._auth_token y ahora < self._auth_expiry - 60: devolver self._auth_token
+        msg = f"Synergix aut {ahora}"
+        firmado = self.cuenta.sign_message(encode_defunct(text=msg))
+        self._auth_token = f"{self.account.address}:{signed.signature.hex()}"
+        self._auth_expiry = ahora + 3600
+        devolver self._auth_token
 
-        message = f"Synergix auth {now}"
-        signable = encode_defunct(text=message)
-        signed = self.account.sign_message(signable)
-        token = f"{self.account.address}:{signed.signature.hex()}"
+    async def cerrar(self):
+        si self._client:
+            esperar a que el cliente se cierre (self._client.aclose())
+            self._client = Ninguno
 
-        # Simulamos una validez de 1 hora
-        self._auth_token = token
-        self._auth_expiry = now + 3600
-        return token
+    async def _signed_request(self, method: str, path: str, params: Optional[Dict] = None, data: Optional[bytes] = None, headers: Optional[Dict] = None) -> httpx.Response:
+        cliente = esperar a que se asegure el cliente (self._ensure_client())
+        token = esperar a que se adquiera el token de autenticación (self._acquire_auth_token())
+        req_h = {"Autorización": f"Greenfield {token}"}
+        Si hay encabezados: req_h.update(encabezados)
+        
+        full_url = f"/{self.bucket}/{path.lstrip('/')}"
+        
+        retryer = AsyncRetrying(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type((httpx.NetworkError, httpx.TimeoutException, httpx.HTTPStatusError)), reraise=True)
+        asíncrono para intento en reintentador:
+            con intento:
+                resp = await client.request(method=method, url=full_url, params=params, headers=req_h, content=data)
+                resp.raise_for_status()
+                respuesta de retorno
 
-    async def _signed_request(
-        self,
-        method: str,
-        path: str,
-        params: Optional[Dict] = None,
-        json_data: Optional[Dict] = None,
-        data: Optional[bytes] = None,
-        headers: Optional[Dict] = None,
-    ) -> httpx.Response:
-        """
-        Realiza una solicitud HTTP firmada con reintentos exponenciales.
-        Usa el esquema de autenticación personalizado de Greenfield.
-        """
-        client = await self._ensure_client()
-        auth_token = await self._acquire_auth_token()
-        default_headers = {
-            "Authorization": f"Greenfield {auth_token}",
-            "Content-Type": "application/json",
-        }
-        if headers:
-            default_headers.update(headers)
-        if data:
-            default_headers["Content-Type"] = "application/octet-stream"
+    async def get_object(self, path: str, include_meta: bool = True) -> Tuple[bytes, Dict[str, str]]:
+        clean_path = path.replace(f"{self.bucket}/", "")
+        intentar:
+            resp = await self._signed_request("GET", clean_path)
+            etiquetas = {}
+            para k, v en resp.headers.items():
+                Si k.lower().startswith("x-gn-meta-"):
+                    tags[k[10:]] = safe_decode_header(v)
+                elif k.lower() == "x-amz-meta-tags":
+                    para pk en str(v).split(","):
+                        si "=" en pk:
+                            pk_k, pk_v = pk.split("=", 1)
+                            tags[pk_k.strip()] = safe_decode_header(pk_v.strip())
+            devolver resp.content, etiquetas
+        excepto httpx.HTTPStatusError como e:
+            if e.response.status_code == 404: return b"", {}
+            elevar e
 
-        retryer = AsyncRetrying(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=1, max=10),
-            retry=retry_if_exception_type(
-                (httpx.NetworkError, httpx.TimeoutException, httpx.HTTPStatusError)
-            ),
-            reraise=True,
-        )
+    async def put_object(self, path: str, data: bytes, tags: Optional[Dict[str, str]] = None, content_type: str = "application/octet-stream") -> bool:
+        clean_path = path.replace(f"{self.bucket}/", "")
+        h = {"Content-Type": content_type}
+        si etiquetas:
+            para k, v en tags.items():
+                h[f"X-Gn-Meta-{k}"] = safe_encode_header(v)
+            h["x-amz-meta-tags"] = ",".join([f"{k}={safe_encode_header(v)}" for k, v in tags.items()])
+        await self._signed_request("PUT", clean_path, headers=h, data=data)
+        devolver verdadero
 
-        async for attempt in retryer:
-            with attempt:
-                response = await client.request(
-                    method=method,
-                    url=path,
-                    params=params,
-                    json=json_data if json_data else None,
-                    content=data if data else None,
-                    headers=default_headers,
-                )
-                response.raise_for_status()
-                return response
-        raise RuntimeError("Unreachable")
+    async def get_user_metadata(self, uid: str) -> Dict[str, str]:
+        _, tags = await self.get_object(f"aisynergix/users/{uid}", True)
+        etiquetas de retorno
 
-    async def close(self):
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+    async def update_user_metadata(self, uid: str, tags: Dict[str, str]) -> bool:
+        return await self.put_object(f"aisynergix/users/{uid}", b"", tags=tags, content_type="application/json")
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # OPERACIONES DE USUARIO (archivos de 0 bytes con tags)
-    # ──────────────────────────────────────────────────────────────────────────
-
-    async def get_user_metadata(self, uid_ofuscado: str) -> Dict[str, Any]:
-        """
-        Lee los tags de un archivo de usuario.
-        """
-        try:
-            resp = await self._signed_request(
-                "GET",
-                f"/{self.bucket_name}/aisynergix/users/{uid_ofuscado}",
-                params={"tags": "true"},
-            )
-            data = resp.json()
-            return data.get("tags", {})
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                return {}
-            raise
-
-    async def update_user_metadata(
-        self, uid_ofuscado: str, tags: Dict[str, str]
-    ) -> None:
-        """
-        Actualiza los tags de un archivo de usuario.
-        """
-        existing = await self.get_user_metadata(uid_ofuscado)
-        if not existing:
-            await self._signed_request(
-                "PUT",
-                f"/{self.bucket_name}/aisynergix/users/{uid_ofuscado}",
-                data=b"",
-                headers={"x-amz-tagging": self._encode_tags(tags)},
-            )
-        else:
-            await self._signed_request(
-                "POST",
-                f"/{self.bucket_name}/aisynergix/users/{uid_ofuscado}",
-                headers={"x-amz-tagging": self._encode_tags(tags)},
-            )
+    async def list_objects(self, prefix: str) -> List[Tuple[str, Dict[str, str]]]:
+        intentar:
+            resp = await self._signed_request("GET", "", params={"prefix": prefix.replace(f"{self.bucket}/", "")})
+            res = []
+            Si resp.status_code == 200:
+                ns = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+                intentar:
+                    para el contenido en ET.fromstring(resp.text).findall('s3:Contents', ns) o ET.fromstring(resp.text).findall('Contents'):
+                        clave = contenido.find('s3:Clave', ns) o contenido.find('Clave')
+                        Si key no es None y key.text: res.append((key.text, {}))
+                excepto Excepción: pasar
+            retorno res
+        excepto Excepción: devolver []
 
     async def list_users(self) -> List[Tuple[str, Dict[str, str]]]:
-        """
-        Lista todos los archivos de usuarios.
-        """
-        resp = await self._signed_request(
-            "GET",
-            f"/{self.bucket_name}/aisynergix/users/",
-            params={"list": "true", "tags": "true"},
-        )
-        items = resp.json().get("objects", [])
-        result = []
-        for item in items:
-            uid = item["key"].split("/")[-1]
-            tags = item.get("tags", {})
-            result.append((uid, tags))
-        return result
+        return await self.list_objects("aisynergix/users/")
 
-    async def add_residual_points(self, uid_ofuscado: str) -> None:
-        """
-        Lazy update: suma +1 a points y total_uses_count.
-        """
-        tags = await self.get_user_metadata(uid_ofuscado)
-        if not tags:
-            return
-        points = int(tags.get("points", "0"))
-        total_uses = int(tags.get("total_uses_count", "0"))
-        tags["points"] = str(points + 1)
-        tags["total_uses_count"] = str(total_uses + 1)
-        tags["last_seen_ts"] = str(int(time.time()))
-        await self.update_user_metadata(uid_ofuscado, tags)
+    async def add_residual_points(self, uid: str) -> None:
+        t = esperar a que self.get_user_metadata(uid)
+        si no t: devolver
+        intentar:
+            t["puntos"] = str(int(t.get("puntos", "0")) + 1)
+            t["total_uses_count"] = str(int(t.get("total_uses_count", "0")) + 1)
+            t["last_seen_ts"] = str(int(time.time()))
+            esperar a que self.update_user_metadata(uid, t)
+        excepto Excepción: pasar
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # APORTES (archivos de texto con tags)
-    # ──────────────────────────────────────────────────────────────────────────
+    async def upload_aporte(self, uid: str, content: str, score: int, cat: str, imp: float, lang: str) -> str:
+        p = f"aisynergix/aportes/{datetime.now(timezone.utc).strftime('%Y-%m')}/{uid}_{int(time.time())}.txt"
+        t = {"quality_score": str(score), "category": str(cat), "impact_index": str(imp), "author_uid": uid, "lang": lang}
+        await self.put_object(p, content.encode("utf-8"), tags=t, content_type="text/plain")
+        devolver p
 
-    async def upload_aporte(
-        self,
-        uid_ofuscado: str,
-        content: str,
-        quality_score: int,
-        category: str,
-        impact_index: float,
-        lang: str,
-    ) -> str:
-        """
-        Sube un aporte a Greenfield.
-        """
-        timestamp = int(time.time())
-        date_prefix = datetime.now(timezone.utc).strftime("%Y-%m")
-        object_name = (
-            f"aisynergix/aportes/{date_prefix}/{uid_ofuscado}_{timestamp}.txt"
-        )
-        tags = {
-            "quality_score": str(quality_score),
-            "category": category,
-            "impact_index": str(impact_index),
-            "author_uid": uid_ofuscado,
-            "lang": lang,
-        }
-        await self.put_object(object_name, content.encode("utf-8"), tags)
-        return object_name
+_client_instance = Ninguno
+async def _get_client():
+    global _client_instance
+    Si _client_instance es None: _client_instance = GreenfieldClient()
+    devolver _instancia_cliente
 
-    async def put_object(
-        self, object_name: str, data: bytes, tags: Optional[Dict[str, str]] = None
-    ) -> None:
-        headers = {}
-        if tags:
-            headers["x-amz-tagging"] = self._encode_tags(tags)
-        await self._signed_request(
-            "PUT",
-            f"/{self.bucket_name}/{object_name}",
-            data=data,
-            headers=headers,
-        )
+async def close_greenfield_client():
+    global _client_instance
+    si _client_instance:
+        esperar _client_instance.aclose()
+        _client_instance = Ninguno
 
-    async def get_object(self, object_name: str) -> Tuple[bytes, Dict[str, str]]:
-        resp = await self._signed_request(
-            "GET",
-            f"/{self.bucket_name}/{object_name}",
-            params={"tags": "true"},
-        )
-        tags = self._decode_tags(resp.headers.get("x-amz-tagging", ""))
-        return resp.content, tags
-
-    async def list_objects(
-        self, prefix: str, limit: int = 1000
-    ) -> List[Tuple[str, Dict[str, str]]]:
-        resp = await self._signed_request(
-            "GET",
-            f"/{self.bucket_name}/{prefix}",
-            params={"list": "true", "tags": "true", "max-keys": str(limit)},
-        )
-        items = resp.json().get("objects", [])
-        return [(item["key"], item.get("tags", {})) for item in items]
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # HELPERS
-    # ──────────────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _encode_tags(tags: Dict[str, str]) -> str:
-        return "&".join(f"{k}={v.replace(' ', '+')}" for k, v in tags.items())
-
-    @staticmethod
-    def _decode_tags(tag_header: str) -> Dict[str, str]:
-        if not tag_header:
-            return {}
-        result = {}
-        for pair in tag_header.split("&"):
-            if "=" in pair:
-                k, v = pair.split("=", 1)
-                result[k] = v.replace("+", " ")
-        return result
-
-# ──────────────────────────────────────────────────────────────────────────────
-# INSTANCIA GLOBAL (singleton asíncrono)
-# ──────────────────────────────────────────────────────────────────────────────
-
-_gf_client: Optional[GreenfieldClient] = None
-
-async def get_greenfield_client() -> GreenfieldClient:
-    """Devuelve la instancia única del cliente Greenfield usando Mainnet y variables nativas."""
-    global _gf_client
-    if _gf_client is None:
-        private_key = os.getenv("GREENFIELD_PRIVATE_KEY")
-        if not private_key:
-            raise ValueError("Falta GREENFIELD_PRIVATE_KEY en las variables de entorno.")
-        
-        _gf_client = GreenfieldClient(private_key=private_key)
-    return _gf_client
-
-async def close_greenfield_client() -> None:
-    """Cierra el cliente Greenfield (llamar al apagado)."""
-    global _gf_client
-    if _gf_client:
-        await _gf_client.close()
-        _gf_client = None
-
-# ──────────────────────────────────────────────────────────────────────────────
-# FUNCIONES DE CONVENIENCIA (para uso desde otros módulos)
-# ──────────────────────────────────────────────────────────────────────────────
-
-async def hash_uid(uid: int) -> str:
-    return _hash_uid(uid)
-
-async def get_user_metadata(uid_ofuscado: str) -> Dict[str, Any]:
-    client = await get_greenfield_client()
-    return await client.get_user_metadata(uid_ofuscado)
-
-async def update_user_metadata(uid_ofuscado: str, tags: Dict[str, str]) -> None:
-    client = await get_greenfield_client()
-    await client.update_user_metadata(uid_ofuscado, tags)
-
-async def list_users() -> List[Tuple[str, Dict[str, str]]]:
-    client = await get_greenfield_client()
-    return await client.list_users()
-
-async def add_residual_points(uid_ofuscado: str) -> None:
-    client = await get_greenfield_client()
-    await client.add_residual_points(uid_ofuscado)
-
-async def upload_aporte(
-    uid_ofuscado: str,
-    content: str,
-    quality_score: int,
-    category: str,
-    impact_index: float,
-    lang: str,
-) -> str:
-    client = await get_greenfield_client()
-    return await client.upload_aporte(
-        uid_ofuscado, content, quality_score, category, impact_index, lang
-    )
-
-async def put_object(
-    object_name: str, data: bytes, tags: Optional[Dict[str, str]] = None
-) -> None:
-    client = await get_greenfield_client()
-    await client.put_object(object_name, data, tags)
-
-async def get_object(object_name: str) -> Tuple[bytes, Dict[str, str]]:
-    client = await get_greenfield_client()
-    return await client.get_object(object_name)
-
-async def list_objects(prefix: str, limit: int = 1000) -> List[Tuple[str, Dict[str, str]]]:
-    client = await get_greenfield_client()
-    return await client.list_objects(prefix, limit)
+async def get_object(path: str, include_meta: bool = True): client = await _get_client(); return await client.get_object(path, include_meta)
+async def put_object(path: str, data: bytes, tags: Optional[Dict[str, str]] = None, content_type: str = "application/octet-stream"): client = await _get_client(); return await client.put_object(path, data, tags, content_type)
+async def get_user_metadata(uid: str): client = await _get_client(); return await client.get_user_metadata(uid)
+async def update_user_metadata(uid: str, tags: Dict[str, str]): client = await _get_client(); return await client.update_user_metadata(uid, tags)
+async def list_users(): cliente = await _get_client(); return await cliente.list_users()
+async def list_objects(prefix: str): client = await _get_client(); return await client.list_objects(prefix)
+async def add_residual_points(uid: str): client = await _get_client(); await client.add_residual_points(uid)
+async def upload_aporte(uid: str, content: str, score: int, cat: str, imp: float, lang: str): client = await _get_client(); return await client.upload_aporte(uid, content, score, cat, imp, lang)

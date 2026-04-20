@@ -1,0 +1,59 @@
+{
+  "lang_code": "bn",
+  "lang_name": "বাংলা",
+  "flag": "🇧🇩",
+
+  "btn_contribute": "🔥 অবদান করুন",
+  "btn_status":     "📊 অবস্থা দেখুন",
+  "btn_memory":     "🧠 আমার স্মৃতি",
+  "btn_language":   "🌐 ভাষা",
+
+  "welcome": "<b>Synergix</b>-এ আপনাকে স্বাগতম, {name}! 🧠🔥\n\nআমরা BNB Greenfield-এ প্রথম বিকেন্দ্রীভূত সম্মিলিত বুদ্ধিমত্তা।\nআপনার প্রতিটি অবদান ব্লকচেইনে চিরকালের জন্য সংরক্ষিত হয়। 🌐\n\nআপনার জ্ঞানের প্রকৃত মূল্য আছে। শেয়ার করুন। 🚀",
+
+  "welcome_back": "আবার স্বাগতম, <b>{name}</b>! 🔥\nআজ আমরা কী জ্ঞান অমর করব?",
+
+  "contribute_activated": "🎯 <b>অবদান মোড সক্রিয়!</b>\nআপনার ধারণা লিখুন। এটি নেটওয়ার্কে চিরকালের জন্য রেকর্ড হবে। 💡\nসর্বনিম্ন ২০টি অক্ষর।",
+
+  "status_msg": "📊 <b>Synergix সম্মিলিত বুদ্ধিমত্তা</b>\n\n📦 অমর অবদান: <b>{total_aportes}</b>\n🏆 চ্যালেঞ্জ: <b>{tema_actual}</b>\n\n── আপনার প্রভাব, <b>{name}</b> ──\n📈 স্কোর: <b>{points} পয়েন্ট</b>\n🔗 অবদান: <b>{contribuciones}</b>\n🔁 ব্যবহারের সংখ্যা: <b>{total_uses_count}</b>\n🏅 পদমর্যাদা: <b>{rank}</b> (পরবর্তী স্তরের জন্য {points_next} পয়েন্ট)\n💡 সুবিধা: {beneficio}\n✖️ গুণক: ×{multiplier} | 📅 দৈনিক সীমা: {daily_limit} অবদান",
+
+  "memory_header": "🧠 <b>Synergix অমর স্মৃতিতে আপনার উত্তরাধিকার:</b>\n",
+  "memory_entry":  "🏆 {n}. CID: <code>{cid}</code> ⭐{quality_score}/10\n   📝 {resumen_corto}\n",
+  "memory_footer": "\n📈 স্কোর: <b>{points} পয়েন্ট</b> | অবদান: <b>{contribuciones}</b>",
+  "memory_empty":  "🧠 অমর স্মৃতিতে এখনো কোনো অবদান নেই।\n<b>🔥 অবদান করুন</b> চাপুন! 🌐",
+
+  "language_menu": "🌐 <b>আপনার ভাষা বেছে নিন:</b>",
+  "language_set":  "✅ ভাষা <b>{lang_name}</b> {flag}-এ সেট করা হয়েছে",
+
+  "contribution_received": "পাওয়া গেছে! আপনার জ্ঞান প্রক্রিয়া করা হচ্ছে। 🔗",
+
+  "contribution_success": "ধন্যবাদ, <b>{name}</b>! 🌟\n\nআপনার অবদান Synergix অমর স্মৃতির অংশ 🔗\nCID: <code>{cid}</code>\n\nআপনার জ্ঞান চিরকাল বেঁচে থাকবে। 🔥\n\n⭐ এলিট অবদান! স্কোর {quality_score}/10 → +{points_gained} পয়েন্ট",
+
+  "contribution_success_challenge": "ধন্যবাদ, <b>{name}</b>! 🌟\n\nআপনার অবদান Synergix অমর স্মৃতির অংশ 🔗\nCID: <code>{cid}</code>\n\nআপনার জ্ঞান চিরকাল বেঁচে থাকবে। 🔥\n\n⭐ এলিট অবদান! স্কোর {quality_score}/10 → +{points_gained} পয়েন্ট\n🏆 সাপ্তাহিক চ্যালেঞ্জের সাথে সম্পর্কিত! অতিরিক্ত +৫ পয়েন্ট",
+
+  "contribution_rejected": "❌ <b>অবদান গৃহীত হয়নি</b>\n\n📊 স্কোর: <b>{quality_score}/10</b>\n💬 {reason}\n\nআরও গভীর এবং প্রযুক্তিগত বিষয়বস্তু নিয়ে চেষ্টা করুন। 🔥",
+
+  "contribution_too_short": "⚠️ আপনার অবদান খুব ছোট।\nবিচারক মূল্যায়ন করতে সর্বনিম্ন <b>২০টি অক্ষর</b> প্রয়োজন।",
+
+  "contribution_duplicate": "♻️ এই জ্ঞান ইতিমধ্যে সম্মিলিত স্মৃতিতে আছে।\nনতুন কিছু অবদান করুন। 🌱",
+
+  "quota_exceeded": "⏳ <b>দৈনিক সীমা পূর্ণ</b>\n\n<b>{rank}</b> পদমর্যাদায় প্রতিদিন <b>{daily_limit}</b>টি অবদান অনুমোদিত।\nকাল আবার আসুন। 🚀",
+
+  "rank_up": "🎉 <b>পদমর্যাদা উন্নয়ন!</b>\n\n🏅 আপনি এখন <b>{new_rank}</b>\n⚡ নতুন সুবিধা: {beneficio}\n\nঅবদান চালিয়ে যান! 🔥",
+
+  "top10_header": "🏆 <b>শীর্ষ ১০ — Synergix</b>\n\n👥 নেটওয়ার্কে মোট ব্যবহারকারী: <b>{total_users}</b>\n\n",
+  "top10_entry":  "{medal} {n}. <b>{name}</b> — {points} পয়েন্ট {rank}\n",
+  "top10_empty":  "📊 লিডারবোর্ড সংকলন হচ্ছে। কিছু মিনিট পরে চেষ্টা করুন।",
+
+  "challenge_broadcast": "🏆 <b>নতুন সাপ্তাহিক চ্যালেঞ্জ!</b>\n\n{challenge_text}\n\nসংশ্লিষ্ট জ্ঞান অবদান করুন এবং <b>অতিরিক্ত +৫ পয়েন্ট</b> জিতুন! 🔥",
+
+  "residual_notify": "💰 আপনার অবদান AI দ্বারা ব্যবহৃত হয়েছে।\n+১ পয়েন্ট আপনার অ্যাকাউন্টে যোগ হয়েছে। 🌐",
+
+  "error_generic":  "⚠️ অপ্রত্যাশিত ত্রুটি। আবার চেষ্টা করুন।",
+  "error_ia":       "⚠️ AI নোড শুরু হচ্ছে। কয়েক সেকেন্ড পরে চেষ্টা করুন।",
+  "error_gf":       "⚠️ নেটওয়ার্ক সংযোগ ত্রুটি। স্বয়ংক্রিয়ভাবে পুনরায় চেষ্টা করছি।",
+
+  "fsm_cancel": "↩️ অপারেশন বাতিল। প্রধান মেনুতে ফিরে গেছি।",
+
+  "points_suffix_elite":     "⭐ এলিট অবদান!",
+  "points_suffix_legendary": "🌟 কিংবদন্তি অবদান!"
+}

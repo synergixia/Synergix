@@ -1,0 +1,59 @@
+{
+  "lang_code": "ur",
+  "lang_name": "اردو",
+  "flag": "🇵🇰",
+
+  "btn_contribute": "🔥 حصہ ڈالیں",
+  "btn_status":     "📊 حیثیت دیکھیں",
+  "btn_memory":     "🧠 میری یادداشت",
+  "btn_language":   "🌐 زبان",
+
+  "welcome": "<b>Synergix</b> میں خوش آمدید، {name}! 🧠🔥\n\nہم BNB Greenfield پر پہلی غیر مرکزی اجتماعی ذہانت ہیں۔\nآپ کی ہر شراکت ہمیشہ کے لیے بلاک چین پر محفوظ ہو جاتی ہے۔ 🌐\n\nآپ کے علم کی حقیقی قدر ہے۔ اسے شیئر کریں۔ 🚀",
+
+  "welcome_back": "دوبارہ خوش آمدید، <b>{name}</b>! 🔥\nآج ہم کون سا علم لازوال بنائیں گے؟",
+
+  "contribute_activated": "🎯 <b>حصہ ڈالنے کا موڈ فعال!</b>\nاپنا خیال لکھیں۔ یہ ہمیشہ کے لیے نیٹ ورک پر محفوظ ہو جائے گا۔ 💡\nکم از کم 20 حروف۔",
+
+  "status_msg": "📊 <b>Synergix اجتماعی ذہانت</b>\n\n📦 لازوال شراکتیں: <b>{total_aportes}</b>\n🏆 چیلنج: <b>{tema_actual}</b>\n\n── آپ کا اثر، <b>{name}</b> ──\n📈 اسکور: <b>{points} پوائنٹس</b>\n🔗 شراکتیں: <b>{contribuciones}</b>\n🔁 آپ کی شراکتوں کا استعمال: <b>{total_uses_count}</b>\n🏅 درجہ: <b>{rank}</b> (اگلے سطح کے لیے {points_next} پوائنٹس)\n💡 فائدہ: {beneficio}\n✖️ ضرب کنندہ: ×{multiplier} | 📅 روزانہ حد: {daily_limit} شراکتیں",
+
+  "memory_header": "🧠 <b>Synergix لازوال یادداشت میں آپ کی میراث:</b>\n",
+  "memory_entry":  "🏆 {n}. CID: <code>{cid}</code> ⭐{quality_score}/10\n   📝 {resumen_corto}\n",
+  "memory_footer": "\n📈 اسکور: <b>{points} پوائنٹس</b> | شراکتیں: <b>{contribuciones}</b>",
+  "memory_empty":  "🧠 لازوال یادداشت میں ابھی تک کوئی شراکت نہیں۔\n<b>🔥 حصہ ڈالیں</b> دبائیں! 🌐",
+
+  "language_menu": "🌐 <b>اپنی زبان منتخب کریں:</b>",
+  "language_set":  "✅ زبان <b>{lang_name}</b> {flag} پر سیٹ کی گئی",
+
+  "contribution_received": "موصول ہو گیا! آپ کی حکمت پروسیس ہو رہی ہے۔ 🔗",
+
+  "contribution_success": "شکریہ، <b>{name}</b>! 🌟\n\nآپ کی شراکت Synergix لازوال یادداشت کا حصہ ہے 🔗\nCID: <code>{cid}</code>\n\nآپ کا علم ہمیشہ زندہ ہے۔ 🔥\n\n⭐ اعلیٰ شراکت! اسکور {quality_score}/10 → +{points_gained} پوائنٹس",
+
+  "contribution_success_challenge": "شکریہ، <b>{name}</b>! 🌟\n\nآپ کی شراکت Synergix لازوال یادداشت کا حصہ ہے 🔗\nCID: <code>{cid}</code>\n\nآپ کا علم ہمیشہ زندہ ہے۔ 🔥\n\n⭐ اعلیٰ شراکت! اسکور {quality_score}/10 → +{points_gained} پوائنٹس\n🏆 ہفتہ وار چیلنج سے متعلق! +5 اضافی پوائنٹس",
+
+  "contribution_rejected": "❌ <b>شراکت قبول نہیں ہوئی</b>\n\n📊 اسکور: <b>{quality_score}/10</b>\n💬 {reason}\n\nزیادہ گہرے اور تکنیکی مواد کے ساتھ کوشش کریں۔ 🔥",
+
+  "contribution_too_short": "⚠️ آپ کی شراکت بہت چھوٹی ہے۔\nجج کے لیے کم از کم <b>20 حروف</b> ضروری ہیں۔",
+
+  "contribution_duplicate": "♻️ یہ علم اجتماعی یادداشت میں پہلے سے موجود ہے۔\nکچھ نیا اور مختلف شیئر کریں۔ 🌱",
+
+  "quota_exceeded": "⏳ <b>روزانہ حد پوری ہو گئی</b>\n\nآپ کا درجہ <b>{rank}</b> فی دن <b>{daily_limit}</b> شراکتوں کی اجازت دیتا ہے۔\nکل واپس آئیں۔ 🚀",
+
+  "rank_up": "🎉 <b>درجہ بڑھ گیا!</b>\n\n🏅 آپ اب <b>{new_rank}</b> ہیں\n⚡ نئے فوائد: {beneficio}\n\nحصہ ڈالتے رہیں! 🔥",
+
+  "top10_header": "🏆 <b>ٹاپ 10 — Synergix</b>\n\n👥 نیٹ ورک میں کل صارفین: <b>{total_users}</b>\n\n",
+  "top10_entry":  "{medal} {n}. <b>{name}</b> — {points} پوائنٹس {rank}\n",
+  "top10_empty":  "📊 لیڈربورڈ ابھی مرتب ہو رہا ہے۔ چند منٹ بعد کوشش کریں۔",
+
+  "challenge_broadcast": "🏆 <b>نیا ہفتہ وار چیلنج!</b>\n\n{challenge_text}\n\nمتعلقہ علم شیئر کریں اور <b>+5 اضافی پوائنٹس</b> جیتیں! 🔥",
+
+  "residual_notify": "💰 آپ کی شراکت AI نے استعمال کی۔\n+1 پوائنٹ کریڈٹ ہوا۔ آپ کی میراث بڑھ رہی ہے! 🌐",
+
+  "error_generic":  "⚠️ ایک غیر متوقع خرابی پیش آئی۔ دوبارہ کوشش کریں۔",
+  "error_ia":       "⚠️ AI نوڈ شروع ہو رہا ہے۔ چند سیکنڈ بعد کوشش کریں۔",
+  "error_gf":       "⚠️ نیٹ ورک کنیکٹیویٹی خرابی۔ خودکار طریقے سے دوبارہ کوشش ہو رہی ہے۔",
+
+  "fsm_cancel": "↩️ آپریشن منسوخ۔ مین مینو پر واپس۔",
+
+  "points_suffix_elite":     "⭐ اعلیٰ شراکت!",
+  "points_suffix_legendary": "🌟 لازوال شراکت!"
+}

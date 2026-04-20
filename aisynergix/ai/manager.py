@@ -13,7 +13,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from heapq import heappush, heappop
 
-from aisynergix.ai.local_ia import call_judge, call_thinker
+# Importamos las herramientas locales (Asegúrate de que correspondan a tu local_ia.py parchado)
+from aisynergix.ai.local_ia import call_thinker, get_juez_evaluation
 from aisynergix.bot.identity import get_rank_info
 from aisynergix.services.greenfield import add_residual_points
 from aisynergix.services.rag_engine import rag_search
@@ -30,9 +31,9 @@ Eres Synergix, la inteligencia colectiva descentralizada. Tu conocimiento provie
 DIRECTIVAS ABSOLUTAS:
 
 1. DETECCIÓN DE IDIOMA:
-   - Detecta el idioma de la pregunta (Español, Inglés, Chino Estándar o Chino Simplificado).
+   - Responde EXCLUSIVAMENTE en el IDIOMA OBLIGATORIO que te indique el sistema. No importan los idiomas de los contextos.
    - El 'Contexto interno' puede estar en otro idioma.
-   - Lee el contexto, extrae la verdad y genera la respuesta EXCLUSIVAMENTE en el mismo idioma de la pregunta.
+   - Lee el contexto, extrae la verdad y genera la respuesta.
    - No menciones que tradujiste nada.
 
 2. EMOJIS INTELIGENTES:
@@ -53,18 +54,9 @@ DIRECTIVAS ABSOLUTAS:
 Ahora, el usuario te pregunta:
 """
 
-JUDGE_SYSTEM_PROMPT = """
-Eres curador de conocimiento Synergix. Evalúa el siguiente aporte en una escala de 1‑10 considerando:
-- Originalidad (¿es una idea nueva o una perspectiva única?)
-- Utilidad (¿resuelve un problema o aporta conocimiento práctico?)
-- Claridad (¿se expresa de forma comprensible y estructurada?)
+# Nota: El prompt estricto del Juez ya vive dentro de local_ia.py
+# porque necesita coerción a JSON, así que ya no se inyecta desde aquí.
 
-Responde **EXCLUSIVAMENTE** con un JSON válido que tenga exactamente estas claves:
-{"score": N, "reason": "explicación breve", "category": "categoría", "knowledge_tag": "etiqueta"}
-
-Categorías permitidas: General, Tecnología, Finanzas, Salud, Arte, Ciencia.
-No añadas texto fuera del JSON.
-"""
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SEMÁFORO CON PRIORIDAD
@@ -163,40 +155,29 @@ class PriorityAIManager:
         Construye el prompt final con contexto y llama al Pensador.
         Ejecuta regalías en background para cada author_uid.
         """
-        # 1. Disparar regalías en background (no esperar)
+        # 1. Disparar regalías en background (no esperar a que termine para seguir)
         if author_uids:
             asyncio.create_task(self._award_residual_points(author_uids))
 
-        # 2. Construir prompt con contexto
+        # 2. Construir prompt con contexto RAG
         context_block = ""
         if contexts:
             context_block = "\n\n─── CONTEXTO INTERNO (Memoria Colectiva) ───\n"
-            for i, ctx in enumerate(contexts[:5]):  # máximo 5 contextos
+            for i, ctx in enumerate(contexts[:5]):  # máximo 5 contextos para no saturar tokens
                 context_block += f"\n📚 Fragmento {i+1}:\n{ctx}\n"
             context_block += "\n─── FIN DEL CONTEXTO ───\n\n"
 
         user_lang = user_info.get("language", "es")
-        lang_note = ""
-        if user_lang == "es":
-            lang_note = " (Idioma detectado: Español)"
-        elif user_lang == "en":
-            lang_note = " (Language detected: English)"
-        elif user_lang == "zh-hans":
-            lang_note = " (检测到的语言: 简体中文)"
-        elif user_lang == "zh-hant":
-            lang_note = " (偵測到的語言: 繁體中文)"
+        final_prompt = f"{query}\n\n{context_block}"
 
-        final_prompt = f"{query}{lang_note}\n\n{context_block}"
-
-        # 3. Llamar al Pensador
+        # 3. Llamar al Pensador (Integra la nueva variable idioma para local_ia.py)
         response = await call_thinker(
             prompt=final_prompt,
-            system_prompt=THINKER_SYSTEM_PROMPT,
-            temperature=0.3,
-            top_k=40,
+            idioma=user_lang,
+            system_prompt=THINKER_SYSTEM_PROMPT
         )
 
-        # 4. Log (sin exponer información sensible)
+        # 4. Log (sin exponer información sensible del usuario, solo métricas)
         logger.info(
             "🧠 IA procesada para usuario rank=%s, contextos=%d, autores=%d",
             user_info.get("rank_tag", "🌱"),
@@ -207,14 +188,15 @@ class PriorityAIManager:
 
     async def _award_residual_points(self, author_uids: List[str]) -> None:
         """
-        Tarea en background: suma +1 point y +1 total_uses_count a cada autor.
-        Se ejecuta de forma asíncrona y silenciosa.
+        Tarea en background: suma +1 point y +1 total_uses_count a cada autor
+        de un aporte que fue utilizado como contexto en esta respuesta.
         """
         if not author_uids:
             return
         # Deduplicar
         unique_uids = list(set(author_uids))
         tasks = [add_residual_points(uid) for uid in unique_uids]
+        
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for uid, res in zip(unique_uids, results):
             if isinstance(res, Exception):
@@ -239,7 +221,7 @@ async def get_ai_manager() -> PriorityAIManager:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# FUNCIONES DE ALTO NIVEL (para uso desde el bot)
+# FUNCIONES DE ALTO NIVEL (para uso directo desde los Handlers de Telegram)
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def process_user_query(
@@ -249,13 +231,17 @@ async def process_user_query(
     rag_min_similarity: float = 0.5,
 ) -> str:
     """
-    Flujo completo: RAG → IA → Respuesta.
-    Esta es la función principal que llamará bot.py para el chat libre.
+    Flujo completo Conversacional Libre: Búsqueda Vectorial (RAG) → Inferencia IA → Respuesta.
+    Esta es la función principal que bot.py invoca para interactuar con "El Pensador".
     """
-    # 1. Búsqueda RAG
-    contexts, author_uids = await rag_search(query, k=5, min_similarity=rag_min_similarity)
+    # 1. Búsqueda RAG Inmortal (Protección si faiss no encuentra index)
+    try:
+        contexts, author_uids = await rag_search(query, k=5, min_similarity=rag_min_similarity)
+    except Exception as e:
+        logger.warning(f"[RAG Engine] Fallo la búsqueda vectorial o índice no existe aún: {e}")
+        contexts, author_uids = [], []
 
-    # 2. Procesar con IA (con prioridad y límite de concurrencia)
+    # 2. Procesar con IA (El semáforo limita a 2 para no reventar los núcleos del ARM64)
     manager = await get_ai_manager()
     response = await manager.enqueue_request(
         user_info=user_info,
@@ -264,39 +250,25 @@ async def process_user_query(
         author_uids=author_uids,
     )
 
-    # 3. Retornar respuesta (ya incluye emojis y está en el idioma correcto)
+    # 3. Retornar respuesta cruda del LLM formateada
     return response
 
 
-async def evaluate_contribution(content: str) -> Dict:
+async def evaluate_contribution(content: str, tema_challenge: str = "", idioma_usuario: str = "es") -> Dict:
     """
-    Evalúa un aporte usando el Juez.
-    Retorna el dict con score, reason, category, knowledge_tag.
+    Llama directamente al Juez para puntuar el aporte y forzar la matemática del JSON.
     """
     try:
-        return await call_judge(content)
+        return await get_juez_evaluation(content, tema_challenge, idioma_usuario)
     except Exception as e:
-        logger.error("Error en evaluación de aporte: %s", e)
+        logger.error("Error en evaluación de la Mente del Juez: %s", e)
+        # Resguardo de seguridad (Fallback Strict JSON) para evitar crash
         return {
-            "score": 6,
-            "reason": "Evaluación automática (error)",
+            "approved": False,
+            "quality_score": 0,
             "category": "General",
-            "knowledge_tag": "general",
+            "impact_index": 0.0,
+            "related_to_challenge": False,
+            "summary_user_lang": "Error de servidor",
+            "reason": "La IA se encuentra sobrecargada."
         }
-
-
-async def get_ai_status() -> Dict[str, any]:
-    """
-    Retorna estado del sistema de IA: cola, semáforo, salud.
-    """
-    manager = await get_ai_manager()
-    from aisynergix.ai.local_ia import health_check
-
-    health = await health_check()
-    return {
-        "queue_size": len(manager.request_queue),
-        "semaphore_value": manager.semaphore._value,
-        "max_concurrent": manager.semaphore._bound_value,
-        "health_pensador": health.get("pensador", False),
-        "health_juez": health.get("juez", False),
-    }

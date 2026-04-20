@@ -1,0 +1,59 @@
+{
+  "lang_code": "fr",
+  "lang_name": "Français",
+  "flag": "🇫🇷",
+
+  "btn_contribute": "🔥 Contribuer",
+  "btn_status":     "📊 Voir statut",
+  "btn_memory":     "🧠 Ma mémoire",
+  "btn_language":   "🌐 Langue",
+
+  "welcome": "Bienvenue sur <b>Synergix</b>, {name} ! 🧠🔥\n\nNous sommes la première intelligence collective décentralisée sur BNB Greenfield.\nChaque contribution que vous faites est immortalisée sur la blockchain. 🌐\n\nVotre connaissance a une valeur réelle. Partagez-la. 🚀",
+
+  "welcome_back": "Bon retour, <b>{name}</b> ! 🔥\nQuelle connaissance allons-nous immortaliser aujourd'hui ?",
+
+  "contribute_activated": "🎯 <b>Mode contribution activé !</b>\nÉcrivez votre idée. Elle sera enregistrée sur le réseau pour toujours. 💡\nMinimum 20 caractères.",
+
+  "status_msg": "📊 <b>Synergix Intelligence Collective</b>\n\n📦 Contributions Immortelles : <b>{total_aportes}</b>\n🏆 Challenge : <b>{tema_actual}</b>\n\n── Votre Impact, <b>{name}</b> ──\n📈 Score : <b>{points} pts</b>\n🔗 Contributions : <b>{contribuciones}</b>\n🔁 Utilisations de vos contributions : <b>{total_uses_count}</b>\n🏅 Rang : <b>{rank}</b> ({points_next} pts pour le niveau suivant)\n💡 Avantage : {beneficio}\n✖️ Multiplicateur : ×{multiplier} | 📅 Limite journalière : {daily_limit} contributions",
+
+  "memory_header": "🧠 <b>Votre héritage dans la Mémoire Immortelle Synergix :</b>\n",
+  "memory_entry":  "🏆 {n}. CID : <code>{cid}</code> ⭐{quality_score}/10\n   📝 {resumen_corto}\n",
+  "memory_footer": "\n📈 Score : <b>{points} pts</b> | Contributions : <b>{contribuciones}</b>",
+  "memory_empty":  "🧠 Aucune contribution dans la Mémoire Immortelle.\nAppuyez sur <b>🔥 Contribuer</b> pour laisser votre empreinte ! 🌐",
+
+  "language_menu": "🌐 <b>Choisissez votre langue :</b>",
+  "language_set":  "✅ Langue configurée sur <b>{lang_name}</b> {flag}",
+
+  "contribution_received": "Reçu ! Votre sagesse est en cours de traitement et d'immortalisation. 🔗",
+
+  "contribution_success": "Merci, <b>{name}</b> ! 🌟\n\nVotre contribution fait partie de la Mémoire Immortelle Synergix 🔗\nCID : <code>{cid}</code>\n\nVotre connaissance vit pour toujours. 🔥\n\n⭐ Contribution élite ! Score {quality_score}/10 → +{points_gained} points",
+
+  "contribution_success_challenge": "Merci, <b>{name}</b> ! 🌟\n\nVotre contribution fait partie de la Mémoire Immortelle Synergix 🔗\nCID : <code>{cid}</code>\n\nVotre connaissance vit pour toujours. 🔥\n\n⭐ Contribution élite ! Score {quality_score}/10 → +{points_gained} points\n🏆 Liée au Challenge hebdomadaire ! +5 points supplémentaires",
+
+  "contribution_rejected": "❌ <b>Contribution non acceptée</b>\n\n📊 Score : <b>{quality_score}/10</b>\n💬 {reason}\n\nEssayez avec un contenu plus profond et technique. 🔥",
+
+  "contribution_too_short": "⚠️ Votre contribution est trop courte.\nMinimum <b>20 caractères</b> pour que le Juge puisse l'évaluer.",
+
+  "contribution_duplicate": "♻️ Cette connaissance existe déjà dans la mémoire collective.\nEssayez quelque chose de nouveau. 🌱",
+
+  "quota_exceeded": "⏳ <b>Limite journalière atteinte</b>\n\nVotre rang <b>{rank}</b> permet <b>{daily_limit}</b> contributions par jour.\nRevenez demain ou montez de rang. 🚀",
+
+  "rank_up": "🎉 <b>Montée en rang !</b>\n\n🏅 Vous êtes maintenant <b>{new_rank}</b>\n⚡ Nouveaux avantages : {beneficio}\n\nContinuez à contribuer ! 🔥",
+
+  "top10_header": "🏆 <b>Top 10 — Synergix</b>\n\n👥 Total d'utilisateurs sur le réseau : <b>{total_users}</b>\n\n",
+  "top10_entry":  "{medal} {n}. <b>{name}</b> — {points} pts {rank}\n",
+  "top10_empty":  "📊 Le classement est encore en cours de compilation. Réessayez dans quelques minutes.",
+
+  "challenge_broadcast": "🏆 <b>Nouveau Challenge Hebdomadaire !</b>\n\n{challenge_text}\n\nContribuez des connaissances liées et gagnez <b>+5 points supplémentaires</b> ! 🔥",
+
+  "residual_notify": "💰 Votre contribution a été utilisée par l'IA.\n+1 point crédité. Votre héritage grandit ! 🌐",
+
+  "error_generic":  "⚠️ Une erreur inattendue s'est produite. Veuillez réessayer.",
+  "error_ia":       "⚠️ Le nœud IA démarre. Réessayez dans quelques secondes.",
+  "error_gf":       "⚠️ Erreur de connectivité réseau. Nouvelle tentative automatique.",
+
+  "fsm_cancel": "↩️ Opération annulée. Retour au menu principal.",
+
+  "points_suffix_elite":     "⭐ Contribution élite !",
+  "points_suffix_legendary": "🌟 Contribution légendaire !"
+}

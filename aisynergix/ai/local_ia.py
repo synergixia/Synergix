@@ -1,12 +1,6 @@
-"""
-Conector asíncrono a los servidores llama‑server (C++ puro).
-Comunica con el Pensador (8081) y el Juez (8080) mediante httpx.
-"""
-
-import asyncio
 import json
 import logging
-import random
+import os
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -20,62 +14,39 @@ from tenacity import (
 logger = logging.getLogger("synergix.ai.local")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# CONFIGURACIÓN DE LOS SERVICIOS IA LOCAL
+# CONFIGURACIÓN DE LOS SERVICIOS IA LOCAL (A través de las IPs de Docker DNS)
 # ──────────────────────────────────────────────────────────────────────────────
 
-PENSADOR_URL = "http://synergix-ia-pensador:8081/v1/chat/completions"
-JUEZ_URL = "http://synergix-ia-juez:8080/v1/chat/completions"
+PENSADOR_URL = os.getenv("PENSADOR_URL", "http://synergix-ia-pensador:8081") + "/v1/chat/completions"
+JUEZ_URL = os.getenv("JUEZ_URL", "http://synergix-ia-juez:8080") + "/v1/chat/completions"
 
-# Parámetros por defecto (spec oficial)
 PENSADOR_TEMPERATURE = 0.3
 PENSADOR_TOP_K = 40
 JUEZ_TEMPERATURE = 0.1
-
-# Timeouts (segundos)
-CONNECT_TIMEOUT = 10.0
-READ_TIMEOUT = 120.0
-WRITE_TIMEOUT = 30.0
-
-# Número máximo de tokens generados
 MAX_TOKENS = 1024
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# CLIENTE HTTP CON REINTENTOS
-# ──────────────────────────────────────────────────────────────────────────────
-
 class LlamaServerClient:
-    """
-    Cliente robusto para servidores llama‑server con reintentos exponenciales.
-    """
-
-    def __init__(
-        self,
-        base_url: str,
-        default_temperature: float,
-        default_top_k: Optional[int] = None,
-    ):
+    """Cliente HTTP robusto con Exponential Backoff para interactuar con C++ Llama."""
+    
+    def __init__(self, base_url: str, default_temperature: float, default_top_k: Optional[int] = None):
         self.base_url = base_url
         self.default_temperature = default_temperature
         self.default_top_k = default_top_k
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _ensure_client(self) -> httpx.AsyncClient:
+        """Creación diferida (Lazy) del pool TLS asíncrono para Llama-Server."""
         if self._client is None:
-            timeout = httpx.Timeout(
-                connect=CONNECT_TIMEOUT,
-                read=READ_TIMEOUT,
-                write=WRITE_TIMEOUT,
-                pool=None,
-            )
+            timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=None)
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 timeout=timeout,
-                headers={"User-Agent": "Synergix-NodoFantasma/1.0"},
+                headers={"User-Agent": "Synergix-GhostNode/2.0"},
             )
         return self._client
 
-    async def close(self):
+    async def aclose(self):
+        """Apagado elegante de sockets."""
         if self._client:
             await self._client.aclose()
             self._client = None
@@ -88,11 +59,7 @@ class LlamaServerClient:
         max_tokens: int = MAX_TOKENS,
         json_mode: bool = False,
     ) -> str:
-        """
-        Realiza una llamada al endpoint /v1/chat/completions del servidor.
-        Si json_mode=True, se añade una directiva para forzar JSON.
-        Retorna el contenido de la respuesta (texto plano o JSON string).
-        """
+        """Se conecta al completion endpoint de llama.cpp v1."""
         client = await self._ensure_client()
         payload = {
             "messages": messages,
@@ -102,173 +69,159 @@ class LlamaServerClient:
         }
         if self.default_top_k is not None:
             payload["top_k"] = top_k if top_k is not None else self.default_top_k
+            
         if json_mode:
-            # Forzar JSON en la respuesta (algunos servidores lo soportan)
             payload["response_format"] = {"type": "json_object"}
 
         retryer = AsyncRetrying(
             stop=stop_after_attempt(3),
             wait=wait_exponential(multiplier=1, min=1, max=10),
-            retry=retry_if_exception_type(
-                (httpx.NetworkError, httpx.TimeoutException, httpx.HTTPStatusError)
-            ),
+            retry=retry_if_exception_type((httpx.NetworkError, httpx.TimeoutException, httpx.HTTPStatusError)),
             reraise=True,
         )
 
         async for attempt in retryer:
             with attempt:
                 try:
-                    response = await client.post("", json=payload)
-                    response.raise_for_status()
-                    data = response.json()
-                    content = data["choices"][0]["message"]["content"]
-                    # Limpieza básica
-                    content = content.strip()
+                    res = await client.post("", json=payload)
+                    res.raise_for_status()
+                    content = res.json()["choices"][0]["message"]["content"].strip()
+                    
                     if json_mode:
-                        # Eliminar posibles marcas de código
                         content = content.replace("```json", "").replace("```", "").strip()
                     return content
+                    
                 except (KeyError, IndexError, json.JSONDecodeError) as e:
-                    logger.error(
-                        "Respuesta inválida del servidor IA: %s, payload: %s",
-                        e,
-                        json.dumps(payload, ensure_ascii=False)[:200],
-                    )
-                    raise ValueError(f"Respuesta inválida del servidor IA: {e}")
+                    logger.error(f"Caos en la matrix (Llama-Server falló parseo): {e}")
+                    raise ValueError(f"Respuesta rota de IA: {e}")
 
-        raise RuntimeError("Unreachable")
+        raise RuntimeError("Jamás debe llegar a esta línea")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# INSTANCIAS GLOBALES (Pensador y Juez)
+# SINGLETONS Y EXPORTACIONES PÚBLICAS
 # ──────────────────────────────────────────────────────────────────────────────
 
 _pensador_client: Optional[LlamaServerClient] = None
 _juez_client: Optional[LlamaServerClient] = None
 
-
 async def get_pensador() -> LlamaServerClient:
     global _pensador_client
     if _pensador_client is None:
-        _pensador_client = LlamaServerClient(
-            base_url=PENSADOR_URL,
-            default_temperature=PENSADOR_TEMPERATURE,
-            default_top_k=PENSADOR_TOP_K,
-        )
+        _pensador_client = LlamaServerClient(PENSADOR_URL, PENSADOR_TEMPERATURE, PENSADOR_TOP_K)
     return _pensador_client
-
 
 async def get_juez() -> LlamaServerClient:
     global _juez_client
     if _juez_client is None:
-        _juez_client = LlamaServerClient(
-            base_url=JUEZ_URL,
-            default_temperature=JUEZ_TEMPERATURE,
-            default_top_k=None,  # El juez no necesita top_k
-        )
+        _juez_client = LlamaServerClient(JUEZ_URL, JUEZ_TEMPERATURE, None)
     return _juez_client
 
-
 async def close_ia_clients():
-    """Cierra los clientes HTTP (llamar al apagado)."""
     global _pensador_client, _juez_client
-    if _pensador_client:
-        await _pensador_client.close()
-        _pensador_client = None
-    if _juez_client:
-        await _juez_client.close()
-        _juez_client = None
-
+    if _pensador_client: await _pensador_client.aclose()
+    if _juez_client: await _juez_client.aclose()
+    _pensador_client = _juez_client = None
 
 # ──────────────────────────────────────────────────────────────────────────────
-# FUNCIONES PÚBLICAS
+# INTERFACES DE LLAMADO FÁCIL (CON REGLAS DEUX-EX-MACHINA DEL JUEZ)
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def call_thinker(
-    prompt: str,
-    system_prompt: Optional[str] = None,
-    temperature: Optional[float] = None,
-    top_k: Optional[int] = None,
-) -> str:
-    """
-    Llama al Pensador (qwen2.5‑1.5b) con un prompt de usuario.
-    system_prompt se inyecta como mensaje de sistema si se proporciona.
-    """
+async def call_thinker(prompt: str, idioma: str = "es", system_prompt: Optional[str] = None) -> str:
+    """Invoca al Qwen2.5 1.5B (El Razonador) con soporte multi-idioma."""
     client = await get_pensador()
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
+    else:
+        messages.append({
+            "role": "system", 
+            "content": f"Eres el Pensador de Synergix, la suma de todo conocimiento humano. Responde obligatoriamente en el idioma: {idioma}. Se sabio y conciso."
+        })
     messages.append({"role": "user", "content": prompt})
+    
     try:
-        return await client.call(messages, temperature=temperature, top_k=top_k)
+        return await client.call(messages)
     except Exception as e:
-        logger.error("Error llamando al Pensador: %s", e)
-        # Respuesta de fallback amigable
-        return "🤖 *Pensador temporalmente indisponible.*\n\nIntenta de nuevo en un momento o reformula tu pregunta. 🔄"
+        logger.error(f"Pensador Indispuesto: {e}")
+        return "🤖 *El Pensador está temporalmente indisponible.* 🔄"
 
-
-async def call_judge(content: str) -> Dict[str, Any]:
+# CÓDIGO DEL JUEZ RENOMBRADO PARA ENCAJAR CON BOT.PY
+async def get_juez_evaluation(content: str, tema_challenge: str = "", idioma_usuario: str = "es") -> Dict[str, Any]:
     """
-    Llama al Juez (qwen2.5‑0.5b) para evaluar un aporte.
-    Retorna un dict con las claves: score, reason, category, knowledge_tag.
+    Invoca al Qwen2.5 0.5B (El Juez Evaluador Rápido).
+    Aplica el sistema de calificación estricto REDISEÑADO hacia JSON puro.
     """
     client = await get_juez()
-    system_prompt = (
-        "Eres curador de conocimiento Synergix. Evalúa el siguiente aporte en una escala de 1‑10 "
-        "considerando originalidad, utilidad y claridad. "
-        "Responde **EXCLUSIVAMENTE** con un JSON válido que tenga exactamente estas claves:\n"
-        '{"score": N, "reason": "explicación breve", "category": "categoría", "knowledge_tag": "etiqueta"}\n'
-        "No añadas texto fuera del JSON. category debe ser uno de: General, Tecnología, Finanzas, Salud, Arte, Ciencia."
-    )
-    user_prompt = f"Aporte a evaluar:\n\n{content}"
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
+    system_prompt = f"""ERES EL JUEZ SUPREMO DE SYNERGIX.
+Tu misión es evaluar aportes de texto según su originalidad, técnica y profundidad.
+IDIOMA DE USUARIO: {idioma_usuario.upper()}. Debes escribir "summary_user_lang" y "reason" en {idioma_usuario.upper()}.
+TEMA SEMANAL ACTUAL PARA EL CHALLENGE: "{tema_challenge}".
+
+ESTRICTO: DEBES RETORNAR UN FORMATO JSON EXACTO CON ESTAS ÚNICAS 7 LLAVES (NADA DE TEXTO FUERA DEL JSON):
+{{
+  "approved": true,
+  "quality_score": 8,
+  "category": "tecnología",
+  "impact_index": 0.5,
+  "related_to_challenge": false,
+  "summary_user_lang": "resumen corto aquí",
+  "reason": "explicación breve de por qué se asignó el puntaje"
+}}
+
+REGLAS DE CALIFICACIÓN:
+- approved: booleano (true si tiene sentido. false si es puro spam, insultos o un 'hola').
+- quality_score: número entero (0 a 10). 8 es Aporte de élite, 9 y 10 es Aporte legendario.
+- impact_index: decimal (0.0 a 1.0).
+- related_to_challenge: booleano. Sólo true si el contenido dialoga directa o periféricamente con "{tema_challenge}".
+"""
+    
     try:
-        raw = await client.call(messages, json_mode=True)
-        # Parsear JSON
-        result = json.loads(raw)
-        # Validar estructura
-        required = {"score", "reason", "category", "knowledge_tag"}
-        if not all(k in result for k in required):
-            raise ValueError(f"Faltan claves requeridas: {result}")
-        # Asegurar tipos
-        result["score"] = int(result["score"])
-        if not (1 <= result["score"] <= 10):
-            result["score"] = max(1, min(10, result["score"]))
-        result["reason"] = str(result["reason"])
-        result["category"] = str(result["category"])
-        result["knowledge_tag"] = str(result["knowledge_tag"])
-        logger.debug("✅ Juez evaluó: score=%d, category=%s", result["score"], result["category"])
+        raw_json = await client.call(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Aporte humano a evaluar:\n\n{content}"}
+            ],
+            json_mode=True
+        )
+        
+        # Validación de Integridad Estricta de la Respuesta
+        result = json.loads(raw_json)
+        required = {"approved", "quality_score", "category", "impact_index", "related_to_challenge", "summary_user_lang", "reason"}
+        
+        # Corrección autónoma anti-alucinaciones Llama.cpp (Para que Python nunca colapse)
+        for key in required:
+            if key not in result:
+                if key == "approved": result[key] = True
+                elif key == "quality_score": result[key] = 5
+                elif key == "impact_index": result[key] = 0.5
+                elif key == "related_to_challenge": result[key] = False
+                elif key == "category": result[key] = "General"
+                else: result[key] = "..."
+                
+        # Coerción de Tipos (En caso el LLM envíe strings donde van ints o bools)
+        if isinstance(result["quality_score"], str):
+             try: result["quality_score"] = int(result["quality_score"])
+             except Exception: result["quality_score"] = 5
+             
+        result["quality_score"] = max(0, min(10, int(result["quality_score"])))
+        if not isinstance(result["approved"], bool): result["approved"] = str(result["approved"]).lower() == "true"
+        if not isinstance(result["related_to_challenge"], bool): result["related_to_challenge"] = str(result["related_to_challenge"]).lower() == "true"
+        
         return result
+        
     except Exception as e:
-        logger.error("Error llamando al Juez: %s", e)
-        # Fallback seguro
+        logger.error(f"Fallo masivo en El Juez: {e}. Usando salvavidas...")
         return {
-            "score": 6,
-            "reason": "Evaluación automática (fallback)",
+            "approved": False,
+            "quality_score": 0,
+            "reason": "Evaluación de red automática fallida (El Nodo AI está procesando demasiadas peticiones).",
             "category": "General",
-            "knowledge_tag": "general",
+            "impact_index": 0.0,
+            "related_to_challenge": False,
+            "summary_user_lang": ""
         }
 
-
-async def health_check() -> Dict[str, bool]:
-    """
-    Verifica que ambos servidores IA estén respondiendo.
-    Retorna un dict con status del Pensador y del Juez.
-    """
-    results = {}
-    for name, client_getter, test_prompt in [
-        ("pensador", get_pensador, "Hola"),
-        ("juez", get_juez, "Test"),
-    ]:
-        try:
-            client = await client_getter()
-            # Llamada rápida de prueba
-            messages = [{"role": "user", "content": test_prompt}]
-            await client.call(messages, max_tokens=5)
-            results[name] = True
-        except Exception:
-            results[name] = False
-    return results
+# Alias para scripts legados
+call_judge = get_juez_evaluation
+get_pensador_chat = call_thinker
