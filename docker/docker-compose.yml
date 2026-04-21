@@ -1,4 +1,5 @@
 services:
+  # Pensador (1.5B model) - Main AI reasoning
   pensador:
     build:
       context: ..
@@ -11,7 +12,7 @@ services:
       --port 8081
       --model /aisynergix/ai/models/qwen2.5-1.5b.gguf
       --ctx-size 4096
-      --threads 4
+      --threads -1
       --n-gpu-layers 0
       --parallel 4
       --cont-batching
@@ -23,6 +24,7 @@ services:
       - /root/Synergix/aisynergix/ai/models:/aisynergix/ai/models
     environment:
       - LLAMA_KV_CACHE_TYPE=f16
+      - LLAMA_LOG_LEVEL=error
     deploy:
       resources:
         limits:
@@ -37,6 +39,7 @@ services:
       retries: 3
       start_period: 40s
 
+  # Juez (0.5B model) - Fast JSON evaluation
   juez:
     build:
       context: ..
@@ -49,7 +52,7 @@ services:
       --port 8080
       --model /aisynergix/ai/models/qwen2.5-0.5b.gguf
       --ctx-size 2048
-      --threads 2
+      --threads -1
       --n-gpu-layers 0
       --parallel 2
       --cont-batching
@@ -61,6 +64,7 @@ services:
       - /root/Synergix/aisynergix/ai/models:/aisynergix/ai/models
     environment:
       - LLAMA_KV_CACHE_TYPE=f16
+      - LLAMA_LOG_LEVEL=error
     deploy:
       resources:
         limits:
@@ -79,53 +83,41 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      target: runtime
     container_name: synergix-bot
-    command: python main.py
+    command: python /app/scripts/sync_brain.py
+    ports:
+      - "3000:3000"  # Optional: for health/metrics endpoint
     networks:
       - synergix-internal
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
-    volumes:
-      - /root/Synergix/aisynergix/ai/models:/aisynergix/ai/models
-      - data-volume:/aisynergix/data
     environment:
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - PYTHONPATH=/app
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - GREENFIELD_PRIVATE_KEY=${GREENFIELD_PRIVATE_KEY}
-      - GREENFIELD_RPC_URL=${GREENFIELD_RPC_URL}
-      - BUCKET_NAME=synergixai
-      - PENSADOR_URL=http://synergix-ia-pensador:8081
-      - JUEZ_URL=http://synergix-ia-juez:8080
-      # Restricciones duras para prevenir los escapes de memoria de PyTorch en CPU
-      - OMP_NUM_THREADS=1
-      - MKL_NUM_THREADS=1
-      - OPENBLAS_NUM_THREADS=1
+      - GREENFIELD_SP_URL=https://gnfd-mainnet-sp1.bnbchain.org
+      - NODE_ENV=production
     deploy:
       resources:
         limits:
-          # ¡Aumentado de 1G a 2.5G para que PyTorch no explote salvando el tensor E5-small!
-          memory: 2.5G
+          memory: 1G
           cpus: '1.0'
         reservations:
-          memory: 1G
+          memory: 512M
+          cpus: '0.5'
     restart: unless-stopped
     depends_on:
-      pensador:
-        condition: service_healthy
-      juez:
-        condition: service_healthy
+      - pensador
+      - juez
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
       interval: 60s
       timeout: 10s
       retries: 3
-      # extendemos el warmup para descargas
-      start_period: 180s
+      start_period: 60s
 
 networks:
   synergix-internal:
     driver: bridge
+    internal: true
 
 volumes:
   data-volume:
@@ -133,4 +125,11 @@ volumes:
     driver_opts:
       type: none
       device: /root/Synergix/aisynergix/data
+      o: bind
+
+  ai-models-volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: /root/Synergix/aisynergix/ai/models
       o: bind

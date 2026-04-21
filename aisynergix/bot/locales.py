@@ -1,91 +1,241 @@
-"""
-Módulo 2: Inteligencia Multilingüe y Lectura JSON (locales.py)
----------------------------------------------------------
-Carga los archivos JSON de traducciones directo a la memoria RAM.
-Hace fallbacks automáticos y gestiona la detección de Telegram + NLP.
-"""
-import json
+import asyncio
 import logging
-from pathlib import Path
-from typing import Dict, Tuple
+import time
+from collections import OrderedDict
+from dataclasses import dataclass, field
 
-logger = logging.getLogger("synergix.locales")
+from aisynergix.config.constants import MASTER_UIDS, get_rank
+from aisynergix.services.greenfield import (
+    _hash_uid,
+    create_user,
+    get_user_metadata,
+    update_user_metadata,
+)
 
-LOCALES_DIR = Path(__file__).parent / "locales"
+log = logging.getLogger("synergix.identity")
 
-# Diccionario de IDIOMAS SOPORTADOS: "Código": ("Nombre", "Bandera")
-LANGUAGES = {
-    "es": ("Español", "🇪🇸"), "en": ("English", "🇬🇧"), "zh": ("Chino", "🇨🇳"),
-    "hi": ("Hindi", "🇮🇳"), "ar": ("Árabe", "🇸🇦"), "fr": ("Francés", "🇫🇷"),
-    "bn": ("Bengalí", "🇧🇩"), "pt": ("Portugués", "🇵🇹"), "id": ("Indonesio", "🇮🇩"),
-    "ur": ("Urdu", "🇵🇰")
-}
+_CACHE_TTL = 600
+_CACHE_MAX = 1000
 
-# Aquí guardamos los JSON en memoria RAM para latencia 0ms
-_translations = {}
 
-def load_all_locales():
-    """Inyecta los JSON en la RAM al vuelo durante el arranque del Bot."""
-    if not LOCALES_DIR.exists():
-        logger.warning(f"[Locales] El directorio de idiomas no existe en {LOCALES_DIR}")
+@dataclass
+class UserContext:
+    uid:                 int
+    uid_hash:            str   = ""
+    points:              int   = 0
+    rank:                str   = "🌱 Iniciado"
+    daily_limit:         int   = 5
+    daily_aportes_count: int   = 0
+    total_uses_count:    int   = 0
+    fsm_state:           str   = "IDLE"
+    language:            str   = "es"
+    last_seen_ts:        int   = 0
+    first_name:          str   = ""
+    welcomed:            bool  = False
+    _dirty:              bool  = field(default=False, repr=False)
+    _snap:               dict  = field(default_factory=dict, repr=False)
+    _cached_at:          float = field(default_factory=time.monotonic, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.uid_hash:
+            self.uid_hash = _hash_uid(self.uid)
+
+    @property
+    def quota_remaining(self) -> int:
+        return max(0, self.daily_limit - self.daily_aportes_count)
+
+    @property
+    def can_contribute(self) -> bool:
+        return self.uid in MASTER_UIDS or self.quota_remaining > 0
+
+    def add_points(self, amount: int) -> bool:
+        """Suma puntos y actualiza rango. Retorna True si hubo rank-up."""
+        old_rank    = self.rank
+        self.points += amount
+        new_rank, new_limit, _ = get_rank(self.points)
+        self.rank        = new_rank
+        self.daily_limit = new_limit
+        self._dirty      = True
+        return self.rank != old_rank
+
+    def consume_quota(self) -> None:
+        self.daily_aportes_count += 1
+        self._dirty = True
+
+    def set_fsm(self, state: str) -> None:
+        self.fsm_state = state
+        self._dirty    = True
+
+    def to_gf(self) -> dict:
+        """Serializa el contexto a los tags que se escriben en Greenfield."""
+        return {
+            "points":              self.points,
+            "rank":                self.rank,
+            "daily_quota":         self.daily_limit,
+            "daily_aportes_count": self.daily_aportes_count,
+            "total_uses_count":    self.total_uses_count,
+            "fsm_state":           self.fsm_state,
+            "language":            self.language,
+            "last_seen_ts":        int(time.time()),
+            "welcomed":            str(self.welcomed).lower(),
+        }
+
+
+@dataclass
+class _Entry:
+    ctx:     UserContext
+    expires: float
+
+
+class _LRUCache:
+    """Caché LRU en RAM con TTL. O(1) en get/set. Thread-safe vía asyncio.Lock."""
+
+    def __init__(self) -> None:
+        self._d:  OrderedDict[int, _Entry] = OrderedDict()
+        self._mu: asyncio.Lock             = asyncio.Lock()
+
+    async def get(self, uid: int) -> UserContext | None:
+        async with self._mu:
+            e = self._d.get(uid)
+            if e is None:
+                return None
+            if time.monotonic() > e.expires:
+                del self._d[uid]
+                return None
+            self._d.move_to_end(uid)
+            return e.ctx
+
+    async def set(self, ctx: UserContext) -> None:
+        async with self._mu:
+            uid = ctx.uid
+            if uid in self._d:
+                self._d.move_to_end(uid)
+            self._d[uid] = _Entry(
+                ctx     = ctx,
+                expires = time.monotonic() + _CACHE_TTL,
+            )
+            if len(self._d) > _CACHE_MAX:
+                self._d.popitem(last=False)
+
+    async def invalidate(self, uid: int) -> None:
+        async with self._mu:
+            self._d.pop(uid, None)
+
+
+_cache     = _LRUCache()
+_uid_locks: dict[int, asyncio.Lock] = {}
+_locks_mu  = asyncio.Lock()
+
+
+async def _get_lock(uid: int) -> asyncio.Lock:
+    async with _locks_mu:
+        if uid not in _uid_locks:
+            _uid_locks[uid] = asyncio.Lock()
+        return _uid_locks[uid]
+
+
+async def hydrate_user(uid: int, first_name: str = "",
+                       tg_lang: str | None = None) -> UserContext:
+    """
+    Resucita al usuario en RAM desde Greenfield.
+
+    Flujo:
+      1. Cache LRU hit (TTL 10 min) → retorno instantáneo ~0ms.
+      2. Lock por UID (evita doble-hidratación concurrente).
+      3. HEAD a aisynergix/users/{uid_hash} → lee Tags.
+      4. Si 404 → create_user() con tags base → devuelve defaults.
+      5. Almacena en LRU y retorna UserContext.
+
+    El uid real de Telegram NUNCA sale del servidor.
+    """
+    cached = await _cache.get(uid)
+    if cached:
+        cached.first_name = first_name or cached.first_name
+        return cached
+
+    lock = await _get_lock(uid)
+    async with lock:
+        cached = await _cache.get(uid)
+        if cached:
+            return cached
+
+        from aisynergix.bot.locales import detect_lang
+        detected_lang = detect_lang(tg_lang)
+
+        meta = await get_user_metadata(uid)
+
+        if meta is None:
+            log.info("Nuevo usuario uid=%d → registrando en GF", uid)
+            await create_user(uid, detected_lang)
+            ctx = UserContext(
+                uid                 = uid,
+                uid_hash            = _hash_uid(uid),
+                points              = 0,
+                rank                = "🌱 Iniciado",
+                daily_limit         = 5,
+                daily_aportes_count = 0,
+                total_uses_count    = 0,
+                fsm_state           = "IDLE",
+                language            = detected_lang,
+                last_seen_ts        = int(time.time()),
+                first_name          = first_name,
+                welcomed            = False,
+                _snap               = {},
+            )
+        else:
+            pts           = meta.get("points", 0)
+            rank_n, lim, _ = get_rank(pts)
+            ctx = UserContext(
+                uid                 = uid,
+                uid_hash            = meta.get("uid_hash", _hash_uid(uid)),
+                points              = pts,
+                rank                = meta.get("rank",                 rank_n),
+                daily_limit         = int(meta.get("daily_quota",      lim)),
+                daily_aportes_count = int(meta.get("daily_aportes_count", 0)),
+                total_uses_count    = int(meta.get("total_uses_count",  0)),
+                fsm_state           = meta.get("fsm_state",             "IDLE"),
+                language            = meta.get("language",              detected_lang),
+                last_seen_ts        = int(meta.get("last_seen_ts",      0)),
+                first_name          = first_name,
+                welcomed            = meta.get("welcomed", "false") == "true",
+                _snap               = meta.copy(),
+            )
+
+        await _cache.set(ctx)
+        log.debug("Hydrate uid=%d uid_h=%s pts=%d rank=%s lang=%s",
+                  uid, ctx.uid_hash, ctx.points, ctx.rank, ctx.language)
+        return ctx
+
+
+async def dehydrate_user(ctx: UserContext) -> None:
+    """
+    Persiste en Greenfield solo los campos que cambiaron respecto al snapshot.
+    Si no hay cambios, no hace ninguna petición (cero gas).
+    """
+    current = ctx.to_gf()
+    changes = {
+        k: v for k, v in current.items()
+        if str(ctx._snap.get(k, "")) != str(v)
+    }
+    if not changes:
         return
-        
-    for file_path in LOCALES_DIR.glob("*.json"):
-        lang_code = file_path.stem
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                _translations[lang_code] = json.load(f)
-            logger.debug(f"[Locales] Memoria inyectada para Idioma: {lang_code.upper()}")
-        except Exception as e:
-            logger.error(f"[Locales] Error cargando JSON maestro de {lang_code}: {e}")
 
-# Ejecutamos la inyección RAM justo al importar el módulo
-load_all_locales()
+    ok = await update_user_metadata(ctx.uid, current)
+    if ok:
+        ctx._snap      = current.copy()
+        ctx._dirty     = False
+        ctx._cached_at = time.monotonic()
+        await _cache.set(ctx)
+        log.debug("Dehydrate uid=%d OK → %s", ctx.uid, list(changes.keys()))
+    else:
+        log.warning("Dehydrate falló uid=%d", ctx.uid)
 
 
-def auto_detect_lang(telegram_lang_code: str, user_text: str = "") -> str:
-    """
-    Detecta el idioma: 
-    1. Usa el locale nativo de Telegram.
-    2. Si no es reconocido, intenta usar langdetect en el texto (opcional).
-    3. Si falla, hace fallback brutal a Inglés ("en").
-    """
-    base_code = (telegram_lang_code or "en").split("-")[0].lower()
-    
-    if base_code in LANGUAGES:
-        return base_code
-        
-    if user_text and len(user_text) > 10:
-        try:
-            from langdetect import detect
-            detected = detect(user_text)
-            if detected in LANGUAGES: 
-                return detected
-        except Exception: 
-            pass
-            
-    return "en"
+async def invalidate_cache(uid: int) -> None:
+    """Fuerza re-fetch de GF en el próximo mensaje del usuario."""
+    await _cache.invalidate(uid)
+    log.debug("Cache invalidada uid=%d", uid)
 
 
-def get_text(lang: str, key: str, **kwargs) -> str:
-    """
-    Busca la cadena visual en la RAM. 
-    Protege el bot interceptando llaves inexistentes o errores de .format()
-    Haciendo fallback estructural a Inglés.
-    """
-    # 1. Recuperamos diccionario del idioma o caemos al inglés
-    lang_dict = _translations.get(lang, _translations.get("en", {}))
-    
-    # 2. Obtenemos el texto en ese idioma, si no está la llave, intentamos en Inglés
-    text = lang_dict.get(key)
-    if text is None:
-        text = _translations.get("en", {}).get(key, f"[FIXME: {key}]")
-        
-    # 3. Formateamos las variables {puntos}, {name}, protegiendo de KeyError
-    try:
-        if kwargs:
-            return text.format(**kwargs)
-        return text
-    except KeyError as e:
-        logger.error(f"[Locales] Falla Variable de Traducción: Falta la data '{e.args[0]}' para la clave '{key}' en idioma '{lang}'.")
-        return text
+def cache_stats() -> dict:
+    return {"ttl_s": _CACHE_TTL, "max": _CACHE_MAX}

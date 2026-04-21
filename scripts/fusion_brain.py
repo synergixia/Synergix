@@ -1,155 +1,164 @@
-"""
-Módulo 5 (2/2): Fusión de la Memoria Colectiva (fusion_brain.py)
----------------------------------------------------------
-Cron de 10 Minutos que alimenta a la Mente Enjambre:
-1. Revisa aportes nuevos en DCellar sin procesar.
-2. Comprobación matemática Anti-Plagio (< 0.92 similitud de cosenos).
-3. Escribe Top 10 JSON leyendo a cada Identidad directamente de Greenfield.
-4. Genera la nueva memoria RAM comprimida FAISS y la publica.
-"""
-
-import asyncio
+import os
 import json
-import logging
-import pickle
 import time
+import logging
+import asyncio
 from datetime import datetime
-from collections import defaultdict
-import tempfile
-
-import faiss
 import numpy as np
-import torch
-from sentence_transformers import SentenceTransformer
 
-from aisynergix.services.greenfield import get_object, put_object, list_objects, get_user_metadata
-from aisynergix.bot.identity import RANGOS
+try:
+    import faiss
+except ImportError:
+    faiss = None
 
-logger = logging.getLogger("synergix.fusion")
+from aisynergix.services.greenfield import greenfield
+from aisynergix.bot.identity import get_rank_info
+from aisynergix.services.rag_engine import rag
 
-MODEL_PATH = "/aisynergix/ai/models/multilingual-e5-small"
-SIMILARITY_THRESHOLD = 0.92
+logger = logging.getLogger(__name__)
 
-class FusionBrain:
-    def __init__(self):
-        self.model = None
-        self.index = None
-        self.metadata = []
+async def run_federated_evolution():
+    """
+    1. Cron Job: Evolución Federada (Cada 10 minutos).
+    Lee los nuevos aportes recien subidos a la Memoria Inmortal (Greenfield),
+    los vectoriza vía AI local y forja una nueva versión del cerebo global (.index).
+    """
+    logger.info("⚡ Iniciando Evolución Federada y Fusión Cerebral...")
+    
+    # 1. Recuperar memoria actual del mes
+    date_folder = time.strftime("%Y-%m")
+    aportes_brutos = await greenfield.list_recent_aportes(date_folder)
+    
+    if not aportes_brutos:
+        logger.info("Sin aportes nuevos. Fusión skipeada.")
+        return
 
-    async def run(self):
-        logger.info("⚡ CICLO FUSIÓN NEURONAL INICIADO")
+    # En producción real aquí compararíamos la última V de brain vs la cantidad de files
+    # para inyectar solos los deltas. Para la PoC/Stateless se reconstruye index fresco rápido 
+    # dado que e5-small y FAISS RAM manejan decenas de miles en milisegundos.
+    
+    brain_version_id = f"v_{int(time.time())}"
+    
+    # 2. Re-vectorización Masiva y Fusión
+    new_vectors = []
+    metadata_cache = []
+    
+    rag.initialize_model() # Asegurar Float16 engine en RAM
+    
+    for obj in aportes_brutos:
+        path = obj.get("object_name", "")
+        tags = obj.get("tags", {}) # En API REST S3 esto requiere stat file o check custom, para el ejemplo asumimos payload hidratada
         
-        self.model = SentenceTransformer(MODEL_PATH, device="cpu", model_kwargs={"torch_dtype": torch.float16})
-        self.model.eval()
-
-        await self._pull_cortex()
-        await self._assimilate_new_knowledge()
-        await self._generate_leaderboard()
-
-        logger.info("⚡ CICLO FUSIÓN NEURONAL FINALIZADO")
-
-    async def _pull_cortex(self):
-        """Descarga en caliente el índice actual desde memoria DCellar."""
+        # Leemos el texto puro on-chain
         try:
-            pt, _ = await get_object("aisynergix/data/brain_pointer")
-            pt_v = json.loads(pt).get("latest_v", "v1")
+            content_text = await greenfield.read_aporte(path)
+            vector = rag.vectorize(content_text)
             
-            idx_b, _ = await get_object(f"aisynergix/data/brains/{pt_v}.index")
-            meta_b, _ = await get_object(f"aisynergix/data/brains/{pt_v}.pkl")
-            
-            with tempfile.NamedTemporaryFile(suffix=".index", delete=False) as t:
-                t.write(idx_b)
-                t.flush()
-                self.index = faiss.read_index(t.name)
-            self.metadata = pickle.loads(meta_b)
-            
+            new_vectors.append(vector)
+            metadata_cache.append({
+                "path": path,
+                "content": content_text[:300] + "...", # Recorte para context-window seguro
+                "author_uid": tags.get("author_uid", "unknown"),
+                "cid": path[-15:]
+            })
         except Exception as e:
-            logger.error(f"Caos en DCellar al jalar córtex, aborando fusión: {e}")
-            raise e
+            logger.error(f"Fallo vectorizando fragmento {path}: {str(e)}")
 
-    async def _assimilate_new_knowledge(self):
-        """Barrido de todos los .txt del bucket en busca de conocimientos no indexados."""
-        current_paths = {m.get("object_path") for m in self.metadata}
-        todos_aportes = await list_objects("aisynergix/aportes/")
+    if not new_vectors:
+         return
+         
+    # 3. Entrenamiento IndexIVFPQ de FAISS en RAM 
+    # (Usamos IndexFlatIP localmente para el proof-of-concept por velocidad asíncrona sobre arrays pequeños)
+    dimension = 384
+    index_ram = faiss.IndexFlatIP(dimension) 
+    
+    v_matrix = np.array(new_vectors, dtype=np.float32)
+    faiss.normalize_L2(v_matrix) # E5 require normalizar
+    index_ram.add(v_matrix)
+
+    # 4. Inyección a Storage On-Chain 
+    # El API nativo de faiss.write_index exporta a disco. Bajo Stateless: 
+    # Volcamos a un archivo /tmp y lo leemos en binario (Unica excepción temporal)
+    tmp_path = f"/tmp/{brain_version_id}.index"
+    faiss.write_index(index_ram, tmp_path)
+    
+    with open(tmp_path, "rb") as f:
+        binary_index_data = f.read()
         
-        nuevos = []
-        for p, tgs in todos_aportes:
-            if p not in current_paths and p.endswith(".txt"):
-                nuevos.append((p, tgs))
+    await greenfield._execute_request(
+        "PUT", 
+        f"aisynergix/data/brains/{brain_version_id}.index", 
+        content=binary_index_data
+    )
+    os.remove(tmp_path)
+    
+    # Subida Metadata json
+    meta_json = json.dumps(metadata_cache, ensure_ascii=False).encode('utf-8')
+    await greenfield._execute_request(
+        "PUT", 
+        f"aisynergix/data/brains/{brain_version_id}_meta.json", 
+        content=meta_json
+    )
 
-        if not nuevos:
-            return logger.info("💤 No hay pensamientos nuevos que procesar en la red.")
-
-        logger.info(f"🌀 Asimilando {len(nuevos)} ideas frescas.")
-        asimilados = 0
-
-        for path, meta_tags in nuevos:
-            raw, _ = await get_object(path)
-            texto = raw.decode("utf-8", errors="ignore")
-            
-            with torch.no_grad():
-                embed = self.model.encode(texto, convert_to_tensor=True, normalize_embeddings=True, device="cpu")
-            np_emb = embed.cpu().numpy().astype(np.float32).reshape(1, -1)
-
-            # Plagio estricto
-            is_unique = True
-            if self.index.ntotal > 0:
-                dist, _ = self.index.search(np_emb, 1)
-                if 1.0 - dist[0][0] >= SIMILARITY_THRESHOLD:
-                    is_unique = False
-
-            if is_unique:
-                self.index.add(np_emb)
-                self.metadata.append({
-                    "text": texto,
-                    "author_uid": meta_tags.get("author_uid", "unknown"),
-                    "lang": meta_tags.get("lang", "es"),
-                    "object_path": path
-                })
-                asimilados += 1
-
-        # Generar Mutación del Córtex SI hubieron asimilados
-        if asimilados > 0:
-            nuevo_tag = f"v_{int(time.time())}"
-            idx_bin = faiss.serialize_index(self.index)
-            mt_bin = pickle.dumps(self.metadata)
-            
-            await put_object(f"aisynergix/data/brains/{nuevo_tag}.index", idx_bin)
-            await put_object(f"aisynergix/data/brains/{nuevo_tag}.pkl", mt_bin)
-            await put_object("aisynergix/data/brain_pointer", json.dumps({"latest_v": nuevo_tag}).encode("utf-8"))
-            
-            logger.info(f"🧬 Mutación Completada. Córtex saltó a {nuevo_tag} con {self.index.ntotal} ideas.")
-
-    async def _generate_leaderboard(self):
-        """Regla 2 y 5: Calcular y cachear masivamente las Almas Conectadas."""
-        logger.info("🏆 Analizando rango inmortales en DCellar...")
-        todos = await list_objects("aisynergix/users/")
-        
-        tabla = []
-        for p, tgs in todos:
-            # Replicamos hidratación rápida sin re-escrituras masivas
-            pts = int(tgs.get("points", "0"))
-            uid = p.split("/")[-1]
-            rank_label = tgs.get("rank", "🌱 Iniciado")
-            tabla.append((pts, uid, rank_label))
-
-        tabla.sort(key=lambda x: x[0], reverse=True)
-        top = []
-        for i, (pts, uid, tg) in enumerate(tabla[:10]):
-            top.append({"position": i+1, "points": pts, "uid_ofuscado": uid, "rank_name": tg})
-
-        jsn = {
-            "generated_at": datetime.utcnow().isoformat(),
-            "total_users": len(todos),
-            "top10": top
-        }
-
-        await put_object("aisynergix/data/top10.json", json.dumps(jsn).encode("utf-8"), content_type="application/json")
+    # 5. Promocionar el Brain Pointer final
+    await greenfield.update_brain_pointer(brain_version_id)
+    
+    # Refresh local en la instancia IA en VIVO sin bajar el nodo bot
+    await rag.sync_brain_to_ram()
+    logger.info(f"✅ Evolución {brain_version_id} exitosa. Red neuronal viva actualizada.")
 
 
-async def fusion_brain():
-    fb = FusionBrain()
+async def execute_daily_cleansing():
+    """
+    2. Cron Job Diario (00:00 UTC):
+    - Subida de logs por transparencia general
+    - UpdateObjectMetadata masivo en users para setear 'daily_aportes_count' = 0
+    (Para fines prácticos de prueba, ejecuta el script o lo llama apscheduler).
+    """
+    logger.info("🧹 Iniciando Auditoria y Limpieza Diaria...")
+    
+    # Reset SPAM filters 
+    # (Iterador distribuido, en Greenfield real usaríamos script de bash/bambo con concurrency en bash, aquí lógica bot Python)
     try:
-        await fb.run()
+        # Nota: La paginacion no es cubierta por completo en ListObjects para un script asi de rapido, 
+        # asumimos payload lista reducida o un sub-indexer API para el loop "users/*".
+        response = await greenfield._execute_request("GET", "?prefix=aisynergix/users/")
+        users_files = response.json().get("objects", [])
+        
+        for u in users_files:
+             uid_ofus = u.get("object_name", "").split("/")[-1]
+             # Mutacion asincronica sin tocar el points tag
+             current_tags = await greenfield.get_user_tags(uid_ofus)
+             if current_tags:
+                 current_tags["daily_aportes_count"] = 0
+                 # Rangos hydratador: Aprovechamos de revisar upgrade pasivo
+                 new_rank, _ = get_rank_info(current_tags["points"])
+                 if new_rank != current_tags["rank"]:
+                     current_tags["rank"] = new_rank
+                     # Aquí despacharíamos un mensaje bot Rank UP asincrono para el bot
+                 await greenfield.update_user_tags(uid_ofus, current_tags)
+                 
     except Exception as e:
-        logger.error(f"Colapso en cron Fusion: {e}")
+         logger.error(f"Falla rutinaria de reset: {str(e)}")
+
+    logger.info("✅ Reseteo diario concluido.")
+    
+async def generate_weekly_challenge():
+    """
+    3. Cron Job Semanal (Lunes 00:00 UTC): Forja retos autonómos técnicos
+    (Puntos extra de regalía).
+    """
+    ts = int(time.time())
+    logger.info("🎲 Lanzando Reto Semanal Autónomo...")
+    
+    # Se le puede inyectar logica LLM al pensador (local_ia) para generar creatividad técnica
+    challenge_payload = {
+         "title": f"Synergix Challenge {ts}",
+         "description": "Explora y detalla vulnerabilidades L2 en la nueva era Rollups.",
+         "multiplier": 5,
+         "ts": ts
+    }
+    
+    content = json.dumps(challenge_payload, ensure_ascii=False).encode('utf-8')
+    await greenfield._execute_request("PUT", f"aisynergix/data/challenges/{ts}.json", content=content)
+    logger.info("✅ Challenge Forjado en Storage Master.")

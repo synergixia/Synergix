@@ -1,209 +1,241 @@
-"""
-Módulo 2 (1/2): Identidad y Jerarquía Inmortal (identity.py)
----------------------------------------------------------
-El Hidratador de Identidades Fantasma para Synergix. 
-Resucita usuarios desde DCellar, gestiona su rango dictado por los Metadatos y el hash determinista.
-"""
-
 import asyncio
 import logging
 import time
-from typing import Dict, List
+from collections import OrderedDict
+from dataclasses import dataclass, field
 
+from aisynergix.config.constants import MASTER_UIDS, get_rank
 from aisynergix.services.greenfield import (
+    _hash_uid,
+    create_user,
     get_user_metadata,
-    hash_uid,
     update_user_metadata,
 )
 
-logger = logging.getLogger("synergix.identity")
+log = logging.getLogger("synergix.identity")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# JERARQUÍA INMORTAL Y CONSTANTES (Spec Oficial)
-# ──────────────────────────────────────────────────────────────────────────────
+_CACHE_TTL = 600
+_CACHE_MAX = 1000
 
-# Mapeo universal de rangos como está en la regla 4, utilizado también por scripts externos (fusion_brain)
-RANGOS = {
-    0: ("🌱 Iniciado", 0, 5),
-    1: ("📈 Activo", 100, 12),
-    2: ("🧬 Sincronizado", 500, 25),
-    3: ("🏗️ Arquitecto", 1500, 40),
-    4: ("🧠 Mente Colmena", 5000, 60),
-    5: ("🔮 Oráculo", 15000, 99999),
-}
 
-# (puntos_mínimos, rango_tag, límite_diario, nombre_visual)
-RANK_TABLE = [
-    (0, "🌱 Iniciado", 5, "rank_1"),
-    (100, "📈 Activo", 12, "rank_2"),
-    (500, "🧬 Sincronizado", 25, "rank_3"),
-    (1500, "🏗️ Arquitecto", 40, "rank_4"),
-    (5000, "🧠 Mente Colmena", 60, "rank_5"),
-    (15000, "🔮 Oráculo", 99999, "rank_6"),
-]
+@dataclass
+class UserContext:
+    uid:                 int
+    uid_hash:            str   = ""
+    points:              int   = 0
+    rank:                str   = "🌱 Iniciado"
+    daily_limit:         int   = 5
+    daily_aportes_count: int   = 0
+    total_uses_count:    int   = 0
+    fsm_state:           str   = "IDLE"
+    language:            str   = "es"
+    last_seen_ts:        int   = 0
+    first_name:          str   = ""
+    welcomed:            bool  = False
+    _dirty:              bool  = field(default=False, repr=False)
+    _snap:               dict  = field(default_factory=dict, repr=False)
+    _cached_at:          float = field(default_factory=time.monotonic, repr=False)
 
-SUPPORTED_LANGUAGES = {"es", "en", "zh-hans", "zh-hant"}
-DEFAULT_LANGUAGE = "es"
+    def __post_init__(self) -> None:
+        if not self.uid_hash:
+            self.uid_hash = _hash_uid(self.uid)
 
-def get_rank_info(points: int) -> Dict[str, any]:
-    """Evalúa los puntos actuales y retorna la estructura del rango correspondiente."""
-    for i in range(len(RANK_TABLE) - 1, -1, -1):
-        min_pts, rank_tag, daily_limit, rank_key = RANK_TABLE[i]
-        if points >= min_pts:
-            next_min = RANK_TABLE[i + 1][0] if i + 1 < len(RANK_TABLE) else None
-            return {
-                "level": i,
-                "key": rank_key,
-                "tag": rank_tag,
-                "daily_limit": daily_limit,
-                "min_points": min_pts,
-                "next_points": next_min,
-            }
-    # Fallback ultra-seguro por defecto
-    return {
-        "level": 0, "key": "rank_1", "tag": "🌱 Iniciado", "daily_limit": 5,
-        "min_points": 0, "next_points": 100,
-    }
+    @property
+    def quota_remaining(self) -> int:
+        return max(0, self.daily_limit - self.daily_aportes_count)
 
-def _normalize_language(lang_hint: str) -> str:
-    """Detecta locales de OS de telegram para el multi-idioma (Regla 3)."""
-    if not lang_hint:
-        return DEFAULT_LANGUAGE
-    lang = lang_hint.lower().strip()
-    if lang.startswith("es"): return "es"
-    if lang.startswith("en"): return "en"
-    if lang in ("zh", "zh-cn", "zh_hans", "zh-hans", "zh_cn"): return "zh-hans"
-    if lang in ("zh-tw", "zh_hant", "zh-hant", "zh_tw"): return "zh-hant"
-    return DEFAULT_LANGUAGE
+    @property
+    def can_contribute(self) -> bool:
+        return self.uid in MASTER_UIDS or self.quota_remaining > 0
 
-def _tags_to_user_dict(uid_ofuscado: str, tags: Dict[str, str]) -> Dict[str, any]:
-    """Transforma los metadatos Web3 en el cerebro en caché L1 de atributos vitales."""
-    points = int(tags.get("points", "0"))
-    rank_info = get_rank_info(points)
-    return {
-        "uid_ofuscado": uid_ofuscado,
-        "fsm_state": tags.get("fsm_state", "menu_principal"),
-        "points": points,
-        "rank_tag": tags.get("rank", "🌱 Iniciado"),
-        "rank_key": rank_info["key"],
-        "rank_level": rank_info["level"],
-        "daily_aportes_count": int(tags.get("daily_aportes_count", "0")),
-        "daily_limit": rank_info["daily_limit"],
-        "daily_remaining": max(0, rank_info["daily_limit"] - int(tags.get("daily_aportes_count", "0"))),
-        "total_uses_count": int(tags.get("total_uses_count", "0")),
-        "language": tags.get("language", DEFAULT_LANGUAGE),
-        "last_seen_ts": int(tags.get("last_seen_ts", "0")),
-    }
+    def add_points(self, amount: int) -> bool:
+        """Suma puntos y actualiza rango. Retorna True si hubo rank-up."""
+        old_rank    = self.rank
+        self.points += amount
+        new_rank, new_limit, _ = get_rank(self.points)
+        self.rank        = new_rank
+        self.daily_limit = new_limit
+        self._dirty      = True
+        return self.rank != old_rank
 
-# ──────────────────────────────────────────────────────────────────────────────
-# LÓGICA DE SUPERVIVENCIA Y EXTRACCIÓN ("HIDRATACIÓN FANTASMA")
-# ──────────────────────────────────────────────────────────────────────────────
+    def consume_quota(self) -> None:
+        self.daily_aportes_count += 1
+        self._dirty = True
 
-async def hydrate_user(telegram_uid: int, language_hint: str = "") -> Dict[str, any]:
-    """
-    CRÍTICO: Extrae al usuario desde Greenfield o crea un nuevo archivo de "0 bytes"
-    si nunca existió. Verifica y aplica ascensos inmortales sin piedad.
-    """
-    uid_ofuscado = await hash_uid(telegram_uid)
-    tags = await get_user_metadata(uid_ofuscado)
-    now_ts = int(time.time())
+    def set_fsm(self, state: str) -> None:
+        self.fsm_state = state
+        self._dirty    = True
 
-    # Nuevo usuario detectado en la matriz:
-    if not tags:
-        tags = {
-            "fsm_state": "menu_principal",
-            "points": "0",
-            "rank": "🌱 Iniciado",
-            "daily_aportes_count": "0",
-            "total_uses_count": "0",
-            "last_seen_ts": str(now_ts),
-            "language": _normalize_language(language_hint),
+    def to_gf(self) -> dict:
+        """Serializa el contexto a los tags que se escriben en Greenfield."""
+        return {
+            "points":              self.points,
+            "rank":                self.rank,
+            "daily_quota":         self.daily_limit,
+            "daily_aportes_count": self.daily_aportes_count,
+            "total_uses_count":    self.total_uses_count,
+            "fsm_state":           self.fsm_state,
+            "language":            self.language,
+            "last_seen_ts":        int(time.time()),
+            "welcomed":            str(self.welcomed).lower(),
         }
-        await update_user_metadata(uid_ofuscado, tags)
-        logger.info(f"👤 Identidad Fantasma Forjada en DCellar: {uid_ofuscado}")
-        return _tags_to_user_dict(uid_ofuscado, tags)
 
-    # El usuario sobrevive. Tocar last_seen
-    tags["last_seen_ts"] = str(now_ts)
 
-    # Auditar su energía vital para Ascensos Automáticos
-    points = int(tags.get("points", "0"))
-    rank_info = get_rank_info(points)
-    current_rank_tag = tags.get("rank", "🌱 Iniciado")
-    
-    if rank_info["tag"] != current_rank_tag:
-        tags["rank"] = rank_info["tag"]
-        logger.info(f"⬆️ Ascenso Cristalizado en cadena: {uid_ofuscado} alcanzó {rank_info['tag']} (pts={points})")
+@dataclass
+class _Entry:
+    ctx:     UserContext
+    expires: float
 
-    # Adaptabilidad idiomática
-    if language_hint:
-        new_lang = _normalize_language(language_hint)
-        current_lang = tags.get("language", DEFAULT_LANGUAGE)
-        if new_lang != current_lang and new_lang in SUPPORTED_LANGUAGES:
-            tags["language"] = new_lang
 
-    await update_user_metadata(uid_ofuscado, tags)
-    return _tags_to_user_dict(uid_ofuscado, tags)
+class _LRUCache:
+    """Caché LRU en RAM con TTL. O(1) en get/set. Thread-safe vía asyncio.Lock."""
 
-async def update_user_field(telegram_uid: int, field: str, value: str, sync_now: bool = False) -> None:
-    """Altera estados rápidos en Web3. Evita rate limits delegando a fsm (Caché L1)."""
-    uid_ofuscado = await hash_uid(telegram_uid)
-    tags = await get_user_metadata(uid_ofuscado)
-    if not tags:
+    def __init__(self) -> None:
+        self._d:  OrderedDict[int, _Entry] = OrderedDict()
+        self._mu: asyncio.Lock             = asyncio.Lock()
+
+    async def get(self, uid: int) -> UserContext | None:
+        async with self._mu:
+            e = self._d.get(uid)
+            if e is None:
+                return None
+            if time.monotonic() > e.expires:
+                del self._d[uid]
+                return None
+            self._d.move_to_end(uid)
+            return e.ctx
+
+    async def set(self, ctx: UserContext) -> None:
+        async with self._mu:
+            uid = ctx.uid
+            if uid in self._d:
+                self._d.move_to_end(uid)
+            self._d[uid] = _Entry(
+                ctx     = ctx,
+                expires = time.monotonic() + _CACHE_TTL,
+            )
+            if len(self._d) > _CACHE_MAX:
+                self._d.popitem(last=False)
+
+    async def invalidate(self, uid: int) -> None:
+        async with self._mu:
+            self._d.pop(uid, None)
+
+
+_cache     = _LRUCache()
+_uid_locks: dict[int, asyncio.Lock] = {}
+_locks_mu  = asyncio.Lock()
+
+
+async def _get_lock(uid: int) -> asyncio.Lock:
+    async with _locks_mu:
+        if uid not in _uid_locks:
+            _uid_locks[uid] = asyncio.Lock()
+        return _uid_locks[uid]
+
+
+async def hydrate_user(uid: int, first_name: str = "",
+                       tg_lang: str | None = None) -> UserContext:
+    """
+    Resucita al usuario en RAM desde Greenfield.
+
+    Flujo:
+      1. Cache LRU hit (TTL 10 min) → retorno instantáneo ~0ms.
+      2. Lock por UID (evita doble-hidratación concurrente).
+      3. HEAD a aisynergix/users/{uid_hash} → lee Tags.
+      4. Si 404 → create_user() con tags base → devuelve defaults.
+      5. Almacena en LRU y retorna UserContext.
+
+    El uid real de Telegram NUNCA sale del servidor.
+    """
+    cached = await _cache.get(uid)
+    if cached:
+        cached.first_name = first_name or cached.first_name
+        return cached
+
+    lock = await _get_lock(uid)
+    async with lock:
+        cached = await _cache.get(uid)
+        if cached:
+            return cached
+
+        from aisynergix.bot.locales import detect_lang
+        detected_lang = detect_lang(tg_lang)
+
+        meta = await get_user_metadata(uid)
+
+        if meta is None:
+            log.info("Nuevo usuario uid=%d → registrando en GF", uid)
+            await create_user(uid, detected_lang)
+            ctx = UserContext(
+                uid                 = uid,
+                uid_hash            = _hash_uid(uid),
+                points              = 0,
+                rank                = "🌱 Iniciado",
+                daily_limit         = 5,
+                daily_aportes_count = 0,
+                total_uses_count    = 0,
+                fsm_state           = "IDLE",
+                language            = detected_lang,
+                last_seen_ts        = int(time.time()),
+                first_name          = first_name,
+                welcomed            = False,
+                _snap               = {},
+            )
+        else:
+            pts           = meta.get("points", 0)
+            rank_n, lim, _ = get_rank(pts)
+            ctx = UserContext(
+                uid                 = uid,
+                uid_hash            = meta.get("uid_hash", _hash_uid(uid)),
+                points              = pts,
+                rank                = meta.get("rank",                 rank_n),
+                daily_limit         = int(meta.get("daily_quota",      lim)),
+                daily_aportes_count = int(meta.get("daily_aportes_count", 0)),
+                total_uses_count    = int(meta.get("total_uses_count",  0)),
+                fsm_state           = meta.get("fsm_state",             "IDLE"),
+                language            = meta.get("language",              detected_lang),
+                last_seen_ts        = int(meta.get("last_seen_ts",      0)),
+                first_name          = first_name,
+                welcomed            = meta.get("welcomed", "false") == "true",
+                _snap               = meta.copy(),
+            )
+
+        await _cache.set(ctx)
+        log.debug("Hydrate uid=%d uid_h=%s pts=%d rank=%s lang=%s",
+                  uid, ctx.uid_hash, ctx.points, ctx.rank, ctx.language)
+        return ctx
+
+
+async def dehydrate_user(ctx: UserContext) -> None:
+    """
+    Persiste en Greenfield solo los campos que cambiaron respecto al snapshot.
+    Si no hay cambios, no hace ninguna petición (cero gas).
+    """
+    current = ctx.to_gf()
+    changes = {
+        k: v for k, v in current.items()
+        if str(ctx._snap.get(k, "")) != str(v)
+    }
+    if not changes:
         return
-        
-    tags[field] = str(value)
-    
-    if sync_now:
-        await update_user_metadata(uid_ofuscado, tags)
+
+    ok = await update_user_metadata(ctx.uid, current)
+    if ok:
+        ctx._snap      = current.copy()
+        ctx._dirty     = False
+        ctx._cached_at = time.monotonic()
+        await _cache.set(ctx)
+        log.debug("Dehydrate uid=%d OK → %s", ctx.uid, list(changes.keys()))
     else:
-        # Integración inquebrantable con el Write-behind cache
-        from aisynergix.bot.fsm import enqueue_cache_update
-        enqueue_cache_update(uid_ofuscado, tags)
+        log.warning("Dehydrate falló uid=%d", ctx.uid)
 
-async def increment_daily_contributions(telegram_uid: int) -> bool:
-    """Regla 4: Mide y previene el límite de asfixia diaria de aportes."""
-    uid_ofuscado = await hash_uid(telegram_uid)
-    tags = await get_user_metadata(uid_ofuscado)
-    if not tags:
-        return False
-        
-    daily = int(tags.get("daily_aportes_count", "0"))
-    points = int(tags.get("points", "0"))
-    rank_info = get_rank_info(points)
-    
-    if daily >= rank_info["daily_limit"]:
-        return False
-        
-    tags["daily_aportes_count"] = str(daily + 1)
-    await update_user_metadata(uid_ofuscado, tags)
-    return True
 
-async def get_daily_remaining(telegram_uid: int) -> int:
-    uid_ofuscado = await hash_uid(telegram_uid)
-    tags = await get_user_metadata(uid_ofuscado)
-    if not tags: return 0
-    daily = int(tags.get("daily_aportes_count", "0"))
-    points = int(tags.get("points", "0"))
-    rank_info = get_rank_info(points)
-    return max(0, rank_info["daily_limit"] - daily)
+async def invalidate_cache(uid: int) -> None:
+    """Fuerza re-fetch de GF en el próximo mensaje del usuario."""
+    await _cache.invalidate(uid)
+    log.debug("Cache invalidada uid=%d", uid)
 
-async def add_points(telegram_uid: int, additional_points: int) -> Dict[str, any]:
-    """Modificación bruta y pesada de puntos inmortales y validación del rango."""
-    uid_ofuscado = await hash_uid(telegram_uid)
-    tags = await get_user_metadata(uid_ofuscado)
-    if not tags: return {}
-    
-    old_points = int(tags.get("points", "0"))
-    new_points = old_points + additional_points
-    tags["points"] = str(new_points)
-    
-    # Check manual de promoción en el vuelo
-    old_rank = tags.get("rank", "🌱 Iniciado")
-    new_rank_info = get_rank_info(new_points)
-    if new_rank_info["tag"] != old_rank:
-        tags["rank"] = new_rank_info["tag"]
-        logger.info(f"🏆 Ascenso súbito en caliente: {uid_ofuscado} {old_rank} → {new_rank_info['tag']}")
-        
-    await update_user_metadata(uid_ofuscado, tags)
-    return _tags_to_user_dict(uid_ofuscado, tags)
+
+def cache_stats() -> dict:
+    return {"ttl_s": _CACHE_TTL, "max": _CACHE_MAX}
