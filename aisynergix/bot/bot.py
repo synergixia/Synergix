@@ -1,312 +1,103 @@
 import os
-import sys
+import time
 import logging
 import asyncio
-import time
-from typing import Optional
+from datetime import datetime, timezone                                                 from typing import Dict, Any, Optional, List, Tuple
 
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.enums import ParseMode
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-
-# Imports internos
-from aisynergix.bot.locales import sync_locales_to_ram, get_i18n
-from aisynergix.bot.fsm import fsm_cache
-from aisynergix.bot.identity import get_or_create_user, get_rank_info, hash_uid, update_user_state
-from aisynergix.ai.manager import ai_manager
-from aisynergix.services.greenfield import greenfield
-from aisynergix.services.rag_engine import rag
-
-logger = logging.getLogger(__name__)
-
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not TOKEN:
-    logger.critical("No se encontró TELEGRAM_BOT_TOKEN en variables de entorno. Saliendo.")
-    sys.exit(1)
-
-# Deshabilitar localmente protección anti-bots strictos que crashean parseo html/json en ciertos mensajes Telegram
-bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
+from aiogram import Bot, Dispatcher, types, F                                           from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import Command                                                     from aiogram.types import (
+    ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton,
+    Message, CallbackQuery,
+)
+from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
+from aiogram.enums import ParseMode                                                     
+from aisynergix.services.greenfield import greenfield                                   from aisynergix.services.rag_engine import rag_engine                                   from aisynergix.ai.manager import (
+    ai_manager, conversation_history, detect_emotional_tone,                                is_sticker_or_emoji_only,                                                           )
+from aisynergix.ai.local_ia import pensador
+from aisynergix.bot.identity import profile_cache, UserProfile
+from aisynergix.bot.fsm import fsm_manager                                              from aisynergix.bot.locales import (
+    get_locale, format_locale, get_locale_dict,                                             get_language_name, get_language_flag, get_all_languages,
+    LANG_LIST, DEFAULT_LANG,
+)                                                                                                                                                                               logger = logging.getLogger("synergix.bot")                                              
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-# --- 🎯 CONSTRUCTORES DE TECLADO ---
-
-def get_main_keyboard(lang_code: str) -> ReplyKeyboardMarkup:
-    """Constructor dinámico del menú inamovible (Idéntico a Botones Permanentes)."""
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=get_i18n(lang_code, "btn_contribute"))],
-            [KeyboardButton(text=get_i18n(lang_code, "btn_status")), KeyboardButton(text=get_i18n(lang_code, "btn_memory"))],
-            [KeyboardButton(text=get_i18n(lang_code, "btn_language"))]
-        ],
-        resize_keyboard=True,
-        is_persistent=True # Siempre visible
+LANGUAGE_CALLBACK_PREFIX = "lang_set:"                                                  INITIAL_MENU_PREFIX = "initial_menu:"                                                   
+                                                                                        def build_permanent_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()                                                        builder.row(
+        KeyboardButton(text=get_locale(lang, "btn_contribute")),
+        KeyboardButton(text=get_locale(lang, "btn_status")),
     )
-    return kb
+    builder.row(
+        KeyboardButton(text=get_locale(lang, "btn_memory")),                                    KeyboardButton(text=get_locale(lang, "btn_language")),                              )                                                                                       return builder.as_markup(resize_keyboard=True)                                                                                                                                                                                                                      def build_language_inline_keyboard() -> InlineKeyboardMarkup:                               builder = InlineKeyboardBuilder()
+    for code, (name, flag) in get_all_languages().items():                                      builder.add(InlineKeyboardButton(                                                           text=f"{flag} {name}",                                                                  callback_data=f"{LANGUAGE_CALLBACK_PREFIX}{code}",                                  ))                                                                                  builder.adjust(2)                                                                       return builder.as_markup()                                                                                                                                                                                                                                          def build_initial_inline_keyboard(lang: str) -> InlineKeyboardMarkup:                       builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(                                                           text=get_locale(lang, "initial_menu_contribute"),                                       callback_data=f"{INITIAL_MENU_PREFIX}contribute",                                   ))                                                                                      builder.row(InlineKeyboardButton(
+        text=get_locale(lang, "initial_menu_status"),                                           callback_data=f"{INITIAL_MENU_PREFIX}status",                                       ))
+    builder.row(InlineKeyboardButton(
+        text=get_locale(lang, "initial_menu_memory"),
+        callback_data=f"{INITIAL_MENU_PREFIX}memory",
+    ))                                                                                      builder.row(InlineKeyboardButton(                                                           text=get_locale(lang, "initial_menu_language"),
+        callback_data=f"{INITIAL_MENU_PREFIX}language",                                     ))                                                                                      return builder.as_markup()                                                          
 
-def get_language_inline_kb() -> InlineKeyboardMarkup:
-    """Despliega los 10 idiomas oficiales en grid."""
-    flags = [
-        ("es", "Español 🇪🇸"), ("en", "English 🇬🇧"), ("zh", "Chino 🇨🇳"), 
-        ("hi", "Hindi 🇮🇳"), ("ar", "Árabe 🇸🇦"), ("fr", "Francés 🇫🇷"),
-        ("bn", "Bengalí 🇧🇩"), ("pt", "Portugués 🇵🇹"), ("id", "Indonesio 🇮🇩"), ("ur", "Urdu 🇵🇰")
-    ]
-    
-    # Grid 2 Columnas
-    buttons = []
-    for i in range(0, len(flags), 2):
-        row = [InlineKeyboardButton(text=flags[i][1], callback_data=f"lang_{flags[i][0]}")]
-        if i+1 < len(flags):
-            row.append(InlineKeyboardButton(text=flags[i+1][1], callback_data=f"lang_{flags[i+1][0]}"))
-        buttons.append(row)
-        
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+async def detect_initial_language(message: Message) -> str:
+    user_lang = message.from_user.language_code or ""
+    if user_lang in LANG_LIST:
+        return user_lang
+    short = user_lang.split("-")[0] if "-" in user_lang else user_lang
+    for code in LANG_LIST:
+        if code == short:
+            return code                                                                     return DEFAULT_LANG
 
-# --- 🛡️ MIDDLEWARES & TRIGGERS COMUNES ---
-
-async def handle_first_interaction(message: types.Message) -> str:
-    """
-    Función helper para resolver identidad y fallback language on-the-fly.
-    Devuelve lenguaje del usuario y el UID ofuscado.
-    """
-    uid = message.from_user.id
-    tg_lang = message.from_user.language_code
-    detect = tg_lang[:2] if tg_lang else "es"
-    
-    # El corazón de Identity (Hidratación Greenfield)
-    profile = await get_or_create_user(uid, detected_lang=detect)
-    return profile.get("language", "es"), hash_uid(uid), profile
-
-# --- 🚀 COMMAND /START ---
-
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    lang_code, _, profile = await handle_first_interaction(message)
-    
-    # Determinar si es genesis o recurrente mirando si es rank 1 points 0 y sin total_uses_count
-    # Simplified approach for presentation logic:
-    if profile.get("points", 0) == 0 and profile.get("daily_aportes_count", 0) == 0:
-        msg_key = "welcome"
-    else:
-        msg_key = "welcome_back"
-        
-    welcome_text = get_i18n(lang_code, msg_key)
-    
-    await message.answer(welcome_text, reply_markup=get_main_keyboard(lang_code))
-
-# --- 🌐 EVENTOS INLINE (CAMBIO IDIOMA) ---
-
-@dp.callback_query(lambda c: c.data and c.data.startswith('lang_'))
-async def process_language_change(callback_query: types.CallbackQuery):
-    new_lang = callback_query.data.split('_')[1]
-    uid_ofuscado = hash_uid(callback_query.from_user.id)
-    
-    # Mutación on-chain Web3
-    await update_user_state(callback_query.from_user.id, {"language": new_lang})
-    
-    # Actualizar estado local FSM para que reaccione al idioma
-    fsm_cache.set_state(uid_ofuscado, "idle")
-
-    # Obtener nombre con flag
-    flags = {"es":"🇪🇸", "en":"🇬🇧", "zh":"🇨🇳", "hi":"🇮🇳", "ar":"🇸🇦", "fr":"🇫🇷", "bn":"🇧🇩", "pt":"🇵🇹", "id":"🇮🇩", "ur":"🇵🇰"}
-    flag = flags.get(new_lang, "🌐")
-    
-    text = f"✅ Idioma configurado a {new_lang.upper()} {flag}"
-    
-    # Manda update regenerando el reply keyboard inferior al nuevo idioma
-    await bot.send_message(
-        callback_query.from_user.id, 
-        text, 
-        reply_markup=get_main_keyboard(new_lang)
-    )
-    await callback_query.answer()
-
-# --- 🎛️ CAPTURA DE BOTONES EXACTOS DEL MENÚ ---
-
-@dp.message(F.text)
-async def handle_text_interactions(message: types.Message):
-    lang_code, uid_ofuscado, profile = await handle_first_interaction(message)
-    raw_text = message.text.strip()
-    
-    # Recuperamos keys de los botones
-    btn_contribute = get_i18n(lang_code, "btn_contribute")
-    btn_status = get_i18n(lang_code, "btn_status")
-    btn_memory = get_i18n(lang_code, "btn_memory")
-    btn_language = get_i18n(lang_code, "btn_language")
-
-    current_state = fsm_cache.get_state(uid_ofuscado)
-
-    # 1. 🌐 Botón Idioma
-    if raw_text == btn_language:
-        fsm_cache.set_state(uid_ofuscado, "idle")
-        await message.answer("🌐 Elige tu idioma:", reply_markup=get_language_inline_kb())
-        return
-
-    # 2. 📊 Botón Status
-    if raw_text == btn_status:
-        fsm_cache.set_state(uid_ofuscado, "idle")
-        
-        status_text = get_i18n(
-            lang_code, "status_msg",
-            rank=profile.get("rank", "🌱 Iniciado"),
-            points=profile.get("points", 0),
-            daily_current=profile.get("daily_aportes_count", 0),
-            daily_limit=get_rank_info(profile.get("points", 0))[1],
-            multipliers="1x" # Logic can be extended for challenge multiplier logic later
-        )
-        await message.answer(status_text)
-        return
-
-    # 3. 🧠 Botón Memoria
-    if raw_text == btn_memory:
-        fsm_cache.set_state(uid_ofuscado, "idle")
-        
-        # Recuperar de BNF Greenfield (Subcarpeta mensual y filtrar) -> Simulado a read_aporte real limit list.
-        # Por razones de rendimiento en producción real se leería de un index paralelo en data/ o query optimizada
-        date_folder = time.strftime("%Y-%m")
-        aportes_brutos = await greenfield.list_recent_aportes(date_folder)
-        
-        mis_aportes = []
-        for obj in aportes_brutos:
-            # nombre formato: {uid_of}_{ts}.txt
-            if obj.get("object_name", "").startswith(f"{uid_ofuscado}_"):
-                mis_aportes.append(obj)
-                
-        if not mis_aportes:
-            await message.answer(get_i18n(lang_code, "memory_empty"))
-            return
-            
-        resp = get_i18n(lang_code, "memory_header") + "\\n\\n"
-        for idx, m in enumerate(mis_aportes[:5]): # Muestra top 5 recientes de este mes
-            cid_mock = m.get("object_name", "")[-10:] # Ofuscacion estética de CID
-            resp += get_i18n(lang_code, "memory_entry", score="??", cid=cid_mock) + "\\n"
-        resp += "\\n" + get_i18n(lang_code, "memory_footer", ts=time.strftime("%Y-%m-%d"))
-        
-        await message.answer(resp)
-        return
-
-    # 4. 🔥 Botón Contribuir (Activa Modo FSM)
-    if raw_text == btn_contribute:
-        # Chequeo anti-spam cuota diaria
-        _, limit = get_rank_info(profile.get("points", 0))
-        if profile.get("daily_aportes_count", 0) >= limit:
-            await message.answer(get_i18n(lang_code, "quota_exceeded"))
-            return
-            
-        fsm_cache.set_state(uid_ofuscado, "awaiting_contribution")
-        # El JSON pide este mensaje exacto: 
-        resp = "🎯 Modo aporte activado! Escribe tu idea. Quedará grabado en la red para siempre de Synergix. 💡 Mínimo 20 caracteres."
-        # Como hardcodeó texto exacto en regla, omitimos loc en caso the JSON no match exacto
-        await message.answer(resp)
-        return
-
-    # -------------------------------------------------------------
-    # 📝 FLUJO: CONVERSACIÓN LIBRE VS MODO APORTE
-    # -------------------------------------------------------------
-    if current_state == "awaiting_contribution":
-        # Bloquear modo tras trigger para evitar subida doble indeseada (UX de rebote)
-        fsm_cache.set_state(uid_ofuscado, "idle") 
-        
-        # Flujo de Aporte Web3
-        await message.answer("¡Recibido! Tu sabiduría está siendo procesada e inmortalizada. 🔗")
-        await process_contribution(message, raw_text, lang_code, uid_ofuscado, profile)
-        
-    else:
-        # Flujo Conversacional / RAG Pensador (Ghost Syncing)
-        # 1. Enviar evento al buffer para simular 'Bot Escribiendo...'
-        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        
-        # 2. Append history
-        fsm_cache.append_history(uid_ofuscado, "user", raw_text)
-        current_history = fsm_cache.get_history(uid_ofuscado)
-        
-        # 3. Disparo al Pensador 
-        ia_reply = await ai_manager.chat_with_brain(message.from_user.id, lang_code, current_history, raw_text)
-        
-        # 4. Append history response
-        fsm_cache.append_history(uid_ofuscado, "assistant", ia_reply)
-        
-        # 5. Respuesta
-        await message.answer(ia_reply)
-
-# --- 🔗 WORKER ASINCRONO: APORTES ---
-
-async def process_contribution(message: types.Message, content: str, lang_code: str, uid_ofuscado: str, profile: dict):
-    """
-    Subrutina delegada para evaluación por IA (Juez) y escritura on-chain en Greenfield.
-    """
-    verdict = await ai_manager.judge_contribution(content)
-    
-    # Condicional de rechazos
-    if verdict.get("reason") == "contribution_too_short":
-        await message.answer(get_i18n(lang_code, "contribution_too_short"))
-        return
-        
-    if verdict.get("is_duplicate", False):
-         await message.answer(get_i18n(lang_code, "contribution_duplicate"))
-         return
-         
-    score = float(verdict.get("quality_score", 0.0))
-    if score < 5.0:
-        texto_rechazo = get_i18n(lang_code, "contribution_rejected") + f" (Motivo del Juez: {verdict.get('reason')})"
-        await message.answer(texto_rechazo)
-        return
-
-    # EXITO. Calculando Puntos
-    points_gained = int(score) 
-    suffix = ""
-    if score >= 9.5:
-        suffix = " 🌟 ¡Aporte legendario!"
-        points_gained += 3
-    elif score >= 9.0:
-        suffix = " ⭐ ¡Aporte de élite!"
-        points_gained += 1
-        
-    is_challenge = verdict.get("related_to_challenge", False)
-    if is_challenge:
-        points_gained += 5
-
-    # INMORTALIZACIÓN WEB3
-    ts = int(time.time())
-    tags = {
-        "quality_score": score,
-        "author_uid": uid_ofuscado,
-        "lang": get_i18n(lang_code, "btn_language"), # Referencial general
-        "category": verdict.get("category", "general"),
-        "impact_index": verdict.get("impact_index", 50)
-    }
-    
-    cid_mocked_or_real = await greenfield.upload_aporte(uid_ofuscado, ts, content, tags)
-    generated_cid = cid_mocked_or_real[-15:] # Simplificacion visual
-    
-    # MUTACIÓN DE IDENTIDAD WEB3
-    mutations = {
-        "points": profile.get("points", 0) + points_gained,
-        "daily_aportes_count": profile.get("daily_aportes_count", 0) + 1
-    }
-    await update_user_state(message.from_user.id, mutations)
-    
-    # RESPUESTA AL CLIENTE
-    success_key = "contribution_success_challenge" if is_challenge else "contribution_success"
-    try:
-        succ_txt = get_i18n(
-            lang_code, success_key,
-            quality_score=f"{score}{suffix}",
-            cid=f"G3F-{generated_cid}",
-            points_gained=points_gained
-        )
-    except Exception:
-        # Fallback string en caso faltan placeholders
-        succ_txt = f"✅ Inmortalizado [Score: {score}]. Ganas +{points_gained} PTS."
-
-    await message.answer(succ_txt)
-
-# --- 🚀 BOOTSTRAP DE EJECUCION (Debe llamarlo sync_brain) ---
-async def start_bot():
-    """Inyector de loop principal a Aiogram v3."""
-    await sync_locales_to_ram()
-    logger.info("Bot Synergix Aiogram Booting. (Stateless Mode ON)")
-    try:
-        await dp.start_polling(bot)
-    except Exception as e:
-         logger.critical(f"Bot crash en polling: {str(e)}")
+                                                                                        async def get_profile(uid: str, message: Optional[Message] = None) -> UserProfile:
+    profile = await profile_cache.get(uid)                                                  if not profile.exists:
+        detected = await detect_initial_language(message) if message else DEFAULT_LANG          profile.language = detected                                                             await profile.save()
+        await greenfield.set_user_language(uid, detected)
+    await greenfield.touch_user(uid)
+    return profile                                                                                                                                                                                                                                                      async def send_status(chat_id: int, profile: UserProfile) -> None:
+    lang = profile.language
+    motivations = get_locale_dict(lang).get("rank_motivations", {})                         motivation = motivations.get(profile.rank, "")                                          name = get_language_name(lang)                                                          limit_str = str(profile.daily_limit) if profile.daily_limit > 0 else "infinito"
+    text = format_locale(lang, "status_msg", rank=profile.rank, points=str(profile.points),
+                         daily=str(profile.daily_aportes_count), limit=limit_str,
+                         total_uses=str(profile.total_uses_count), language=name,
+                         rank_motivation=motivation)
+    await bot.send_message(chat_id, text)
+                                                                                                                                                                                async def send_memory(chat_id: int, profile: UserProfile) -> None:                          lang = profile.language                                                                 uid = profile.uid                                                                       aportes = await greenfield.get_user_aportes(uid, limit=10)
+    if not aportes:                                                                             await bot.send_message(chat_id, get_locale(lang, "memory_empty"))
+        return                                                                              text = get_locale(lang, "memory_header")                                                entry_tpl = get_locale(lang, "memory_entry")
+    for ap in aportes:                                                                          name = ap.get("name", ap.get("Name", ""))
+        try:
+            tags = await greenfield.get_aporte_tags(name)
+        except Exception:
+            tags = {}
+        quality = tags.get("quality_score", "?")                                                category = tags.get("category", "general")                                              try:                                                                                        ts_part = name.rsplit("/", 1)[-1].replace(".txt", "").rsplit("_", 1)[-1]                date_str = datetime.fromtimestamp(int(ts_part), tz=timezone.utc).strftime("%Y-%m-%d")                                                                                       except Exception:                                                                           date_str = "?"                                                                      summary = name.rsplit("/", 1)[-1][:48]
+        text += entry_tpl.format(quality=quality, summary=summary, date=date_str, category=category)                                                                                text += get_locale(lang, "memory_footer")
+    await bot.send_message(chat_id, text)
+                                                                                                                                                                                async def handle_contribution(message: Message, profile: UserProfile) -> None:
+    uid = str(message.from_user.id)
+    lang = profile.language                                                                 aporte_text = (message.text or message.caption or "").strip()
+    if len(aporte_text) < 20:                                                                   await message.answer(get_locale(lang, "contribution_too_short"))                        return
+    await message.answer(get_locale(lang, "contribution_received"))
+    result = await ai_manager.process_contribution(profile, aporte_text)
+    await fsm_manager.exit_contribution_mode(uid)                                           keyboard = build_permanent_keyboard(lang)                                               if not result.get("accepted"):
+        reason = result.get("reason", "rejected")                                               if reason == "too_short":                                                                   text = get_locale(lang, "contribution_too_short")                                   elif reason == "duplicate":                                                                 text = get_locale(lang, "contribution_duplicate")                                   elif reason == "quota_exceeded":                                                            text = format_locale(lang, "quota_exceeded", limit=str(profile.daily_limit))        elif reason == "rejected":
+            ev = result.get("evaluation", {})                                                       text = format_locale(lang, "contribution_rejected", reason=ev.get("reason", ""))                                                                                            else:                                                                                       text = get_locale(lang, "error_generic")
+        await message.answer(text, reply_markup=keyboard)
+        return                                                                              quality = result.get("quality_score", 0)                                                points = result.get("points_gained", 0)
+    rank = result.get("rank", profile.rank)                                                 suffix = result.get("suffix", "")                                                       related = result.get("related_to_challenge", False)
+    ev = result.get("evaluation", {})
+    summary = ev.get("summary", aporte_text[:80])                                           cid = result.get("result", {}).get("path", "")[-50:]
+    suffix_msg = ""                                                                         if suffix == "legendary":
+        suffix_msg = get_locale(lang, "legendary_suffix") + "\n\n"                          elif suffix == "elite":                                                                     suffix_msg = get_locale(lang, "elite_suffix") + "\n\n"
+    challenge_msg = "\nChallenge semanal! +5 puntos extra.\n" if related else ""            tpl_key = "contribution_success_challenge" if related else "contribution_success"
+    text = format_locale(lang, tpl_key, summary=summary, quality_score=str(quality),
+                         points_gained=str(points), rank=rank, cid=cid,                                          suffix_msg=suffix_msg, challenge_msg=challenge_msg)                await message.answer(text, reply_markup=keyboard)
+    rank_check = await greenfield.check_rank_up(uid)                                        if rank_check:
+        old_rank, new_rank = rank_check
+        descriptions = get_locale_dict(lang).get("rank_descriptions", {})                       desc = descriptions.get(new_rank, "")
+        new_limit = greenfield.get_daily_limit(profile.points + points)                         limit_str = str(new_limit) if new_limit > 0 else "infinito"                             await message.answer(format_locale(lang, "rank_up", old_rank=old_rank,                                       new_rank=new_rank, rank_description=desc, new_limit=limit_str))                                                                                                                                                                                                                                                                    async def handle_free_chat(message: Message, profile: UserProfile) -> None:                 uid = str(message.from_user.id)                                                         lang = profile.language                                                                 user_text = message.text or message.caption or ""                                       if is_sticker_or_emoji_only(user_text):                                                     response = await pensador.chat_free(user_text)                                          if response:                                                                                await message.answer(response)                                                      return                                                                              await bot.send_chat_action(message.chat.id, "typing")                                   response, used_aportes = await ai_manager.process_free_chat(profile, user_text)         if not response:                                                                            response = get_locale(lang, "error_generic")                                        await message.answer(response)                                                          if used_aportes:                                                                            asyncio.create_task(_award_residuals(used_aportes))                                                                                                                                                                                                             async def _award_residuals(used_aportes: List[Dict[str, Any]]) -> None:                     awards = await ai_manager.award_residual_points(used_aportes)                           for award in awards:                                                                        author_uid = award.get("author_uid", "")                                                if not author_uid:                                                                          continue                                                                            try:                                                                                        objs = await greenfield.list_objects(prefix=f"aisynergix/users/{author_uid}")                                                                                                   for u in objs:                                                                              name = u.get("name", u.get("Name", ""))                                                 if not name or not name.endswith(author_uid):                                               continue                                                                            tags = await greenfield.get_object_tags(name)                                           author_lang = tags.get("language", DEFAULT_LANG)                                        await bot.send_message(chat_id=0, text=get_locale(author_lang, "residual_notify"))                                                                                      except Exception:                                                                           continue                                                                                                                                                                                                                                                    @dp.message(Command("start"))                                                           async def cmd_start(message: Message) -> None:                                              uid = str(message.from_user.id)                                                         profile = await get_profile(uid, message)                                               lang = profile.language                                                                 welcome_key = "welcome" if profile.is_new_user() else "welcome_back"                    await message.answer(get_locale(lang, welcome_key), reply_markup=build_initial_inline_keyboard(lang))                                                                           await message.answer("Menu permanente:", reply_markup=build_permanent_keyboard(lang))                                                                                           await greenfield.touch_user(uid)                                                        await conversation_history.clear(uid)                                                                                                                                                                                                                               @dp.callback_query(lambda c: c.data and c.data.startswith(INITIAL_MENU_PREFIX))         async def handle_initial_menu(callback: CallbackQuery) -> None:                             uid = str(callback.from_user.id)                                                        profile = await get_profile(uid, callback.message)                                      lang = profile.language
+    action = callback.data.replace(INITIAL_MENU_PREFIX, "")                                 kb = build_permanent_keyboard(lang)                                                     if action == "contribute":                                                                  await fsm_manager.enter_contribution_mode(uid)                                          await callback.message.answer(get_locale(lang, "contribution_mode_activated"), reply_markup=kb)                                                                             elif action == "status":                                                                    await send_status(callback.message.chat.id, profile)                                elif action == "memory":                                                                    await send_memory(callback.message.chat.id, profile)                                elif action == "language":                                                                  await callback.message.answer(get_locale(lang, "language_select"), reply_markup=build_language_inline_keyboard())                                                           await callback.answer()                                                                                                                                                                                                                                             @dp.callback_query(lambda c: c.data and c.data.startswith(LANGUAGE_CALLBACK_PREFIX))    async def handle_language_selection(callback: CallbackQuery) -> None:                       uid = str(callback.from_user.id)                                                        lang_code = callback.data.replace(LANGUAGE_CALLBACK_PREFIX, "")                         if lang_code not in LANG_LIST:                                                              await callback.answer("Idioma no disponible", show_alert=True)                          return                                                                              await profile_cache.invalidate(uid)                                                     await greenfield.set_user_language(uid, lang_code)                                      lang = lang_code                                                                        text = format_locale(lang, "language_set", lang_name=get_language_name(lang_code), flag=get_language_flag(lang_code))                                                           await callback.message.answer(text, reply_markup=build_permanent_keyboard(lang))        await callback.answer()                                                                                                                                                                                                                                             @dp.message(lambda m: m.text and not m.text.startswith("/"))                            async def handle_text_message(message: Message) -> None:                                    uid = str(message.from_user.id)                                                         profile = await get_profile(uid, message)                                               lang = profile.language                                                                 text = message.text.strip()                                                             kb = build_permanent_keyboard(lang)                                                     btn_map = {                                                                                 get_locale(lang, "btn_contribute"): "contribute",                                       get_locale(lang, "btn_status"): "status",                                               get_locale(lang, "btn_memory"): "memory",                                               get_locale(lang, "btn_language"): "language",                                       }                                                                                       action = btn_map.get(text)                                                              if action == "contribute":                                                                  await fsm_manager.enter_contribution_mode(uid)                                          await message.answer(get_locale(lang, "contribution_mode_activated"), reply_markup=kb)
+        return                                                                              if action == "status":                                                                      await send_status(message.chat.id, profile)                                             return                                                                              if action == "memory":                                                                      await send_memory(message.chat.id, profile)                                             return                                                                              if action == "language":
+        await message.answer(get_locale(lang, "language_select"), reply_markup=build_language_inline_keyboard())                                                                        return                                                                              if await fsm_manager.is_awaiting_contribution(uid):                                         await handle_contribution(message, profile)                                             return                                                                              await handle_free_chat(message, profile)                                                                                                                                                                                                                            @dp.message(F.sticker)                                                                  async def handle_sticker(message: Message) -> None:                                         uid = str(message.from_user.id)                                                         profile = await get_profile(uid, message)                                               if await fsm_manager.is_awaiting_contribution(uid):                                         await message.answer(get_locale(profile.language, "contribution_too_short"))            return                                                                              emoji = message.sticker.emoji or "star"                                                 await bot.send_chat_action(message.chat.id, "typing")
+    response = await pensador.chat_free(f"[Sticker emoji: {emoji}]")                        if response:
+        await message.answer(response)                                                                                                                                                                                                                                  @dp.message()                                                                           async def handle_any_message(message: Message) -> None:                                     uid = str(message.from_user.id)                                                         profile = await get_profile(uid, message)                                               if await fsm_manager.is_awaiting_contribution(uid) and (message.text or message.caption):                                                                                           await handle_contribution(message, profile)                                             return                                                                              if message.text:                                                                            await handle_free_chat(message, profile)                                                return                                                                              await message.answer(get_locale(profile.language, "error_generic"))                                                                                                                                                                                                 async def on_startup() -> None:                                                             from aisynergix.bot.locales import load_all_locales                                     await load_all_locales()                                                                await rag_engine.initialize()                                                           logger.info("Synergix bot started")                                                                                                                                                                                                                                 async def on_shutdown() -> None:                                                            await greenfield.close()                                                                await pensador.close()                                                                  await bot.session.close()                                                               logger.info("Synergix bot stopped")                                                                                                                                                                                                                                 async def main() -> None:                                                                   await on_startup()                                                                      try:                                                                                        await dp.start_polling(bot)                                                         finally:                                                                                    await on_shutdown()                                                                                                                                                                                                                                             if __name__ == "__main__":                                                                  logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")                                                                             asyncio.run(main())

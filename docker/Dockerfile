@@ -1,87 +1,41 @@
-FROM ubuntu:24.04 AS llama-builder
+FROM arm64v8/python:3.12-slim AS builder
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    git \
-    python3 \
-    python3-pip \
-    pkg-config \
-    libcurl4-openssl-dev \
-    libssl-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake gcc g++ libopenblas-dev libomp-dev \                                           pkg-config git curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Clone llama.cpp (latest stable)
-RUN git clone https://github.com/ggml-org/llama.cpp.git --depth 1 --branch master .
+COPY requirements.txt .                                                                              
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Build with optimizations for ARM64
-RUN cmake -B build -DLLAMA_CURL=ON -DLLAMA_NATIVE=ON -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_C_FLAGS="-march=armv8-a -mtune=cortex-a76 -O3" \
-    -DCMAKE_CXX_FLAGS="-march=armv8-a -mtune=cortex-a76 -O3"
-
-RUN cmake --build build --config Release -j$(nproc) --target llama-server
-
-# Stage 2: Python environment builder (USANDO VENV)
-FROM ubuntu:24.04 AS python-builder
-
-WORKDIR /app
-
-# Instalar Python y dependencias
-RUN apt-get update && apt-get install -y \
-    python3.12 \
-    python3-pip \
-    python3-venv \
-    gcc \
-    g++ \
-    libgomp1 \
-    libopenblas-dev \
-    libcurl4-openssl-dev \
+RUN pip install --no-cache-dir -r requirements.txt \
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+                                                                                                     FROM arm64v8/python:3.12-slim AS runtime                                                             
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libopenblas0 libomp5 libgomp1 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Crear entorno virtual (Aísla Aiogram y las demás gemas)
-RUN python3.12 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Copiar requirements
-COPY requirements.txt .
-
-# Instalar dependencias en el entorno virtual
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Stage 3: Runtime image
-FROM ubuntu:24.04 AS runtime
+RUN groupadd -r synergix && useradd -r -g synergix -d /app synergix
 
 WORKDIR /app
 
-# Instalar base
-RUN apt-get update && apt-get install -y \
-    python3.12 \
-    python3-venv \
-    libgomp1 \
-    libopenblas0 \
-    libcurl4 \
-    curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python3.12 /usr/bin/python3
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copiar Llama-server
-COPY --from=llama-builder /app/build/bin/llama-server /usr/local/bin/llama-server
-COPY --from=llama-builder /app/build/bin/*.so* /usr/local/lib/
+RUN mkdir -p /app/aisynergix /app/scripts /app/models /tmp/synergix_brains && \
+    chown -R synergix:synergix /app /tmp/synergix_brains
 
-# Copiar el entorno virtual COMPLETO de Python
-COPY --from=python-builder /opt/venv /opt/venv
+COPY --chown=synergix:synergix .env /app/.env
+COPY --chown=synergix:synergix aisynergix/ /app/aisynergix/
+COPY --chown=synergix:synergix scripts/ /app/scripts/
 
-# Setear LD_LIBRARY y el PATH al VENV
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-ENV PATH="/opt/venv/bin:$PATH"
-ENV PYTHONUNBUFFERED=1
-
-# Crear usuario seguro
-RUN useradd -m -u 1001 synergix && chown -R synergix:synergix /app
 USER synergix
 
-# Copiar el código del bot                                                                           COPY . .                                                                                                                                                                                                  # Comando final (Ocupa el python del venv)                                                           CMD ["python", "main.py"]
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1                                                                        ENV PYTHONPATH=/app
+
+HEALTHCHECK --interval=60s --timeout=15s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/health 2>/dev/null || curl -f http://localhost:8081/health 2>/dev/null || exit 0
+
+CMD ["python", "-m", "scripts.sync_brain"]

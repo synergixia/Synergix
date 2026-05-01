@@ -1,44 +1,58 @@
-import logging
-from typing import Dict, Any, List
-# Nota: Stateless absoluto. Mantenemos el estado de FSM en memoria local (RAM de Docker).
-# Cuando el bot reinicia, los FSM se limpian (esto es aceptable para FSM volátiles de Telegram). 
-# El estado fsm_state del usuario en Greenfield se usa para recuperar resiliencia a largo plazo si fuera necesario.
+import asyncio
+import time
+from typing import Dict, Optional
 
-logger = logging.getLogger(__name__)
+from aisynergix.services.greenfield import greenfield
+from aisynergix.bot.identity import profile_cache
 
-class StatelessFSM:
-    """
-    Caché L1 en memoria (RAM) para el FSM y las ventanas temporales conversacionales.
-    Si el contenedor Docker muere, esta caché se pierde. Esto es por diseño Stateless.
-    """
+FSM_STATES = {
+    "idle": "idle",
+    "awaiting_contribution": "awaiting_contribution",
+}
+
+
+class FSMManager:
     def __init__(self):
-        # fsm_cache[uid_ofuscado] = "idle" | "awaiting_contribution" 
-        self.fsm_cache: Dict[str, str] = {}
-        
-        # history_cache[uid_ofuscado] = List[Dict[str, str]] (Max 10 elementos)
-        self.history_cache: Dict[str, List[Dict[str, str]]] = {}
+        self._local_state: Dict[str, str] = {}
+        self._lock = asyncio.Lock()
+        self._state_ttl: Dict[str, float] = {}
 
-    def get_state(self, uid_ofuscado: str) -> str:
-        """Devuelve el estado FSM del generador."""
-        return self.fsm_cache.get(uid_ofuscado, "idle")
+    async def get_state(self, uid: str) -> str:
+        async with self._lock:
+            now = time.time()
+            ttl = self._state_ttl.get(uid, 0)
+            if uid in self._local_state and (now - ttl) < 900:
+                return self._local_state[uid]
+        profile = await profile_cache.get(uid)
+        state = profile.fsm_state
+        async with self._lock:
+            self._local_state[uid] = state
+            self._state_ttl[uid] = time.time()
+        return state
 
-    def set_state(self, uid_ofuscado: str, state: str):
-        """Asigna el estado volátil al usuario."""
-        self.fsm_cache[uid_ofuscado] = state
+    async def set_state(self, uid: str, state: str) -> None:
+        if state not in FSM_STATES and state not in FSM_STATES.values():
+            state = FSM_STATES.get(state, "idle")
+        async with self._lock:
+            self._local_state[uid] = state
+            self._state_ttl[uid] = time.time()
+        await greenfield.set_user_tag(uid, "fsm_state", state)
+        await profile_cache.invalidate(uid)
 
-    def append_history(self, uid_ofuscado: str, role: str, content: str):
-        """Mantiene los últimos turnos para que el pensador tenga contexto continuo."""
-        if uid_ofuscado not in self.history_cache:
-            self.history_cache[uid_ofuscado] = []
-            
-        self.history_cache[uid_ofuscado].append({"role": role, "content": content})
-        
-        # Limitar a máximo 10 mensajes (5 turnos de diálogo ida y vuelta)
-        if len(self.history_cache[uid_ofuscado]) > 10:
-            self.history_cache[uid_ofuscado] = self.history_cache[uid_ofuscado][-10:]
+    async def enter_contribution_mode(self, uid: str) -> None:
+        await self.set_state(uid, "awaiting_contribution")
 
-    def get_history(self, uid_ofuscado: str) -> List[Dict[str, str]]:
-        """Extrae la ráfaga de contexto histórico in-memory."""
-        return self.history_cache.get(uid_ofuscado, [])
-        
-fsm_cache = StatelessFSM()
+    async def exit_contribution_mode(self, uid: str) -> None:
+        await self.set_state(uid, "idle")
+
+    async def is_awaiting_contribution(self, uid: str) -> bool:
+        state = await self.get_state(uid)
+        return state == "awaiting_contribution"
+
+    async def clear(self, uid: str) -> None:
+        async with self._lock:
+            self._local_state.pop(uid, None)
+            self._state_ttl.pop(uid, None)
+
+
+fsm_manager = FSMManager()

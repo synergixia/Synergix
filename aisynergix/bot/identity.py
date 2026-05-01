@@ -1,241 +1,118 @@
-import asyncio
-import logging
+import hashlib
 import time
-from collections import OrderedDict
-from dataclasses import dataclass, field
+import asyncio
+from typing import Dict, Optional, Any, Tuple
+from datetime import datetime, timezone
 
-from aisynergix.config.constants import MASTER_UIDS, get_rank
-from aisynergix.services.greenfield import (
-    _hash_uid,
-    create_user,
-    get_user_metadata,
-    update_user_metadata,
-)
+from aisynergix.services.greenfield import greenfield
 
-log = logging.getLogger("synergix.identity")
+SALT = "Synergix_"
 
-_CACHE_TTL = 600
-_CACHE_MAX = 1000
-
-
-@dataclass
-class UserContext:
-    uid:                 int
-    uid_hash:            str   = ""
-    points:              int   = 0
-    rank:                str   = "🌱 Iniciado"
-    daily_limit:         int   = 5
-    daily_aportes_count: int   = 0
-    total_uses_count:    int   = 0
-    fsm_state:           str   = "IDLE"
-    language:            str   = "es"
-    last_seen_ts:        int   = 0
-    first_name:          str   = ""
-    welcomed:            bool  = False
-    _dirty:              bool  = field(default=False, repr=False)
-    _snap:               dict  = field(default_factory=dict, repr=False)
-    _cached_at:          float = field(default_factory=time.monotonic, repr=False)
-
-    def __post_init__(self) -> None:
-        if not self.uid_hash:
-            self.uid_hash = _hash_uid(self.uid)
-
-    @property
-    def quota_remaining(self) -> int:
-        return max(0, self.daily_limit - self.daily_aportes_count)
-
-    @property
-    def can_contribute(self) -> bool:
-        return self.uid in MASTER_UIDS or self.quota_remaining > 0
-
-    def add_points(self, amount: int) -> bool:
-        """Suma puntos y actualiza rango. Retorna True si hubo rank-up."""
-        old_rank    = self.rank
-        self.points += amount
-        new_rank, new_limit, _ = get_rank(self.points)
-        self.rank        = new_rank
-        self.daily_limit = new_limit
-        self._dirty      = True
-        return self.rank != old_rank
-
-    def consume_quota(self) -> None:
-        self.daily_aportes_count += 1
-        self._dirty = True
-
-    def set_fsm(self, state: str) -> None:
-        self.fsm_state = state
-        self._dirty    = True
-
-    def to_gf(self) -> dict:
-        """Serializa el contexto a los tags que se escriben en Greenfield."""
-        return {
-            "points":              self.points,
-            "rank":                self.rank,
-            "daily_quota":         self.daily_limit,
-            "daily_aportes_count": self.daily_aportes_count,
-            "total_uses_count":    self.total_uses_count,
-            "fsm_state":           self.fsm_state,
-            "language":            self.language,
-            "last_seen_ts":        int(time.time()),
-            "welcomed":            str(self.welcomed).lower(),
-        }
+RANK_HIERARCHY = [
+    ("🌱 Iniciado", 0, 5),
+    ("📈 Activo", 100, 12),
+    ("🧬 Sincronizado", 500, 25),
+    ("🏗️ Arquitecto", 1500, 40),
+    ("🧠 Mente Colmena", 5000, 60),
+    ("🔮 Oráculo", 15000, -1),
+]
 
 
-@dataclass
-class _Entry:
-    ctx:     UserContext
-    expires: float
+def hash_uid(uid: str) -> str:
+    raw = hashlib.sha256(f"{SALT}{uid}".encode()).hexdigest()
+    return raw[:12]
 
 
-class _LRUCache:
-    """Caché LRU en RAM con TTL. O(1) en get/set. Thread-safe vía asyncio.Lock."""
-
-    def __init__(self) -> None:
-        self._d:  OrderedDict[int, _Entry] = OrderedDict()
-        self._mu: asyncio.Lock             = asyncio.Lock()
-
-    async def get(self, uid: int) -> UserContext | None:
-        async with self._mu:
-            e = self._d.get(uid)
-            if e is None:
-                return None
-            if time.monotonic() > e.expires:
-                del self._d[uid]
-                return None
-            self._d.move_to_end(uid)
-            return e.ctx
-
-    async def set(self, ctx: UserContext) -> None:
-        async with self._mu:
-            uid = ctx.uid
-            if uid in self._d:
-                self._d.move_to_end(uid)
-            self._d[uid] = _Entry(
-                ctx     = ctx,
-                expires = time.monotonic() + _CACHE_TTL,
-            )
-            if len(self._d) > _CACHE_MAX:
-                self._d.popitem(last=False)
-
-    async def invalidate(self, uid: int) -> None:
-        async with self._mu:
-            self._d.pop(uid, None)
+def hash_uid_full(uid: str) -> str:
+    return hashlib.sha256(f"{SALT}{uid}".encode()).hexdigest()
 
 
-_cache     = _LRUCache()
-_uid_locks: dict[int, asyncio.Lock] = {}
-_locks_mu  = asyncio.Lock()
+def get_rank_for_points(points: int) -> Tuple[str, int, int]:
+    for rank_name, min_pts, limit in reversed(RANK_HIERARCHY):
+        if points >= min_pts:
+            return (rank_name, RANK_HIERARCHY.index((rank_name, min_pts, limit)) + 1, limit)
+    return ("🌱 Iniciado", 1, 5)
 
 
-async def _get_lock(uid: int) -> asyncio.Lock:
-    async with _locks_mu:
-        if uid not in _uid_locks:
-            _uid_locks[uid] = asyncio.Lock()
-        return _uid_locks[uid]
+def get_daily_limit_from_points(points: int) -> int:
+    _, _, limit = get_rank_for_points(points)
+    return limit
 
 
-async def hydrate_user(uid: int, first_name: str = "",
-                       tg_lang: str | None = None) -> UserContext:
-    """
-    Resucita al usuario en RAM desde Greenfield.
+class UserProfile:
+    __slots__ = (
+        "uid", "uid_hash", "fsm_state", "points", "rank", "rank_level",
+        "daily_aportes_count", "total_uses_count", "language", "last_seen_ts",
+        "daily_limit", "exists",
+    )
 
-    Flujo:
-      1. Cache LRU hit (TTL 10 min) → retorno instantáneo ~0ms.
-      2. Lock por UID (evita doble-hidratación concurrente).
-      3. HEAD a aisynergix/users/{uid_hash} → lee Tags.
-      4. Si 404 → create_user() con tags base → devuelve defaults.
-      5. Almacena en LRU y retorna UserContext.
+    def __init__(self, uid: str):
+        self.uid = uid
+        self.uid_hash = hash_uid(uid)
+        self.fsm_state = "idle"
+        self.points = 0
+        self.rank = "🌱 Iniciado"
+        self.rank_level = 1
+        self.daily_aportes_count = 0
+        self.total_uses_count = 0
+        self.language = "es"
+        self.last_seen_ts = 0
+        self.daily_limit = 5
+        self.exists = False
 
-    El uid real de Telegram NUNCA sale del servidor.
-    """
-    cached = await _cache.get(uid)
-    if cached:
-        cached.first_name = first_name or cached.first_name
-        return cached
+    @classmethod
+    async def hydrate(cls, uid: str) -> "UserProfile":
+        profile = cls(uid)
+        try:
+            tags = await greenfield.get_user_tags(uid)
+            profile.exists = True
+            profile.fsm_state = tags.get("fsm_state", "idle")
+            profile.points = int(tags.get("points", "0"))
+            profile.rank = tags.get("rank", "🌱 Iniciado")
+            profile.daily_aportes_count = int(tags.get("daily_aportes_count", "0"))
+            profile.total_uses_count = int(tags.get("total_uses_count", "0"))
+            profile.language = tags.get("language", "es")
+            profile.last_seen_ts = int(tags.get("last_seen_ts", "0"))
+            rn, rl, dl = get_rank_for_points(profile.points)
+            profile.rank = rn
+            profile.rank_level = rl
+            profile.daily_limit = dl
+        except Exception:
+            profile.exists = False
+            profile.fsm_state = "idle"
+            profile.points = 0                                                                                   profile.rank = "🌱 Iniciado"                                                                         profile.rank_level = 1                                                                               profile.daily_aportes_count = 0                                                                      profile.total_uses_count = 0                                                                         profile.language = "es"                                                                              profile.last_seen_ts = int(time.time())                                                              profile.daily_limit = 5                                                                              try:                                                                                                     await greenfield.get_user_tags(uid)                                                                  profile.exists = True                                                                            except Exception:                                                                                        pass                                                                                         return profile                                                                                                                                                                                        def to_dict(self) -> Dict[str, Any]:                                                                     return {                                                                                                 "uid_hash": self.uid_hash,                                                                           "fsm_state": self.fsm_state,                                                                         "points": self.points,                                                                               "rank": self.rank,                                                                                   "rank_level": self.rank_level,                                                                       "daily_aportes_count": self.daily_aportes_count,                                                     "total_uses_count": self.total_uses_count,                                                           "language": self.language,                                                                           "last_seen_ts": self.last_seen_ts,                                                                   "daily_limit": self.daily_limit,                                                                     "exists": self.exists,                                                                           }                                                                                                                                                                                                     async def save(self) -> None:                                                                            tags = {                                                                                                 "fsm_state": self.fsm_state,                                                                         "points": str(self.points),                                                                          "rank": self.rank,                                                                                   "daily_aportes_count": str(self.daily_aportes_count),                                                "total_uses_count": str(self.total_uses_count),                                                      "language": self.language,                                                                           "last_seen_ts": str(int(time.time())),                                                           }                                                                                                    await greenfield.set_user_tags(self.uid, tags)                                                                                                                                                        async def add_points(self, amount: int) -> int:                                                          self.points += amount                                                                                old_rank = self.rank                                                                                 rn, rl, dl = get_rank_for_points(self.points)                                                        self.rank = rn                                                                                       self.rank_level = rl                                                                                 self.daily_limit = dl                                                                                await self.save()                                                                                    return self.points                                                                                                                                                                                    async def increment_uses(self, amount: int = 1) -> int:
+        self.total_uses_count += amount
+        await greenfield.set_user_tag(self.uid, "total_uses_count", str(self.total_uses_count))              return self.total_uses_count                                                                                                                                                                          async def increment_daily(self) -> int:                                                                  self.daily_aportes_count += 1                                                                        await greenfield.set_user_tag(self.uid, "daily_aportes_count", str(self.daily_aportes_count))        return self.daily_aportes_count                                                                                                                                                                       async def set_fsm_state(self, state: str) -> None:                                                       self.fsm_state = state                                                                               await greenfield.set_user_tag(self.uid, "fsm_state", state)                                                                                                                                           async def set_language(self, lang: str) -> None:                                                         self.language = lang                                                                                 await greenfield.set_user_language(self.uid, lang)                                                                                                                                                    def can_contribute(self) -> Tuple[bool, str]:                                                            if self.daily_limit > 0 and self.daily_aportes_count >= self.daily_limit:                                return (False, "quota_exceeded")                                                                 return (True, "")                                                                                                                                                                                     def is_new_user(self) -> bool:                                                                           return not self.exists or self.total_uses_count == 0                                         
+                                                                                                     class ProfileCache:                                                                                      def __init__(self, ttl: int = 300):                                                                      self._cache: Dict[str, Tuple[UserProfile, float]] = {}                                               self._lock = asyncio.Lock()                                                                          self._ttl = ttl                                                                                                                                                                                       async def get(self, uid: str) -> UserProfile:
+        async with self._lock:
+            now = time.time()
+            entry = self._cache.get(uid)
+            if entry and (now - entry[1]) < self._ttl:
+                profile = entry[0]
+                profile.last_seen_ts = int(now)
+                return profile
+        profile = await UserProfile.hydrate(uid)
+        async with self._lock:
+            self._cache[uid] = (profile, time.time())
+        return profile
 
-    lock = await _get_lock(uid)
-    async with lock:
-        cached = await _cache.get(uid)
-        if cached:
-            return cached
+    async def invalidate(self, uid: str) -> None:
+        async with self._lock:
+            self._cache.pop(uid, None)
 
-        from aisynergix.bot.locales import detect_lang
-        detected_lang = detect_lang(tg_lang)
+    async def set_fsm(self, uid: str, state: str) -> None:
+        async with self._lock:
+            entry = self._cache.get(uid)
+            if entry:
+                entry[0].fsm_state = state
+        await greenfield.set_user_tag(uid, "fsm_state", state)
 
-        meta = await get_user_metadata(uid)
-
-        if meta is None:
-            log.info("Nuevo usuario uid=%d → registrando en GF", uid)
-            await create_user(uid, detected_lang)
-            ctx = UserContext(
-                uid                 = uid,
-                uid_hash            = _hash_uid(uid),
-                points              = 0,
-                rank                = "🌱 Iniciado",
-                daily_limit         = 5,
-                daily_aportes_count = 0,
-                total_uses_count    = 0,
-                fsm_state           = "IDLE",
-                language            = detected_lang,
-                last_seen_ts        = int(time.time()),
-                first_name          = first_name,
-                welcomed            = False,
-                _snap               = {},
-            )
-        else:
-            pts           = meta.get("points", 0)
-            rank_n, lim, _ = get_rank(pts)
-            ctx = UserContext(
-                uid                 = uid,
-                uid_hash            = meta.get("uid_hash", _hash_uid(uid)),
-                points              = pts,
-                rank                = meta.get("rank",                 rank_n),
-                daily_limit         = int(meta.get("daily_quota",      lim)),
-                daily_aportes_count = int(meta.get("daily_aportes_count", 0)),
-                total_uses_count    = int(meta.get("total_uses_count",  0)),
-                fsm_state           = meta.get("fsm_state",             "IDLE"),
-                language            = meta.get("language",              detected_lang),
-                last_seen_ts        = int(meta.get("last_seen_ts",      0)),
-                first_name          = first_name,
-                welcomed            = meta.get("welcomed", "false") == "true",
-                _snap               = meta.copy(),
-            )
-
-        await _cache.set(ctx)
-        log.debug("Hydrate uid=%d uid_h=%s pts=%d rank=%s lang=%s",
-                  uid, ctx.uid_hash, ctx.points, ctx.rank, ctx.language)
-        return ctx
-
-
-async def dehydrate_user(ctx: UserContext) -> None:
-    """
-    Persiste en Greenfield solo los campos que cambiaron respecto al snapshot.
-    Si no hay cambios, no hace ninguna petición (cero gas).
-    """
-    current = ctx.to_gf()
-    changes = {
-        k: v for k, v in current.items()
-        if str(ctx._snap.get(k, "")) != str(v)
-    }
-    if not changes:
-        return
-
-    ok = await update_user_metadata(ctx.uid, current)
-    if ok:
-        ctx._snap      = current.copy()
-        ctx._dirty     = False
-        ctx._cached_at = time.monotonic()
-        await _cache.set(ctx)
-        log.debug("Dehydrate uid=%d OK → %s", ctx.uid, list(changes.keys()))
-    else:
-        log.warning("Dehydrate falló uid=%d", ctx.uid)
+    async def cleanup(self) -> None:
+        async with self._lock:
+            now = time.time()
+            expired = [uid for uid, (_, ts) in self._cache.items() if (now - ts) > self._ttl]
+            for uid in expired:
+                del self._cache[uid]
 
 
-async def invalidate_cache(uid: int) -> None:
-    """Fuerza re-fetch de GF en el próximo mensaje del usuario."""
-    await _cache.invalidate(uid)
-    log.debug("Cache invalidada uid=%d", uid)
-
-
-def cache_stats() -> dict:
-    return {"ttl_s": _CACHE_TTL, "max": _CACHE_MAX}
+profile_cache = ProfileCache(ttl=300)

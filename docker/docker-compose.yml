@@ -1,135 +1,149 @@
 services:
-  # Pensador (1.5B model) - Main AI reasoning
   pensador:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
-      target: runtime
-    container_name: synergix-ia-pensador
-    command: >
-      llama-server
-      --host 0.0.0.0
-      --port 8081
-      --model /aisynergix/ai/models/qwen2.5-1.5b.gguf
-      --ctx-size 4096
-      --threads -1
-      --n-gpu-layers 0
-      --parallel 4
-      --cont-batching
+      dockerfile: docker/Dockerfile                                                                      image: synergix:latest
+    container_name: synergix_pensador                                                                    restart: unless-stopped
+    command:
+      - python
+      - -c                                                                                                 - |
+        from llama_cpp import Llama
+        import uvicorn
+        from starlette.applications import Starlette
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route                                                          
+        llm = Llama(                                                                                             model_path="/models/qwen2.5-1.5b.gguf",
+            n_ctx=8192,
+            n_threads=3,
+            n_batch=512,
+            chat_format="chatml",                                                                                verbose=False,
+        )
+
+        async def health(request):
+            return JSONResponse({"status": "ok", "loaded": True})
+
+        async def chat(request):
+            body = await request.json()
+            messages = body.get("messages", [])
+            temperature = float(body.get("temperature", 0.3))
+            top_k = int(body.get("top_k", 40))
+            max_tokens = int(body.get("max_tokens", 1024))                                           
+            prompt_parts = []
+            for m in messages:
+                role = m.get("role", "user")
+                content = m.get("content", "")
+                prompt_parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
+            prompt_parts.append("<|im_start|>assistant\n")                                                       prompt = "\n".join(prompt_parts)
+
+            result = llm(
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_k=top_k,                                                                                         stop=["<|im_end|>"],
+                echo=False,
+            )
+            content = result["choices"][0]["text"]
+
+            return JSONResponse({
+                "id": "chatcmpl-inline",                                                                             "object": "chat.completion",
+                "created": 0,
+                "model": "qwen2.5-1.5b",
+                "choices": [{                                                                                            "index": 0,
+                    "message": {"role": "assistant", "content": content.strip()},
+                    "finish_reason": "stop",
+                }],
+            })
+
+        routes = [
+            Route("/health", health, methods=["GET"]),
+            Route("/v1/chat/completions", chat, methods=["POST"]),
+        ]
+        app = Starlette(routes=routes)
+        uvicorn.run(app, host="0.0.0.0", port=8081)
     ports:
-      - "8081:8081"
-    networks:
-      - synergix-internal
+      - "127.0.0.1:8081:8081"
     volumes:
-      - /root/Synergix/aisynergix/ai/models:/aisynergix/ai/models
-    environment:
-      - LLAMA_KV_CACHE_TYPE=f16
-      - LLAMA_LOG_LEVEL=error
+      - ../aisynergix/ai/models:/models:ro
+    networks:                                                                                              - synergix_net
     deploy:
       resources:
         limits:
+          cpus: "3.0"
           memory: 3.5G
         reservations:
-          memory: 3G
-    restart: unless-stopped
+          cpus: "1.5"
+          memory: 2.0G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
       interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 40s
+      timeout: 15s
+      retries: 5
+      start_period: 180s
 
-  # Juez (0.5B model) - Fast JSON evaluation
   juez:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      target: runtime
-    container_name: synergix-ia-juez
-    command: >
-      llama-server
-      --host 0.0.0.0
-      --port 8080
-      --model /aisynergix/ai/models/qwen2.5-0.5b.gguf
-      --ctx-size 2048
-      --threads -1
-      --n-gpu-layers 0
-      --parallel 2
-      --cont-batching
-    ports:
-      - "8080:8080"
-    networks:
-      - synergix-internal
-    volumes:
-      - /root/Synergix/aisynergix/ai/models:/aisynergix/ai/models
-    environment:
-      - LLAMA_KV_CACHE_TYPE=f16
-      - LLAMA_LOG_LEVEL=error
-    deploy:
-      resources:
+    image: synergix:latest
+    container_name: synergix_juez
+    restart: unless-stopped
+    command:
+      - python
+      - -c                                                                                                 - |
+        from llama_cpp import Llama
+        import uvicorn                                                                                       from starlette.applications import Starlette
+        from starlette.responses import JSONResponse                                                         from starlette.routing import Route
+                                                                                                             llm = Llama(
+            model_path="/models/qwen2.5-0.5b.gguf",                                                              n_ctx=4096,
+            n_threads=1,                                                                                         n_batch=256,
+            chat_format="chatml",                                                                                verbose=False,
+        )                                                                                                                                                                                                         async def health(request):                                                                               return JSONResponse({"status": "ok", "loaded": True})                                                                                                                                                 async def chat(request):                                                                                 body = await request.json()                                                                          messages = body.get("messages", [])                                                                  temperature = float(body.get("temperature", 0.3))                                                    top_k = int(body.get("top_k", 40))                                                                   max_tokens = int(body.get("max_tokens", 1024))                                           
+            prompt_parts = []                                                                                    for m in messages:
+                role = m.get("role", "user")                                                                         content = m.get("content", "")                                                                       prompt_parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")                                  prompt_parts.append("<|im_start|>assistant\n")                                                       prompt = "\n".join(prompt_parts)                                                                                                                                                                          result = llm(                                                                                            prompt,                                                                                              max_tokens=max_tokens,
+                temperature=temperature,                                                                             top_k=top_k,
+                stop=["<|im_end|>"],                                                                                 echo=False,                                                                                      )                                                                                                    content = result["choices"][0]["text"]
+                                                                                                                 return JSONResponse({
+                "id": "chatcmpl-inline",
+                "object": "chat.completion",                                                                         "created": 0,
+                "model": "qwen2.5-0.5b",                                                                             "choices": [{                                                                                            "index": 0,                                                                                          "message": {"role": "assistant", "content": content.strip()},                                        "finish_reason": "stop",
+                }],
+            })
+
+        routes = [                                                                                               Route("/health", health, methods=["GET"]),                                                           Route("/v1/chat/completions", chat, methods=["POST"]),
+        ]
+        app = Starlette(routes=routes)                                                                       uvicorn.run(app, host="0.0.0.0", port=8080)                                                      ports:
+      - "127.0.0.1:8080:8080"                                                                            volumes:                                                                                               - ../aisynergix/ai/models:/models:ro                                                               networks:                                                                                              - synergix_net
+    deploy:                                                                                                resources:
         limits:
+          cpus: "1.0"
           memory: 1.5G
-        reservations:
-          memory: 1G
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
+        reservations:                                                                                          cpus: "0.5"
+          memory: 768M
+    logging:
+      driver: "json-file"
+      options:                                                                                               max-size: "50m"                                                                                      max-file: "3"
+    healthcheck:                                                                                           test: ["CMD", "curl", "-f", "http://localhost:8080/health"]                                          interval: 30s                                                                                        timeout: 15s
+      retries: 5                                                                                           start_period: 120s                                                                             
   bot:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    container_name: synergix-bot
-    command: python /app/scripts/sync_brain.py
-    ports:
-      - "3000:3000"  # Optional: for health/metrics endpoint
-    networks:
-      - synergix-internal
-    environment:
-      - PYTHONPATH=/app
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - GREENFIELD_PRIVATE_KEY=${GREENFIELD_PRIVATE_KEY}
-      - GREENFIELD_SP_URL=https://gnfd-mainnet-sp1.bnbchain.org
-      - NODE_ENV=production
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: '1.0'
-        reservations:
-          memory: 512M
-          cpus: '0.5'
-    restart: unless-stopped
-    depends_on:
-      - pensador
-      - juez
-    healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-networks:
-  synergix-internal:
-    driver: bridge
-    internal: true
-
-volumes:
-  data-volume:
-    driver: local
-    driver_opts:
-      type: none
-      device: /root/Synergix/aisynergix/data
-      o: bind
-
-  ai-models-volume:
-    driver: local
-    driver_opts:
-      type: none
-      device: /root/Synergix/aisynergix/ai/models
-      o: bind
+    build:                                                                                                 context: ..                                                                                          dockerfile: docker/Dockerfile                                                                      image: synergix:latest                                                                               container_name: synergix_bot
+    restart: unless-stopped                                                                              command: ["python", "-m", "scripts.sync_brain"]
+    env_file:
+      - ../.env                                                                                          environment:
+      - PENSADOR_URL=http://pensador:8081/v1/chat/completions
+      - JUEZ_URL=http://juez:8080/v1/chat/completions                                                    networks:                                                                                              - synergix_net                                                                                     depends_on:
+      pensador:                                                                                              condition: service_healthy
+      juez:
+        condition: service_healthy
+    deploy:                                                                                                resources:                                                                                             limits:
+          cpus: "1.5"                                                                                          memory: 2.0G
+        reservations:                                                                                          cpus: "0.75"                                                                                         memory: 1.0G
+    logging:                                                                                               driver: "json-file"                                                                                  options:                                                                                               max-size: "100m"                                                                                     max-file: "5"
+    tmpfs:                                                                                                 - /tmp/synergix_brains:size=256M
+                                                                                                     networks:                                                                                              synergix_net:                                                                                          driver: bridge
+    name: synergix_net                                                                                   ipam:
+      config:                                                                                                - subnet: 172.28.0.0/16
