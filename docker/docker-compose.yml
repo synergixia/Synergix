@@ -1,149 +1,198 @@
+x-common-env: &common-env
+  GREENFIELD_RPC_URL: ${GREENFIELD_RPC_URL:-https://greenfield-chain.bnbchain.world:443}
+  GREENFIELD_CHAIN_ID: ${GREENFIELD_CHAIN_ID:-1017}
+  BUCKET_NAME: ${BUCKET_NAME:-synergix-v1}
+  SP_ENDPOINT: ${SP_ENDPOINT:-https://greenfield-sp.bnbchain.world}
+  DCELLAR_SP_ADDRESS: ${DCELLAR_SP_ADDRESS:-}
+  BUCKET_ID: ${BUCKET_ID:-}
+  PRIVATE_KEY: ${PRIVATE_KEY:?err}
+  TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
+  THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
+  JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
+  CACHE_TTL: ${CACHE_TTL:-12}
+
+networks:
+  synergix-net:
+    name: synergix-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  synergix-tmp:
+    name: synergix-tmp
+    driver: local
+  thinker-cache:
+    name: synergix-thinker-cache
+    driver: local
+  judge-cache:
+    name: synergix-judge-cache
+    driver: local
+
 services:
-  pensador:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile                                                                      image: synergix:latest
-    container_name: synergix_pensador                                                                    restart: unless-stopped
+  thinker:
+    image: ghcr.io/ggerganov/llama.cpp:full-b4570
+    container_name: synergix-thinker
+    restart: unless-stopped
+    networks:
+      synergix-net:
+        ipv4_address: 172.28.0.10
+    volumes:
+      - ../models/qwen2.5-1.5b-instruct-q4_k_m.gguf:/models/model.gguf:ro
+      - thinker-cache:/tmp
     command:
-      - python
-      - -c                                                                                                 - |
-        from llama_cpp import Llama
-        import uvicorn
-        from starlette.applications import Starlette
-        from starlette.responses import JSONResponse
-        from starlette.routing import Route                                                          
-        llm = Llama(                                                                                             model_path="/models/qwen2.5-1.5b.gguf",
-            n_ctx=8192,
-            n_threads=3,
-            n_batch=512,
-            chat_format="chatml",                                                                                verbose=False,
-        )
-
-        async def health(request):
-            return JSONResponse({"status": "ok", "loaded": True})
-
-        async def chat(request):
-            body = await request.json()
-            messages = body.get("messages", [])
-            temperature = float(body.get("temperature", 0.3))
-            top_k = int(body.get("top_k", 40))
-            max_tokens = int(body.get("max_tokens", 1024))                                           
-            prompt_parts = []
-            for m in messages:
-                role = m.get("role", "user")
-                content = m.get("content", "")
-                prompt_parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
-            prompt_parts.append("<|im_start|>assistant\n")                                                       prompt = "\n".join(prompt_parts)
-
-            result = llm(
-                prompt,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_k=top_k,                                                                                         stop=["<|im_end|>"],
-                echo=False,
-            )
-            content = result["choices"][0]["text"]
-
-            return JSONResponse({
-                "id": "chatcmpl-inline",                                                                             "object": "chat.completion",
-                "created": 0,
-                "model": "qwen2.5-1.5b",
-                "choices": [{                                                                                            "index": 0,
-                    "message": {"role": "assistant", "content": content.strip()},
-                    "finish_reason": "stop",
-                }],
-            })
-
-        routes = [
-            Route("/health", health, methods=["GET"]),
-            Route("/v1/chat/completions", chat, methods=["POST"]),
-        ]
-        app = Starlette(routes=routes)
-        uvicorn.run(app, host="0.0.0.0", port=8081)
+      - "--model"
+      - "/models/model.gguf"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8081"
+      - "--ctx-size"
+      - "4096"
+      - "--threads"
+      - "4"
+      - "--threads-batch"
+      - "4"
+      - "--mlock"
+      - "--no-mmap"
+      - "--temp"
+      - "0.3"
+      - "--top-k"
+      - "40"
+      - "--repeat-penalty"
+      - "1.1"
+      - "--n-predict"
+      - "1024"
+      - "--log-disable"
     ports:
       - "127.0.0.1:8081:8081"
-    volumes:
-      - ../aisynergix/ai/models:/models:ro
-    networks:                                                                                              - synergix_net
     deploy:
       resources:
         limits:
           cpus: "3.0"
-          memory: 3.5G
+          memory: "2.5G"
         reservations:
+          cpus: "2.0"
+          memory: "1.5G"
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    cap_drop:
+      - ALL
+    cap_add:
+      - IPC_LOCK
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  judge:
+    image: ghcr.io/ggerganov/llama.cpp:full-b4570
+    container_name: synergix-judge
+    restart: unless-stopped
+    networks:
+      synergix-net:
+        ipv4_address: 172.28.0.11
+    volumes:
+      - ../models/qwen2.5-0.5b-instruct-q4_k_m.gguf:/models/model.gguf:ro
+      - judge-cache:/tmp
+    command:
+      - "--model"
+      - "/models/model.gguf"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "2048"
+      - "--threads"
+      - "2"
+      - "--threads-batch"
+      - "2"
+      - "--mlock"
+      - "--no-mmap"
+      - "--temp"
+      - "0.1"
+      - "--top-k"
+      - "20"
+      - "--repeat-penalty"
+      - "1.0"
+      - "--n-predict"
+      - "256"
+      - "--log-disable"
+    ports:
+      - "127.0.0.1:8080:8080"
+    deploy:
+      resources:
+        limits:
           cpus: "1.5"
-          memory: 2.0G
+          memory: "1.0G"
+        reservations:
+          cpus: "1.0"
+          memory: "512M"
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    cap_drop:
+      - ALL
+    cap_add:
+      - IPC_LOCK
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  bot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: synergix-bot:latest
+    container_name: synergix-bot
+    restart: unless-stopped
+    networks:
+      synergix-net:
+        ipv4_address: 172.28.0.20
+    depends_on:
+      thinker:
+        condition: service_started
+      judge:
+        condition: service_started
+    environment:
+      <<: *common-env
+    volumes:
+      - synergix-tmp:/tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "2.5"
+          memory: "3.0G"
+        reservations:
+          cpus: "1.0"
+          memory: "1.5G"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=2G
+    cap_drop:
+      - ALL
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
-        max-file: "3"
+        max-file: "5"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 180s
-
-  juez:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: synergix:latest
-    container_name: synergix_juez
-    restart: unless-stopped
-    command:
-      - python
-      - -c                                                                                                 - |
-        from llama_cpp import Llama
-        import uvicorn                                                                                       from starlette.applications import Starlette
-        from starlette.responses import JSONResponse                                                         from starlette.routing import Route
-                                                                                                             llm = Llama(
-            model_path="/models/qwen2.5-0.5b.gguf",                                                              n_ctx=4096,
-            n_threads=1,                                                                                         n_batch=256,
-            chat_format="chatml",                                                                                verbose=False,
-        )                                                                                                                                                                                                         async def health(request):                                                                               return JSONResponse({"status": "ok", "loaded": True})                                                                                                                                                 async def chat(request):                                                                                 body = await request.json()                                                                          messages = body.get("messages", [])                                                                  temperature = float(body.get("temperature", 0.3))                                                    top_k = int(body.get("top_k", 40))                                                                   max_tokens = int(body.get("max_tokens", 1024))                                           
-            prompt_parts = []                                                                                    for m in messages:
-                role = m.get("role", "user")                                                                         content = m.get("content", "")                                                                       prompt_parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")                                  prompt_parts.append("<|im_start|>assistant\n")                                                       prompt = "\n".join(prompt_parts)                                                                                                                                                                          result = llm(                                                                                            prompt,                                                                                              max_tokens=max_tokens,
-                temperature=temperature,                                                                             top_k=top_k,
-                stop=["<|im_end|>"],                                                                                 echo=False,                                                                                      )                                                                                                    content = result["choices"][0]["text"]
-                                                                                                                 return JSONResponse({
-                "id": "chatcmpl-inline",
-                "object": "chat.completion",                                                                         "created": 0,
-                "model": "qwen2.5-0.5b",                                                                             "choices": [{                                                                                            "index": 0,                                                                                          "message": {"role": "assistant", "content": content.strip()},                                        "finish_reason": "stop",
-                }],
-            })
-
-        routes = [                                                                                               Route("/health", health, methods=["GET"]),                                                           Route("/v1/chat/completions", chat, methods=["POST"]),
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import asyncio; from aisynergix.ai.manager import get_ai_manager; asyncio.run(get_ai_manager().health_check())",
         ]
-        app = Starlette(routes=routes)                                                                       uvicorn.run(app, host="0.0.0.0", port=8080)                                                      ports:
-      - "127.0.0.1:8080:8080"                                                                            volumes:                                                                                               - ../aisynergix/ai/models:/models:ro                                                               networks:                                                                                              - synergix_net
-    deploy:                                                                                                resources:
-        limits:
-          cpus: "1.0"
-          memory: 1.5G
-        reservations:                                                                                          cpus: "0.5"
-          memory: 768M
-    logging:
-      driver: "json-file"
-      options:                                                                                               max-size: "50m"                                                                                      max-file: "3"
-    healthcheck:                                                                                           test: ["CMD", "curl", "-f", "http://localhost:8080/health"]                                          interval: 30s                                                                                        timeout: 15s
-      retries: 5                                                                                           start_period: 120s                                                                             
-  bot:
-    build:                                                                                                 context: ..                                                                                          dockerfile: docker/Dockerfile                                                                      image: synergix:latest                                                                               container_name: synergix_bot
-    restart: unless-stopped                                                                              command: ["python", "-m", "scripts.sync_brain"]
-    env_file:
-      - ../.env                                                                                          environment:
-      - PENSADOR_URL=http://pensador:8081/v1/chat/completions
-      - JUEZ_URL=http://juez:8080/v1/chat/completions                                                    networks:                                                                                              - synergix_net                                                                                     depends_on:
-      pensador:                                                                                              condition: service_healthy
-      juez:
-        condition: service_healthy
-    deploy:                                                                                                resources:                                                                                             limits:
-          cpus: "1.5"                                                                                          memory: 2.0G
-        reservations:                                                                                          cpus: "0.75"                                                                                         memory: 1.0G
-    logging:                                                                                               driver: "json-file"                                                                                  options:                                                                                               max-size: "100m"                                                                                     max-file: "5"
-    tmpfs:                                                                                                 - /tmp/synergix_brains:size=256M
-                                                                                                     networks:                                                                                              synergix_net:                                                                                          driver: bridge
-    name: synergix_net                                                                                   ipam:
-      config:                                                                                                - subnet: 172.28.0.0/16
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
