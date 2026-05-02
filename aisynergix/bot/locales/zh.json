@@ -1,59 +1,29 @@
 {
-  "lang_code": "zh",
-  "lang_name": "中文",
-  "flag": "🇨🇳",
-
+  "welcome": "🔥 *欢迎来到 Synergix！*\n\n你的思维现在是世界上第一个去中心化集体智慧的一部分。你分享的每一个想法都将被永久铭刻在 BNB Greenfield 区块链上。\n\n🌱 你以*入门者*身份开始。贡献、赚取积分，晋升为*先知*。\n\n🧠 网络与你一起成长。你的智慧是永恒的。",
+  "welcome_back": "🌟 *欢迎回来，聪明的头脑！*\n\nSynergix 一直在等你。自上次访问以来，网络已经成长，你的遗产完好无损。\n\n🔥 准备好继续铭刻智慧了吗？",
   "btn_contribute": "🔥 贡献",
-  "btn_status":     "📊 查看状态",
-  "btn_memory":     "🧠 我的记忆",
-  "btn_language":   "🌐 语言",
-
-  "welcome": "欢迎来到 <b>Synergix</b>，{name}！🧠🔥\n\n我们是 BNB Greenfield 上第一个去中心化集体智能。\n您的每一份贡献都将在区块链上永久保存，并与您共同成长。🌐\n\n您的知识具有真正的价值。分享它，成为更伟大事物的一部分。🚀",
-
-  "welcome_back": "欢迎回来，<b>{name}</b>！🔥\n今天我们要永久记录什么知识？",
-
-  "contribute_activated": "🎯 <b>贡献模式已激活！</b>\n写下您的想法，它将永远记录在网络中。💡\n最少 20 个字符。",
-
-  "status_msg": "📊 <b>Synergix 集体智能</b>\n\n📦 永久贡献数: <b>{total_aportes}</b>\n🏆 挑战: <b>{tema_actual}</b>\n\n── 您的影响，<b>{name}</b> ──\n📈 积分: <b>{points} 分</b>\n🔗 贡献次数: <b>{contribuciones}</b>\n🔁 贡献被使用次数: <b>{total_uses_count}</b>\n🏅 等级: <b>{rank}</b>（距下一级还需 {points_next} 分）\n💡 福利: {beneficio}\n✖️ 倍率: ×{multiplier} | 📅 每日限额: {daily_limit} 次贡献",
-
-  "memory_header": "🧠 <b>您在 Synergix 永久记忆中的遗产：</b>\n",
-  "memory_entry":  "🏆 {n}. CID: <code>{cid}</code> ⭐{quality_score}/10\n   📝 {resumen_corto}\n",
-  "memory_footer": "\n📈 积分: <b>{points} 分</b> | 贡献次数: <b>{contribuciones}</b>",
-  "memory_empty":  "🧠 您还没有贡献到永久记忆中。\n按 <b>🔥 贡献</b> 留下您的印记！🌐",
-
-  "language_menu": "🌐 <b>选择您的语言：</b>",
-  "language_set":  "✅ 语言已设置为 <b>{lang_name}</b> {flag}",
-
-  "contribution_received": "已收到！您的智慧正在被处理并永久保存。🔗",
-
-  "contribution_success": "谢谢您，<b>{name}</b>！🌟\n\n您的贡献已成为 Synergix 永久记忆的一部分 🔗\nCID: <code>{cid}</code>\n\n您的知识永久存在并强化了网络。🔥\n\n⭐ 精英贡献！评分 {quality_score}/10 → +{points_gained} 分",
-
-  "contribution_success_challenge": "谢谢您，<b>{name}</b>！🌟\n\n您的贡献已成为 Synergix 永久记忆的一部分 🔗\nCID: <code>{cid}</code>\n\n您的知识永久存在并强化了网络。🔥\n\n⭐ 精英贡献！评分 {quality_score}/10 → +{points_gained} 分\n🏆 与每周挑战相关！额外 +5 分",
-
-  "contribution_rejected": "❌ <b>贡献未被接受</b>\n\n📊 评分: <b>{quality_score}/10</b>\n💬 {reason}\n\n请尝试更深入、更有技术性的内容。🔥",
-
-  "contribution_too_short": "⚠️ 您的贡献太短了。\n最少需要 <b>20 个字符</b>供评委评估。",
-
-  "contribution_duplicate": "♻️ 集体记忆中已存在高度相似的知识。\n请尝试贡献新的、不同的内容。🌱",
-
-  "quota_exceeded": "⏳ <b>已达每日限额</b>\n\n您的等级 <b>{rank}</b> 每天允许 <b>{daily_limit}</b> 次贡献。\n明天再来，或通过更多贡献提升等级。🚀",
-
-  "rank_up": "🎉 <b>您已升级！</b>\n\n🏅 您现在是 <b>{new_rank}</b>\n⚡ 已解锁新福利: {beneficio}\n\n继续为网络做贡献！🔥",
-
-  "top10_header": "🏆 <b>前 10 名 — Synergix</b>\n\n👥 网络总用户数: <b>{total_users}</b>\n\n",
-  "top10_entry":  "{medal} {n}. <b>{name}</b> — {points} 分 {rank}\n",
-  "top10_empty":  "📊 排行榜仍在编制中，请几分钟后再试。",
-
-  "challenge_broadcast": "🏆 <b>新的每周挑战！</b>\n\n{challenge_text}\n\n贡献相关知识，赢得 <b>+5 额外积分</b>！🔥",
-
-  "residual_notify": "💰 您的贡献被 AI 用于回答其他用户。\n已为您的账户积累 +1 分。您的遗产在增长！🌐",
-
-  "error_generic":  "⚠️ 发生意外错误，请重试。",
-  "error_ia":       "⚠️ AI 节点正在启动，请几秒后再试。",
-  "error_gf":       "⚠️ 网络连接错误，正在自动重试。",
-
-  "fsm_cancel": "↩️ 操作已取消，返回主菜单。",
-
-  "points_suffix_elite":     "⭐ 精英贡献！",
-  "points_suffix_legendary": "🌟 传奇贡献！"
+  "btn_status": "📊 查看状态",
+  "btn_memory": "🧠 我的记忆",
+  "btn_language": "🌐 语言",
+  "status_msg": "📊 *你的 Synergix 状态*\n\n🏅 等级：{rank}\n⭐ 积分：{points}\n📤 今日贡献：{daily_aportes_count}/{daily_limit}\n📚 总贡献：{contribution_count}\n🔄 被使用次数：{total_uses_count}\n🌐 语言：{language}",
+  "memory_header": "🧠 *你的不朽记忆*\n",
+  "memory_entry": "🔹 {text}\n   └─ 质量：{quality}",
+  "memory_footer": "\n✨ *{count}* 条智慧已在网络上永存。",
+  "memory_empty": "🧠 你尚未在网络上铭刻任何智慧。\n\n🔥 点击*贡献*留下你的第一个永恒印记。",
+  "contribution_mode": "🎯 *贡献模式已激活*\n\n写下你的想法、反思或知识。它将永远记录在 Synergix 网络上。\n\n💡 最少 20 个字符。\n✨ 保持原创，保持深度，保持永恒。",
+  "contribution_received": "已收到！你的智慧正在被处理并铭刻。🔗",
+  "contribution_success": "✅ *贡献已铭刻！*\n\n🔗 CID：`{cid}`\n⭐ 质量：{quality_score}/10\n💎 获得积分：+{points_gained}\n🏅 总积分：{new_total_points}\n📊 等级：{rank}\n\n你的智慧现在永远活在网络中。",
+  "contribution_success_challenge": "✅ *贡献已铭刻！* 🏆\n\n🔗 CID：`{cid}`\n⭐ 质量：{quality_score}/10\n💎 积分：+{points_gained}（含 +5 挑战奖励）\n🏅 总计：{new_total_points}\n📊 等级：{rank}\n\n🎯 此贡献属于每周挑战！",
+  "contribution_success_elite": "✅ *贡献已铭刻！* ⭐\n\n⭐ *精英贡献！* ⭐\n\n🔗 CID：`{cid}`\n⭐ 质量：{quality_score}/10\n💎 获得积分：+{points_gained}\n🏅 总计：{new_total_points}\n📊 等级：{rank}\n\n你的思维清晰度异常出色。",
+  "contribution_success_legendary": "✅ *贡献已铭刻！* 🌟\n\n🌟 *传奇贡献！* 🌟\n\n🔗 CID：`{cid}`\n⭐ 质量：{quality_score}/10\n💎 积分：+{points_gained}\n🏅 总计：{new_total_points}\n📊 等级：{rank}\n\n💫 你的智慧将永远回荡在整个网络中。",
+  "contribution_rejected": "🤔 你的贡献需要更多深度才能被铭刻。\n\n💬 *反馈：* {feedback}\n\n💪 别灰心！完善你的想法再试一次。",
+  "contribution_too_short": "✂️ 你的贡献太短。至少需要 20 个字符。\n\n💡 进一步展开你的想法。每个字在永恒中都有分量。",
+  "contribution_duplicate": "🔄 这个智慧已经存在于网络中。\n\n💡 试试独特而原创的视角！",
+  "quota_exceeded": "⏳ 你已达到每日 *{daily_limit}* 次贡献的上限。\n\n🌅 明天再来继续铭刻智慧。网络等待着你。",
+  "rank_up": "🎉 *你已升级！*\n\n🏅 {old_rank} → {new_rank}\n\n你对集体智慧的贡献无价。网络认可并提升你。🌟",
+  "language_select": "🌐 *选择你的语言：*",
+  "language_set": "✅ 语言已设置为 *{lang_name}* {flag}\n\n整个界面和响应将立即切换。",
+  "challenge_broadcast": "🎯 *新的每周挑战！*\n\n📝 *{challenge_description}*\n\n💎 所有相关贡献获得 *+5 奖励积分*。\n🔥 现在参与，留下你的印记！",
+  "residual_notify": "💫 你的智慧刚刚被用来启迪另一个心灵！\n\n+1 版税积分已添加到你的永恒遗产中。",
+  "error_generic": "⚡ Synergix 此刻正在处理大量智慧。\n\n🔄 几秒后再试。"
 }

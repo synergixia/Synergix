@@ -1,58 +1,142 @@
-import asyncio
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FsmContext
+from aiogram.fsm.storage.base import BaseStorage, StorageKey, StateType
+from typing import Dict, Optional, Any
 import time
-from typing import Dict, Optional
-
-from aisynergix.services.greenfield import greenfield
-from aisynergix.bot.identity import profile_cache
-
-FSM_STATES = {
-    "idle": "idle",
-    "awaiting_contribution": "awaiting_contribution",
-}
+import asyncio
 
 
-class FSMManager:
-    def __init__(self):
-        self._local_state: Dict[str, str] = {}
+class SynergixStates(StatesGroup):
+    idle = State()
+    awaiting_contribution = State()
+    selecting_language = State()
+
+
+class L1StateCache:
+    def __init__(self, max_size: int = 500, ttl_seconds: int = 3600):
+        self._storage: Dict[int, Dict[str, Any]] = {}
+        self._max_size = max_size
+        self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
-        self._state_ttl: Dict[str, float] = {}
 
-    async def get_state(self, uid: str) -> str:
+    async def get_state(self, uid: int) -> Optional[str]:
         async with self._lock:
-            now = time.time()
-            ttl = self._state_ttl.get(uid, 0)
-            if uid in self._local_state and (now - ttl) < 900:
-                return self._local_state[uid]
-        profile = await profile_cache.get(uid)
-        state = profile.fsm_state
+            entry = self._storage.get(uid)
+            if entry is None:
+                return None
+            
+            if time.time() - entry.get("timestamp", 0) > self._ttl:
+                del self._storage[uid]
+                return None
+            
+            return entry.get("state", "idle")
+
+    async def set_state(self, uid: int, state: str) -> None:
         async with self._lock:
-            self._local_state[uid] = state
-            self._state_ttl[uid] = time.time()
+            self._storage[uid] = {
+                "state": state,
+                "timestamp": time.time(),
+            }
+            
+            if len(self._storage) > self._max_size:
+                sorted_items = sorted(
+                    self._storage.items(),
+                    key=lambda x: x[1].get("timestamp", 0),
+                )
+                to_remove = len(self._storage) - self._max_size
+                for key, _ in sorted_items[:to_remove]:
+                    del self._storage[key]
+
+    async def delete_state(self, uid: int) -> None:
+        async with self._lock:
+            self._storage.pop(uid, None)
+
+    async def get_state_data(self, uid: int) -> Dict[str, Any]:
+        async with self._lock:
+            entry = self._storage.get(uid)
+            if entry is None:
+                return {}
+            
+            if time.time() - entry.get("timestamp", 0) > self._ttl:
+                del self._storage[uid]
+                return {}
+            
+            return entry.get("data", {})
+
+    async def set_state_data(self, uid: int, data: Dict[str, Any]) -> None:
+        async with self._lock:
+            if uid in self._storage:
+                self._storage[uid]["data"] = data
+                self._storage[uid]["timestamp"] = time.time()
+
+    async def clear(self) -> None:
+        async with self._lock:
+            self._storage.clear()
+
+
+_l1_cache: Optional[L1StateCache] = None
+
+
+def get_l1_cache() -> L1StateCache:
+    global _l1_cache
+    if _l1_cache is None:
+        _l1_cache = L1StateCache()
+    return _l1_cache
+
+
+class GhostStateManager:
+    def __init__(self):
+        self._cache = get_l1_cache()
+
+    async def get_state(self, uid: int) -> str:
+        cached = await self._cache.get_state(uid)
+        if cached is not None:
+            return cached
+        
+        from aisynergix.bot.identity import get_identity_manager
+        
+        identity = get_identity_manager()
+        profile = await identity.get_profile(uid)
+        
+        state = profile.fsm_state if profile.fsm_state else "idle"
+        await self._cache.set_state(uid, state)
+        
         return state
 
-    async def set_state(self, uid: str, state: str) -> None:
-        if state not in FSM_STATES and state not in FSM_STATES.values():
-            state = FSM_STATES.get(state, "idle")
-        async with self._lock:
-            self._local_state[uid] = state
-            self._state_ttl[uid] = time.time()
-        await greenfield.set_user_tag(uid, "fsm_state", state)
-        await profile_cache.invalidate(uid)
+    async def set_state(self, uid: int, state: str) -> None:
+        await self._cache.set_state(uid, state)
+        
+        from aisynergix.bot.identity import get_identity_manager
+        
+        identity = get_identity_manager()
+        profile = await identity.get_profile(uid)
+        profile.fsm_state = state
+        await identity.update_profile(uid, profile)
 
-    async def enter_contribution_mode(self, uid: str) -> None:
-        await self.set_state(uid, "awaiting_contribution")
-
-    async def exit_contribution_mode(self, uid: str) -> None:
+    async def reset_state(self, uid: int) -> None:
         await self.set_state(uid, "idle")
 
-    async def is_awaiting_contribution(self, uid: str) -> bool:
-        state = await self.get_state(uid)
-        return state == "awaiting_contribution"
+    async def enter_contribution_mode(self, uid: int) -> None:
+        await self.set_state(uid, "awaiting_contribution")
 
-    async def clear(self, uid: str) -> None:
-        async with self._lock:
-            self._local_state.pop(uid, None)
-            self._state_ttl.pop(uid, None)
+    async def exit_contribution_mode(self, uid: int) -> None:
+        await self.set_state(uid, "idle")
 
 
-fsm_manager = FSMManager()
+_ghost_state_manager: Optional[GhostStateManager] = None
+
+
+def get_ghost_state_manager() -> GhostStateManager:
+    global _ghost_state_manager
+    if _ghost_state_manager is None:
+        _ghost_state_manager = GhostStateManager()
+    return _ghost_state_manager
+
+
+__all__ = [
+    "SynergixStates",
+    "L1StateCache",
+    "GhostStateManager",
+    "get_ghost_state_manager",
+    "get_l1_cache",
+]

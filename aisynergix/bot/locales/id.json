@@ -1,59 +1,29 @@
 {
-  "lang_code": "id",
-  "lang_name": "Bahasa Indonesia",
-  "flag": "🇮🇩",
-
+  "welcome": "🔥 *Selamat datang di Synergix!*\n\nPikiran Anda sekarang menjadi bagian dari kecerdasan kolektif terdesentralisasi pertama di dunia. Setiap ide yang Anda bagikan akan diabadikan di blockchain BNB Greenfield.\n\n🌱 Anda memulai sebagai *Inisiat*. Berkontribusi, dapatkan poin dan naiklah hingga menjadi *Oracle*.\n\n🧠 Jaringan tumbuh bersama Anda. Kebijaksanaan Anda abadi.",
+  "welcome_back": "🌟 *Selamat datang kembali, pikiran cemerlang!*\n\nSynergix telah menunggumu. Jaringan telah berkembang sejak kunjungan terakhirmu dan warisanmu tetap utuh.\n\n🔥 Siap untuk terus mengabadikan kebijaksanaan?",
   "btn_contribute": "🔥 Berkontribusi",
-  "btn_status":     "📊 Lihat status",
-  "btn_memory":     "🧠 Memori saya",
-  "btn_language":   "🌐 Bahasa",
-
-  "welcome": "Selamat datang di <b>Synergix</b>, {name}! 🧠🔥\n\nKami adalah kecerdasan kolektif terdesentralisasi pertama di BNB Greenfield.\nSetiap kontribusi Anda diabadikan di blockchain. 🌐\n\nPengetahuan Anda memiliki nilai nyata. Bagikan. 🚀",
-
-  "welcome_back": "Selamat datang kembali, <b>{name}</b>! 🔥\nPengetahuan apa yang akan kita abadikan hari ini?",
-
-  "contribute_activated": "🎯 <b>Mode kontribusi diaktifkan!</b>\nTulis ide Anda. Akan direkam di jaringan selamanya. 💡\nMinimum 20 karakter.",
-
-  "status_msg": "📊 <b>Synergix Kecerdasan Kolektif</b>\n\n📦 Kontribusi Abadi: <b>{total_aportes}</b>\n🏆 Tantangan: <b>{tema_actual}</b>\n\n── Dampak Anda, <b>{name}</b> ──\n📈 Skor: <b>{points} poin</b>\n🔗 Kontribusi: <b>{contribuciones}</b>\n🔁 Penggunaan kontribusi Anda: <b>{total_uses_count}</b>\n🏅 Peringkat: <b>{rank}</b> ({points_next} poin ke level berikutnya)\n💡 Manfaat: {beneficio}\n✖️ Pengganda: ×{multiplier} | 📅 Batas harian: {daily_limit} kontribusi",
-
-  "memory_header": "🧠 <b>Warisan Anda di Memori Abadi Synergix:</b>\n",
-  "memory_entry":  "🏆 {n}. CID: <code>{cid}</code> ⭐{quality_score}/10\n   📝 {resumen_corto}\n",
-  "memory_footer": "\n📈 Skor: <b>{points} poin</b> | Kontribusi: <b>{contribuciones}</b>",
-  "memory_empty":  "🧠 Belum ada kontribusi dalam Memori Abadi.\nTekan <b>🔥 Berkontribusi</b> untuk meninggalkan jejak Anda! 🌐",
-
-  "language_menu": "🌐 <b>Pilih bahasa Anda:</b>",
-  "language_set":  "✅ Bahasa diatur ke <b>{lang_name}</b> {flag}",
-
-  "contribution_received": "Diterima! Kebijaksanaan Anda sedang diproses dan diabadikan. 🔗",
-
-  "contribution_success": "Terima kasih, <b>{name}</b>! 🌟\n\nKontribusi Anda adalah bagian dari Memori Abadi Synergix 🔗\nCID: <code>{cid}</code>\n\nPengetahuan Anda hidup selamanya. 🔥\n\n⭐ Kontribusi elite! Skor {quality_score}/10 → +{points_gained} poin",
-
-  "contribution_success_challenge": "Terima kasih, <b>{name}</b>! 🌟\n\nKontribusi Anda adalah bagian dari Memori Abadi Synergix 🔗\nCID: <code>{cid}</code>\n\nPengetahuan Anda hidup selamanya. 🔥\n\n⭐ Kontribusi elite! Skor {quality_score}/10 → +{points_gained} poin\n🏆 Terkait dengan Tantangan mingguan! +5 poin ekstra",
-
-  "contribution_rejected": "❌ <b>Kontribusi tidak diterima</b>\n\n📊 Skor: <b>{quality_score}/10</b>\n💬 {reason}\n\nCoba dengan konten yang lebih mendalam dan teknis. 🔥",
-
-  "contribution_too_short": "⚠️ Kontribusi Anda terlalu pendek.\nMinimum <b>20 karakter</b> agar Hakim dapat mengevaluasinya.",
-
-  "contribution_duplicate": "♻️ Pengetahuan ini sudah ada di memori kolektif.\nCoba berkontribusi sesuatu yang baru. 🌱",
-
-  "quota_exceeded": "⏳ <b>Batas harian tercapai</b>\n\nPeringkat <b>{rank}</b> Anda mengizinkan <b>{daily_limit}</b> kontribusi per hari.\nKembali besok atau tingkatkan peringkat. 🚀",
-
-  "rank_up": "🎉 <b>Peringkat naik!</b>\n\n🏅 Anda sekarang <b>{new_rank}</b>\n⚡ Manfaat baru: {beneficio}\n\nTerus berkontribusi! 🔥",
-
-  "top10_header": "🏆 <b>Top 10 — Synergix</b>\n\n👥 Total pengguna di jaringan: <b>{total_users}</b>\n\n",
-  "top10_entry":  "{medal} {n}. <b>{name}</b> — {points} poin {rank}\n",
-  "top10_empty":  "📊 Papan peringkat masih dikompilasi. Coba dalam beberapa menit.",
-
-  "challenge_broadcast": "🏆 <b>Tantangan Mingguan Baru!</b>\n\n{challenge_text}\n\nBerkontribusi pengetahuan terkait dan menangkan <b>+5 poin ekstra</b>! 🔥",
-
-  "residual_notify": "💰 Kontribusi Anda digunakan oleh AI.\n+1 poin dikreditkan. Warisan Anda berkembang! 🌐",
-
-  "error_generic":  "⚠️ Terjadi kesalahan tak terduga. Silakan coba lagi.",
-  "error_ia":       "⚠️ Node AI sedang memulai. Coba dalam beberapa detik.",
-  "error_gf":       "⚠️ Kesalahan konektivitas jaringan. Mencoba ulang secara otomatis.",
-
-  "fsm_cancel": "↩️ Operasi dibatalkan. Kembali ke menu utama.",
-
-  "points_suffix_elite":     "⭐ Kontribusi elite!",
-  "points_suffix_legendary": "🌟 Kontribusi legendaris!"
+  "btn_status": "📊 Lihat Status",
+  "btn_memory": "🧠 Memori Saya",
+  "btn_language": "🌐 Bahasa",
+  "status_msg": "📊 *Status Synergix Anda*\n\n🏅 Peringkat: {rank}\n⭐ Poin: {points}\n📤 Kontribusi hari ini: {daily_aportes_count}/{daily_limit}\n📚 Total kontribusi: {contribution_count}\n🔄 Kali digunakan: {total_uses_count}\n🌐 Bahasa: {language}",
+  "memory_header": "🧠 *Memori Abadi Anda*\n",
+  "memory_entry": "🔹 {text}\n   └─ Kualitas: {quality}",
+  "memory_footer": "\n✨ *{count}* kebijaksanaan diabadikan di jaringan.",
+  "memory_empty": "🧠 Anda belum mengabadikan kebijaksanaan apa pun di jaringan.\n\n🔥 Ketuk *Berkontribusi* dan tinggalkan jejak abadi pertamamu.",
+  "contribution_mode": "🎯 *Mode kontribusi diaktifkan*\n\nTulis ide, refleksi, atau pengetahuanmu. Akan tercatat selamanya di jaringan Synergix.\n\n💡 Minimal 20 karakter.\n✨ Jadilah orisinal, jadilah mendalam, jadilah abadi.",
+  "contribution_received": "Diterima! Kebijaksanaanmu sedang diproses dan diabadikan. 🔗",
+  "contribution_success": "✅ *Kontribusi Diabadikan!*\n\n🔗 CID: `{cid}`\n⭐ Kualitas: {quality_score}/10\n💎 Poin diperoleh: +{points_gained}\n🏅 Total poin: {new_total_points}\n📊 Peringkat: {rank}\n\nKebijaksanaanmu sekarang hidup selamanya di jaringan.",
+  "contribution_success_challenge": "✅ *Kontribusi Diabadikan!* 🏆\n\n🔗 CID: `{cid}`\n⭐ Kualitas: {quality_score}/10\n💎 Poin: +{points_gained} (termasuk +5 bonus tantangan)\n🏅 Total: {new_total_points}\n📊 Peringkat: {rank}\n\n🎯 Kontribusi ini adalah bagian dari tantangan mingguan!",
+  "contribution_success_elite": "✅ *Kontribusi Diabadikan!* ⭐\n\n⭐ *Kontribusi Elit!* ⭐\n\n🔗 CID: `{cid}`\n⭐ Kualitas: {quality_score}/10\n💎 Poin diperoleh: +{points_gained}\n🏅 Total: {new_total_points}\n📊 Peringkat: {rank}\n\nKejernihan mentalmu luar biasa.",
+  "contribution_success_legendary": "✅ *Kontribusi Diabadikan!* 🌟\n\n🌟 *Kontribusi Legendaris!* 🌟\n\n🔗 CID: `{cid}`\n⭐ Kualitas: {quality_score}/10\n💎 Poin: +{points_gained}\n🏅 Total: {new_total_points}\n📊 Peringkat: {rank}\n\n💫 Kebijaksanaanmu akan bergema di seluruh jaringan selamanya.",
+  "contribution_rejected": "🤔 Kontribusimu perlu lebih dalam untuk diabadikan.\n\n💬 *Umpan balik:* {feedback}\n\n💪 Jangan patah semangat! Sempurnakan idemu dan coba lagi.",
+  "contribution_too_short": "✂️ Kontribusimu terlalu pendek. Perlu minimal 20 karakter.\n\n💡 Kembangkan idemu lebih lanjut. Setiap kata berarti dalam keabadian.",
+  "contribution_duplicate": "🔄 Kebijaksanaan ini sudah ada di jaringan.\n\n💡 Coba perspektif yang unik dan orisinal!",
+  "quota_exceeded": "⏳ Kamu telah mencapai batas harian *{daily_limit}* kontribusi.\n\n🌅 Kembali besok untuk terus mengabadikan kebijaksanaan. Jaringan menunggumu.",
+  "rank_up": "🎉 *Kamu naik peringkat!*\n\n🏅 {old_rank} → {new_rank}\n\nKontribusimu pada kecerdasan kolektif tak ternilai. Jaringan mengakui dan mengangkatmu. 🌟",
+  "language_select": "🌐 *Pilih bahasa Anda:*",
+  "language_set": "✅ Bahasa diatur ke *{lang_name}* {flag}\n\nSeluruh antarmuka dan respons akan berubah seketika.",
+  "challenge_broadcast": "🎯 *Tantangan Mingguan Baru!*\n\n📝 *{challenge_description}*\n\n💎 Semua kontribusi terkait mendapat *+5 poin bonus*.\n🔥 Berpartisipasilah sekarang dan tinggalkan jejakmu!",
+  "residual_notify": "💫 Kebijaksanaanmu baru saja digunakan untuk mencerahkan pikiran lain!\n\n+1 poin royalti ditambahkan ke warisan abadimu.",
+  "error_generic": "⚡ Synergix sedang memproses terlalu banyak kebijaksanaan saat ini.\n\n🔄 Coba lagi dalam beberapa detik."
 }

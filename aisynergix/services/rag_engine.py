@@ -1,149 +1,416 @@
 import os
 import json
-import time                                                                                          import hashlib                                                                                       import asyncio
+import hashlib
+import asyncio
+import pickle
+from typing import List, Dict, Optional, Tuple, Any
+from pathlib import Path
+from datetime import datetime, timezone
+
 import numpy as np
-from typing import List, Dict, Any, Optional, Tuple                                                  from pathlib import Path                                                                             
-import faiss                                                                                         from sentence_transformers import SentenceTransformer                                                                                                                                                     from aisynergix.services.greenfield import greenfield                                                
-EMBEDDING_MODEL_NAME = "intfloat/multilingual-e5-small"                                              VECTOR_DIM = 384
-N_CLUSTERS = 16
-N_PROBE = 4
-M_SUBQUANTIZERS = 32
-BITS_PER_CODE = 8                                                                                    BRAIN_DIR = Path("/tmp/synergix_brains")
-INDEX_FILE = BRAIN_DIR / "faiss_ivfpq.index"
-META_FILE = BRAIN_DIR / "metadata.json"
-TOP_K_DEFAULT = 5
-                                                                                                                                                                                                          def _ensure_dir() -> None:
-    BRAIN_DIR.mkdir(parents=True, exist_ok=True)                                                                                                                                                                                                                                                               class RAGEngine:
-    def __init__(self):                                                                                      self.model: Optional[SentenceTransformer] = None                                                     self.index: Optional[faiss.Index] = None
-        self.metadata: List[Dict[str, Any]] = []
-        self._lock = asyncio.Lock()                                                                          self._loaded = False                                                                                 self._training_samples: List[np.ndarray] = []                                                                                                                                                         @property
-    def is_loaded(self) -> bool:                                                                             return self._loaded
+import faiss
+from sentence_transformers import SentenceTransformer
 
-    async def load_model(self) -> None:                                                                      if self.model is not None:
-            return
-        loop = asyncio.get_event_loop()                                                                      self.model = await loop.run_in_executor(                                                                 None,                                                                                                lambda: SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
-        )                                                                                                    self.model.half()
 
-    async def _encode(self, texts: List[str], instruction: str = "") -> np.ndarray:
-        if self.model is None:                                                                                   await self.load_model()                                                                          loop = asyncio.get_event_loop()
-        if instruction and hasattr(self.model, 'encode'):                                                        pass
-        if instruction:                                                                                          input_texts = [f"{instruction}: {t}" for t in texts]                                             else:
-            input_texts = texts                                                                              embeddings = await loop.run_in_executor(                                                                 None,                                                                                                lambda: self.model.encode(                                                                               input_texts,
-                batch_size=16,                                                                                       show_progress_bar=False,
-                normalize_embeddings=True,                                                                           convert_to_numpy=True,                                                                           )                                                                                                )
-        return embeddings.astype(np.float32)                                                         
-    async def _load_index_from_greenfield(self) -> bool:                                                     try:                                                                                                     data = await greenfield.get_object("aisynergix/data/brains/faiss_ivfpq.index")
-            _ensure_dir()                                                                                        INDEX_FILE.write_bytes(data)                                                                         self.index = faiss.read_index(str(INDEX_FILE))                                                       if self.index.ntotal > N_CLUSTERS * 2:                                                                   try:                                                                                                     self.index.nprobe = N_PROBE
-                except Exception:                                                                                        pass
-            return True                                                                                      except Exception:
-            return False                                                                             
-    async def _load_metadata_from_greenfield(self) -> bool:                                                  try:
-            data = await greenfield.get_object_text("aisynergix/data/brains/metadata.json")                      self.metadata = json.loads(data)                                                                     return True                                                                                      except Exception:                                                                                        self.metadata = []                                                                                   return False
+EMBEDDING_MODEL_NAME = "intfloat/multilingual-e5-small"
+EMBEDDING_DIM = 384
+FAISS_INDEX_TYPE = "IVFPQ"
+N_CENTROIDS = 64
+M_SUBQUANTIZERS = 48
+N_BITS = 8
+TOP_K_RESULTS = 7
+TEMP_INDEX_DIR = Path("/tmp/synergix_faiss")
+TEMP_INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-    async def initialize(self) -> None:                                                                      async with self._lock:                                                                                   await self.load_model()                                                                              idx_loaded = await self._load_index_from_greenfield()                                                meta_loaded = await self._load_metadata_from_greenfield()
-            if not idx_loaded:                                                                                       self._init_empty_index()                                                                             self.metadata = []                                                                               if not meta_loaded and self.index is not None and self.index.ntotal > 0:
-                self.metadata = [{"id": f"vec_{i}", "ts": 0, "lang": "unknown"} for i in range(self.index.ntotal)]                                                                                                    self._loaded = True                                                                                                                                                                               def _init_empty_index(self) -> None:                                                                     quantizer = faiss.IndexFlatL2(VECTOR_DIM)                                                            self.index = faiss.IndexIVFPQ(                                                                           quantizer, VECTOR_DIM, N_CLUSTERS, M_SUBQUANTIZERS, BITS_PER_CODE                                )                                                                                                    self.index.nprobe = N_PROBE
+_QUERY_PREFIX = "query: "
+_PASSAGE_PREFIX = "passage: "
 
-    def _init_trained_index(self, vectors: np.ndarray) -> None:                                              quantizer = faiss.IndexFlatL2(VECTOR_DIM)
-        n_clusters_actual = min(N_CLUSTERS, vectors.shape[0] // 2)
-        if n_clusters_actual < 2:
-            n_clusters_actual = 2
-        self.index = faiss.IndexIVFPQ(
-            quantizer, VECTOR_DIM, n_clusters_actual, M_SUBQUANTIZERS, BITS_PER_CODE
+
+class FAISSEngine:
+    def __init__(self):
+        self._model: Optional[SentenceTransformer] = None
+        self._index: Optional[faiss.Index] = None
+        self._metadata: Dict[int, Dict[str, Any]] = {}
+        self._current_id: int = 0
+        self._lock = asyncio.Lock()
+        self._is_trained = False
+
+    async def _ensure_model(self) -> SentenceTransformer:
+        if self._model is None:
+            self._model = await asyncio.to_thread(
+                lambda: SentenceTransformer(
+                    EMBEDDING_MODEL_NAME,
+                    device="cpu",
+                )
+            )
+        return self._model
+
+    async def _ensure_index(self):
+        if self._index is None:
+            quantizer = faiss.IndexFlatL2(EMBEDDING_DIM)
+            self._index = faiss.IndexIVFPQ(
+                quantizer,
+                EMBEDDING_DIM,
+                N_CENTROIDS,
+                M_SUBQUANTIZERS,
+                N_BITS,
+            )
+            
+            index_path = TEMP_INDEX_DIR / "synergix_brain.index"
+            meta_path = TEMP_INDEX_DIR / "synergix_metadata.pkl"
+            
+            if index_path.exists() and meta_path.exists():
+                try:
+                    self._index = await asyncio.to_thread(
+                        lambda: faiss.read_index(str(index_path))
+                    )
+                    with open(meta_path, "rb") as f:
+                        saved_data = pickle.load(f)
+                        self._metadata = saved_data.get("metadata", {})
+                        self._current_id = saved_data.get("current_id", 0)
+                    
+                    if isinstance(self._index, faiss.IndexIVFPQ):
+                        self._is_trained = self._index.is_trained
+                    
+                    if not self._is_trained:
+                        await self._train_with_dummy()
+                except Exception:
+                    await self._train_with_dummy()
+            else:
+                await self._train_with_dummy()
+
+    async def _train_with_dummy(self):
+        dummy_vectors = np.random.randn(N_CENTROIDS * 10, EMBEDDING_DIM).astype(np.float32)
+        faiss.normalize_L2(dummy_vectors)
+        
+        await asyncio.to_thread(self._index.train, dummy_vectors)
+        self._is_trained = True
+
+    async def _save_index(self):
+        index_path = TEMP_INDEX_DIR / "synergix_brain.index"
+        meta_path = TEMP_INDEX_DIR / "synergix_metadata.pkl"
+        
+        await asyncio.to_thread(
+            faiss.write_index,
+            self._index,
+            str(index_path),
         )
-        self.index.train(vectors.astype(np.float32))                                                         self.index.nprobe = N_PROBE
+        
+        with open(meta_path, "wb") as f:
+            pickle.dump(
+                {
+                    "metadata": self._metadata,
+                    "current_id": self._current_id,
+                },
+                f,
+            )
 
-    async def add_texts(self, texts: List[str], metadata_list: List[Dict[str, Any]]) -> int:
-        if not texts:
-            return 0
+    async def compute_embedding(self, text: str, is_query: bool = False) -> np.ndarray:
+        model = await self._ensure_model()
+        
+        prefix = _QUERY_PREFIX if is_query else _PASSAGE_PREFIX
+        input_text = f"{prefix}{text}"
+        
+        embedding = await asyncio.to_thread(
+            lambda: model.encode(
+                [input_text],
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+        )
+        
+        return embedding[0].astype(np.float32)
+
+    async def add_document(self, text: str, metadata: Dict[str, Any]) -> int:
         async with self._lock:
-            embeddings = await self._encode(texts)
-            return await self._add_vectors(embeddings, metadata_list)                                
-    async def _add_vectors(self, vectors: np.ndarray, metadata_list: List[Dict[str, Any]]) -> int:
-        vectors = vectors.astype(np.float32)
-        if vectors.ndim == 1:
-            vectors = vectors.reshape(1, -1)
-        n = vectors.shape[0]
-        if self.index is None or not self.index.is_trained:
-            if len(self._training_samples) < N_CLUSTERS * 2:
-                self._training_samples.extend([v for v in vectors])                                                  return 0                                                                                         all_samples = np.vstack(self._training_samples)
-            self._init_trained_index(all_samples)                                                                self._training_samples.clear()
-        if self.index is not None and self.index.is_trained:
-            self.index.add(vectors)
-            start_idx = len(self.metadata)
-            for i in range(n):                                                                                       meta = metadata_list[i] if i < len(metadata_list) else {}                                            entry = {                                                                                                "id": f"vec_{start_idx + i}",
-                    "ts": meta.get("ts", int(time.time())),
-                    "lang": meta.get("lang", "unknown"),                                                                 "author_uid": meta.get("author_uid", ""),                                                            "quality_score": meta.get("quality_score", "0"),
-                    "path": meta.get("path", ""),
+            await self._ensure_index()
+            
+            embedding = await self.compute_embedding(text, is_query=False)
+            vector = embedding.reshape(1, -1)
+            
+            self._index.add_with_ids(
+                vector,
+                np.array([self._current_id], dtype=np.int64),
+            )
+            
+            self._metadata[self._current_id] = {
+                **metadata,
+                "text": text,
+                "text_hash": hashlib.sha256(text.encode()).hexdigest()[:16],
+            }
+            
+            doc_id = self._current_id
+            self._current_id += 1
+            
+            if self._current_id % 10 == 0:
+                await self._save_index()
+            
+            return doc_id
+
+    async def add_batch(
+        self,
+        documents: List[Tuple[str, Dict[str, Any]]],
+    ) -> List[int]:
+        if not documents:
+            return []
+        
+        async with self._lock:
+            await self._ensure_index()
+            
+            texts = [doc[0] for doc in documents]
+            metadatas = [doc[1] for doc in documents]
+            
+            embeddings = await self._embed_batch(texts)
+            
+            start_id = self._current_id
+            ids = np.arange(start_id, start_id + len(documents), dtype=np.int64)
+            
+            self._index.add_with_ids(embeddings, ids)
+            
+            for i, metadata in enumerate(metadatas):
+                doc_id = start_id + i
+                self._metadata[doc_id] = {
+                    **metadata,
+                    "text": texts[i],
+                    "text_hash": hashlib.sha256(texts[i].encode()).hexdigest()[:16],
                 }
-                self.metadata.append(entry)
-            return n
-        return 0
+            
+            self._current_id = start_id + len(documents)
+            await self._save_index()
+            
+            return list(range(start_id, start_id + len(documents)))
+
+    async def _embed_batch(self, texts: List[str]) -> np.ndarray:
+        model = await self._ensure_model()
+        
+        input_texts = [f"{_PASSAGE_PREFIX}{t}" for t in texts]
+        
+        embeddings = await asyncio.to_thread(
+            lambda: model.encode(
+                input_texts,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+                batch_size=32,
+            )
+        )
+        
+        return embeddings.astype(np.float32)
 
     async def search(
-        self, query: str, top_k: int = TOP_K_DEFAULT, lang_filter: Optional[str] = None
-    ) -> List[Dict[str, Any]]:                                                                               async with self._lock:
-            if self.index is None or self.index.ntotal == 0:
-                return []                                                                                        query_embedding = await self._encode([query], instruction="query")                                   query_embedding = query_embedding.astype(np.float32).reshape(1, -1)                                  k = min(top_k, self.index.ntotal)
-            distances, indices = self.index.search(query_embedding, k)
-            results: List[Dict[str, Any]] = []
-            for dist, idx in zip(distances[0], indices[0]):
-                if idx < 0 or idx >= len(self.metadata):
+        self,
+        query: str,
+        top_k: int = TOP_K_RESULTS,
+    ) -> List[Dict[str, Any]]:
+        async with self._lock:
+            await self._ensure_index()
+            
+            if self._index.ntotal == 0:
+                return []
+            
+            query_embedding = await self.compute_embedding(query, is_query=True)
+            vector = query_embedding.reshape(1, -1)
+            
+            effective_k = min(top_k, self._index.ntotal)
+            
+            distances, indices = await asyncio.to_thread(
+                self._index.search,
+                vector,
+                effective_k,
+            )
+            
+            results = []
+            for distance, idx in zip(distances[0], indices[0]):
+                if idx < 0:
                     continue
-                meta = self.metadata[idx]
-                score = float(1.0 / (1.0 + float(dist))) if dist > 0 else 1.0
-                if lang_filter and meta.get("lang") != lang_filter:
-                    score *= 0.85
-                results.append({                                                                                         "score": score,
-                    "distance": float(dist),
-                    "metadata": meta,                                                                                    "index": int(idx),                                                                               })                                                                                               results.sort(key=lambda x: x["score"], reverse=True)
+                
+                metadata = self._metadata.get(int(idx), {})
+                similarity = float(1.0 / (1.0 + distance))
+                
+                results.append({
+                    "id": int(idx),
+                    "score": similarity,
+                    "text": metadata.get("text", ""),
+                    "metadata": {
+                        k: v
+                        for k, v in metadata.items()
+                        if k != "text"
+                    },
+                })
+            
             return results
 
-    async def get_context_for_query(
-        self, query: str, top_k: int = TOP_K_DEFAULT, lang_filter: Optional[str] = None                  ) -> Tuple[str, List[Dict[str, Any]]]:
-        hits = await self.search(query, top_k=top_k, lang_filter=lang_filter)
-        if not hits:                                                                                             return ("", [])
-        context_parts: List[str] = []                                                                        enriched: List[Dict[str, Any]] = []                                                                  for h in hits:                                                                                           meta = h["metadata"]
-            path = meta.get("path", "")                                                                          text = ""
-            if path:                                                                                                 try:
-                    text = await greenfield.get_object_text(path)                                                    except Exception:                                                                                        text = f"[Aporte {meta.get('id', '?')}]"                                                     if not text:                                                                                             text = f"[Aporte {meta.get('id', '?')}]"                                                         context_parts.append(text)                                                                           enriched.append({**h, "text": text})                                                             return ("\n---\n".join(context_parts), enriched)                                                                                                                                                      async def save_to_greenfield(self) -> bool:
-        async with self._lock:
-            if self.index is None or self.index.ntotal == 0:                                                         return False
-            _ensure_dir()                                                                                        faiss.write_index(self.index, str(INDEX_FILE))
-            index_bytes = INDEX_FILE.read_bytes()                                                                meta_json = json.dumps(self.metadata, ensure_ascii=False)                                            try:                                                                                                     await greenfield.create_object(
-                    "aisynergix/data/brains/faiss_ivfpq.index",                                                          index_bytes,                                                                                         {"ntotal": str(self.index.ntotal), "updated": str(int(time.time()))},                                content_type="application/octet-stream",
-                )                                                                                                    await greenfield.create_object(
-                    "aisynergix/data/brains/metadata.json",                                                              meta_json.encode("utf-8"),
-                    {"entries": str(len(self.metadata)), "updated": str(int(time.time()))},
-                    content_type="application/json",                                                                 )
-                return True
-            except Exception as e:
-                return False                                                                                                                                                                                  async def evolve_from_recent_aportes(self, minutes: int = 10) -> int:                                    aportes = await greenfield.list_recent_aportes(minutes=minutes)
-        if not aportes:                                                                                          return 0
-        texts: List[str] = []                                                                                metas: List[Dict[str, Any]] = []                                                                     for obj in aportes:                                                                                      name = obj.get("name", obj.get("Name", obj.get("object_name", "")))                                  if not name or not name.endswith(".txt"):                                                                continue                                                                                         try:
-                content = await greenfield.get_object_text(name)                                                     tags = await greenfield.get_aporte_tags(name)
+    async def get_context_for_llm(
+        self,
+        query: str,
+        max_chars: int = 3000,
+    ) -> str:
+        results = await self.search(query, top_k=TOP_K_RESULTS)
+        
+        if not results:
+            return ""
+        
+        filtered = [r for r in results if r["score"] > 0.3]
+        
+        if not filtered:
+            filtered = results[:3]
+        
+        context_parts = []
+        total_chars = 0
+        
+        for r in filtered:
+            text = r["text"]
+            score = r["score"]
+            metadata = r.get("metadata", {})
+            
+            author = metadata.get("author_uid", "Anónimo")
+            quality = metadata.get("quality_score", "N/A")
+            
+            entry = (
+                f"[Sabiduría de {author[:8]} | Calidad: {quality} | "
+                f"Relevancia: {score:.2f}]\n{text}\n"
+            )
+            
+            if total_chars + len(entry) > max_chars:
+                remaining = max_chars - total_chars
+                if remaining > 50:
+                    context_parts.append(entry[:remaining] + "...")
+                break
+            
+            context_parts.append(entry)
+            total_chars += len(entry)
+        
+        return "\n".join(context_parts)
+
+    @property
+    def total_documents(self) -> int:
+        if self._index is None:
+            return 0
+        return self._index.ntotal
+
+
+class CrossLingualRAG:
+    def __init__(self):
+        self._faiss = FAISSEngine()
+        self._initialized = False
+
+    async def initialize(self):
+        if self._initialized:
+            return
+        
+        await self._faiss._ensure_model()
+        await self._faiss._ensure_index()
+        self._initialized = True
+
+    async def add_contribution(
+        self,
+        text: str,
+        author_uid: str,
+        language: str,
+        quality_score: float,
+        object_name: str,
+    ) -> int:
+        metadata = {
+            "author_uid": author_uid,
+            "language": language,
+            "quality_score": str(quality_score),
+            "object_name": object_name,
+            "added_at": datetime.now(timezone.utc).isoformat(),
+        }
+        
+        return await self._faiss.add_document(text, metadata)
+
+    async def add_contributions_batch(
+        self,
+        contributions: List[Dict[str, Any]],
+    ) -> List[int]:
+        documents = []
+        
+        for contrib in contributions:
+            metadata = {
+                "author_uid": contrib.get("author_uid", "unknown"),
+                "language": contrib.get("language", "es"),
+                "quality_score": str(contrib.get("quality_score", 0)),
+                "object_name": contrib.get("object_name", ""),
+                "added_at": datetime.now(timezone.utc).isoformat(),
+            }
+            documents.append((contrib["text"], metadata))
+        
+        return await self._faiss.add_batch(documents)
+
+    async def query(
+        self,
+        query_text: str,
+        target_language: str,
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        context = await self._faiss.get_context_for_llm(query_text)
+        
+        search_results = await self._faiss.search(query_text, top_k=TOP_K_RESULTS)
+        
+        if context:
+            enriched_results = []
+            for result in search_results:
+                enriched_result = dict(result)
+                enriched_result["cross_lingual"] = (
+                    result.get("metadata", {}).get("language") != target_language
+                )
+                enriched_results.append(enriched_result)
+            
+            return context, enriched_results
+        
+        return "", []
+
+    async def get_stats(self) -> Dict[str, Any]:
+        return {
+            "total_documents": self._faiss.total_documents,
+            "model_name": EMBEDDING_MODEL_NAME,
+            "embedding_dim": EMBEDDING_DIM,
+            "index_type": FAISS_INDEX_TYPE,
+        }
+
+    async def rebuild_from_bucket(self):
+        from aisynergix.services.greenfield import get_greenfield_client
+
+        gf = await get_greenfield_client()
+        recent = await gf.list_recent_contributions_from_bucket(minutes=1440)
+        
+        if not recent:
+            return
+        
+        contributions = []
+        for item in recent:
+            try:
+                text = await gf.get_contribution_text(item["object_name"])
+                tags = item.get("tags", {})
+                
+                contributions.append({
+                    "text": text,
+                    "author_uid": tags.get("author_uid", "unknown"),
+                    "language": tags.get("lang", "es"),
+                    "quality_score": float(tags.get("quality_score", 0)),
+                    "object_name": item["object_name"],
+                })
             except Exception:
                 continue
-            if not content or len(content.strip()) < 20:
-                continue                                                                                         try:
-                ts_part = name.rsplit("/", 1)[-1].replace(".txt", "").rsplit("_", 1)[-1]
-                obj_ts = int(ts_part)                                                                            except (ValueError, IndexError):
-                obj_ts = int(time.time())                                                                        texts.append(content)
-            metas.append({                                                                                           "ts": obj_ts,                                                                                        "lang": tags.get("lang", "unknown"),
-                "author_uid": tags.get("author_uid", ""),                                                            "quality_score": tags.get("quality_score", "0"),
-                "path": name,                                                                                    })
-        if texts:                                                                                                added = await self.add_texts(texts, metas)
-            if added > 0:
-                await self.save_to_greenfield()
-                new_version = hashlib.sha256(f"{self.index.ntotal}_{time.time()}".encode()).hexdigest()[:16]
-                await greenfield.set_brain_pointer(f"v{new_version}")
-            return added
-        return 0                                                                                     
-    async def get_stats(self) -> Dict[str, Any]:                                                             async with self._lock:
-            return {                                                                                                 "total_vectors": self.index.ntotal if self.index else 0,
-                "metadata_entries": len(self.metadata),
-                "index_trained": self.index.is_trained if self.index else False,
-                "loaded": self._loaded,                                                                              "model_loaded": self.model is not None,
-            }
+        
+        if contributions:
+            await self.add_contributions_batch(contributions)
 
-                                                                                                     rag_engine = RAGEngine()
+
+_rag_instance: Optional[CrossLingualRAG] = None
+
+
+async def get_rag_engine() -> CrossLingualRAG:
+    global _rag_instance
+    if _rag_instance is None:
+        _rag_instance = CrossLingualRAG()
+        await _rag_instance.initialize()
+    return _rag_instance
+
+
+__all__ = [
+    "CrossLingualRAG",
+    "FAISSEngine",
+    "get_rag_engine",
+    "EMBEDDING_DIM",
+    "TOP_K_RESULTS",
+]

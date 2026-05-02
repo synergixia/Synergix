@@ -1,214 +1,287 @@
-import re
-import time
-import json
 import asyncio
-from typing import Dict, Any, Optional, List, Tuple
+import time
+from typing import Optional, Dict, Any, List, Tuple
+from datetime import datetime, timezone
 
-from aisynergix.ai.local_ia import pensador, juez, CHALLENGE_CONTEXT_TEMPLATE
-from aisynergix.services.rag_engine import rag_engine
-from aisynergix.services.greenfield import greenfield
-from aisynergix.bot.identity import UserProfile, hash_uid
-                                                                                                     HISTORY_MAX_MESSAGES = 7
-MIN_APORTE_LENGTH = 20
-EMOJI_TONE_MAP = {
-    "🔥": "enérgico y positivo",
-    "🌟": "celebratorio y triunfante",
-    "❤️": "cálido y cercano",
-    "😢": "empático y comprensivo",
-    "🚀": "motivador y ambicioso",
-    "💡": "iluminador y reflexivo",                                                                      "🎉": "festivo y alegre",
-    "🤔": "analítico y curioso",
-    "💪": "alentador y fuerte",                                                                          "🙏": "agradecido y humilde",
-}                                                                                                    
-                                                                                                     def detect_emotional_tone(text: str) -> Optional[str]:
-    if not text:                                                                                             return None
-    detected: List[str] = []                                                                             for emoji, tone in EMOJI_TONE_MAP.items():
-        if emoji in text:                                                                                        detected.append(tone)
-    if detected:                                                                                             return detected[0]
-    return None                                                                                      
-                                                                                                     def is_sticker_or_emoji_only(text: str) -> bool:
-    if not text or not text.strip():                                                                         return True
-    emoji_pattern = re.compile(                                                                              "["
-        "\U0001F600-\U0001F64F"                                                                              "\U0001F300-\U0001F5FF"
-        "\U0001F680-\U0001F6FF"                                                                              "\U0001F1E0-\U0001F1FF"
-        "\U00002702-\U000027B0"                                                                              "\U000024C2-\U0001F251"
-        "]+",                                                                                                flags=re.UNICODE,
-    )                                                                                                    cleaned = emoji_pattern.sub("", text).strip()
-    return len(cleaned) < 3
-                                                                                                     
-class ConversationHistory:                                                                               def __init__(self, max_messages: int = HISTORY_MAX_MESSAGES):
-        self._histories: Dict[str, List[Dict[str, str]]] = {}                                                self._lock = asyncio.Lock()
-        self._max = max_messages
+from aisynergix.ai.local_ia import (
+    get_thinker,
+    get_judge,
+    get_duplicate_detector,
+)
+from aisynergix.services.rag_engine import get_rag_engine
+from aisynergix.bot.identity import (
+    get_identity_manager,
+    UserProfile,
+    RANK_TABLE,
+)
+from aisynergix.services.greenfield import get_greenfield_client
 
-    async def add(self, uid: str, role: str, content: str) -> None:                                          async with self._lock:
-            if uid not in self._histories:                                                                           self._histories[uid] = []
-            self._histories[uid].append({"role": role, "content": content})                                      if len(self._histories[uid]) > self._max:
-                self._histories[uid] = self._histories[uid][-self._max:]                             
-    async def get(self, uid: str) -> List[Dict[str, str]]:                                                   async with self._lock:
-            return list(self._histories.get(uid, []))                                                
-    async def clear(self, uid: str) -> None:                                                                 async with self._lock:
-            self._histories.pop(uid, None)                                                           
 
-conversation_history = ConversationHistory()                                                         
+CHALLENGE_BONUS_POINTS = 5
+MIN_CONTRIBUTION_LENGTH = 20
+ELITE_THRESHOLD = 9.0
+LEGENDARY_THRESHOLD = 9.5
+
 
 class AIManager:
-    def __init__(self):                                                                                      self._challenge_cache: Optional[Dict[str, Any]] = None
-        self._challenge_ts: float = 0                                                                        self._challenge_ttl: float = 600
-                                                                                                         async def _get_active_challenge(self) -> Optional[Dict[str, Any]]:
-        now = time.time()                                                                                    if self._challenge_cache and (now - self._challenge_ts) < self._challenge_ttl:
-            return self._challenge_cache                                                                     challenges = await greenfield.get_challenges()
-        if challenges:                                                                                           challenges.sort(key=lambda x: x.get("created", 0), reverse=True)
-            self._challenge_cache = challenges[0]                                                                self._challenge_ts = now
-            return self._challenge_cache                                                                     return None
-                                                                                                         async def _build_challenge_context(self) -> str:
-        challenge = await self._get_active_challenge()                                                       if not challenge:
-            return ""                                                                                        return CHALLENGE_CONTEXT_TEMPLATE.format(
-            challenge_title=challenge.get("title", "Sin título"),                                                challenge_description=challenge.get("description", "Sin descripción"),
-        )                                                                                            
-    async def process_free_chat(                                                                             self, profile: UserProfile, message: str,
-    ) -> Tuple[str, List[Dict[str, Any]]]:                                                                   tone = detect_emotional_tone(message)
-        tone_instruction = ""                                                                                if tone:
-            tone_instruction = f"\n\n[Nota interna: El usuario muestra un tono {tone}. Adapta tu respuesta para que sea {tone}.]"
-        lang = profile.language                                                                              history = await conversation_history.get(profile.uid)
-        context, used_aportes = await rag_engine.get_context_for_query(                                          message, top_k=5, lang_filter=lang
+    def __init__(self):
+        self._thinker = get_thinker()
+        self._judge = get_judge()
+        self._duplicate_detector = get_duplicate_detector()
+        self._rag = None
+        self._identity = get_identity_manager()
+        self._context_cache: Dict[int, List[Dict[str, str]]] = {}
+        self._context_cache_lock = asyncio.Lock()
+
+    async def _ensure_rag(self):
+        if self._rag is None:
+            self._rag = await get_rag_engine()
+
+    async def process_conversation(
+        self,
+        uid: int,
+        message: str,
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        await self._ensure_rag()
+        
+        profile = await self._identity.get_profile(uid)
+        target_language = profile.language
+        
+        history = await self._get_conversation_history(uid)
+        
+        context, search_results = await self._rag.query(message, target_language)
+        
+        response = await self._thinker.think(
+            user_message=message,
+            context=context,
+            history=history,
         )
-        full_message = message                                                                               if tone_instruction:
-            full_message = message + tone_instruction
-        if context:
-            response = await pensador.chat_with_context(                                                             user_message=full_message,
-                context=context,
-                history=history,
-            )                                                                                                else:
-            response = await pensador.chat_free(
-                user_message=full_message,
-                history=history,                                                                                 )
-        await conversation_history.add(profile.uid, "user", message)
-        await conversation_history.add(profile.uid, "assistant", response)
-        return (response, used_aportes)                                                              
-    async def evaluate_contribution(
-        self, profile: UserProfile, aporte_text: str,
-    ) -> Dict[str, Any]:                                                                                     challenge_context = await self._build_challenge_context()
-        recent_aportes = await greenfield.get_user_aportes(profile.uid, limit=5)
-        recent_texts: List[str] = []
-        for ap in recent_aportes:                                                                                name = ap.get("name", ap.get("Name", ""))
-            if name:
-                try:
-                    txt = await greenfield.get_object_text(name)                                                         recent_texts.append(txt[:300])
-                except Exception:
-                    pass
-        evaluation = await juez.evaluate(                                                                        aporte_text=aporte_text,
-            challenge_context=challenge_context,
-            existing_aportes=recent_texts,
-        )                                                                                                    return evaluation
+        
+        await self._append_conversation_history(uid, "user", message)
+        await self._append_conversation_history(uid, "assistant", response)
+        
+        if context and search_results:
+            await self._process_residual_rewards(search_results)
+        
+        return response, search_results
 
     async def process_contribution(
-        self, profile: UserProfile, aporte_text: str,                                                    ) -> Dict[str, Any]:
-        if len(aporte_text.strip()) < MIN_APORTE_LENGTH:
+        self,
+        uid: int,
+        content: str,
+    ) -> Dict[str, Any]:
+        await self._ensure_rag()
+        
+        profile = await self._identity.get_profile(uid)
+        gf = await get_greenfield_client()
+        
+        if len(content.strip()) < MIN_CONTRIBUTION_LENGTH:
             return {
-                "accepted": False,                                                                                   "reason": "too_short",
-                "quality_score": 0,
-                "points_gained": 0,
-            }                                                                                                can_contribute, limit_reason = profile.can_contribute()
-        if not can_contribute:
-            return {
-                "accepted": False,
-                "reason": limit_reason,
-                "quality_score": 0,
-                "points_gained": 0,
+                "status": "too_short",
+                "message_key": "contribution_too_short",
+                "user_language": profile.language,
             }
-        evaluation = await self.evaluate_contribution(profile, aporte_text)
-        quality = evaluation.get("quality_score", 0)
-        is_dup = evaluation.get("is_duplicate", False)
-        related_challenge = evaluation.get("related_to_challenge", False)
-        if is_dup:
+        
+        if not profile.can_contribute:
             return {
-                "accepted": False,
-                "reason": "duplicate",
-                "quality_score": quality,
-                "points_gained": 0,
+                "status": "quota_exceeded",
+                "message_key": "quota_exceeded",
+                "user_language": profile.language,
+                "daily_limit": profile.daily_limit,
+            }
+        
+        if self._duplicate_detector.check_and_add(content):
+            return {
+                "status": "duplicate",
+                "message_key": "contribution_duplicate",
+                "user_language": profile.language,
+            }
+        
+        evaluation = await self._judge.evaluate(content)
+        
+        if not evaluation["approved"]:
+            return {
+                "status": "rejected",
+                "message_key": "contribution_rejected",
+                "user_language": profile.language,
                 "evaluation": evaluation,
             }
-        if quality < 3.0:                                                                                        return {
-                "accepted": False,
-                "reason": "rejected",
-                "quality_score": quality,                                                                            "points_gained": 0,
-                "evaluation": evaluation,
-            }
-        ts = time.time()                                                                                     aporte_tags = {
-            "quality_score": str(quality),
-            "author_uid": hash_uid(profile.uid),
-            "lang": profile.language,                                                                            "category": evaluation.get("category", "general"),
-            "impact_index": str(evaluation.get("impact_index", 5)),
+        
+        quality_score = evaluation["quality_score"]
+        is_challenge_related = evaluation["related_to_challenge"]
+        
+        base_points = int(quality_score * 2)
+        
+        if quality_score >= LEGENDARY_THRESHOLD:
+            points_gained = base_points + 15
+            tier = "legendary"
+        elif quality_score >= ELITE_THRESHOLD:
+            points_gained = base_points + 8
+            tier = "elite"
+        else:
+            points_gained = base_points
+            tier = "normal"
+        
+        if is_challenge_related:
+            challenge = await gf.get_current_challenge()
+            points_gained += CHALLENGE_BONUS_POINTS
+        else:
+            challenge = None
+        
+        profile.add_points(points_gained)
+        profile.increment_contribution()
+        
+        tags = {
+            "quality_score": str(quality_score),
+            "author_uid": profile.uid_hash,
+            "lang": profile.language,
+            "category": evaluation.get("category", "filosofia"),
+            "impact_index": str(evaluation.get("impact_index", 0.5)),
         }
-        try:                                                                                                     result = await greenfield.create_aporte(
-                uid=profile.uid,
-                content=aporte_text,
-                tags=aporte_tags,
-                ts=ts,
-            )
-        except Exception as e:                                                                                   return {
-                "accepted": False,
-                "reason": "error",                                                                                   "quality_score": quality,
-                "points_gained": 0,
-                "error": str(e),
-            }
-        base_points = 5
-        if quality >= 9.5:
-            base_points += 15                                                                                elif quality >= 9.0:
-            base_points += 10
-        elif quality >= 7.5:
-            base_points += 5                                                                                 elif quality >= 6.0:
-            base_points += 2
-        if related_challenge:
-            base_points += 5                                                                                 await profile.add_points(base_points)
-        await profile.increment_daily()
-        await profile.increment_uses(1)                                                                      suffix = ""
-        if quality >= 9.5:
-            suffix = "legendary"
-        elif quality >= 9.0:                                                                                     suffix = "elite"
-        try:
-            await rag_engine.add_texts(
-                [aporte_text],                                                                                       [{
-                    "ts": int(ts),
-                    "lang": profile.language,
-                    "author_uid": hash_uid(profile.uid),                                                                 "quality_score": str(quality),
-                    "path": result.get("path", ""),
-                }],                                                                                              )
-        except Exception:
-            pass
+        
+        object_name, cid, uid_hash_result = await gf.upload_contribution(
+            uid=uid,
+            content=content,
+            tags=tags,
+        )
+        
+        await self._rag.add_contribution(
+            text=content,
+            author_uid=profile.uid_hash,
+            language=profile.language,
+            quality_score=quality_score,
+            object_name=object_name,
+        )
+        
+        new_rank = await self._identity.check_and_update_rank(uid, profile)
+        await self._identity.update_profile(uid, profile)
+        
         return {
-            "accepted": True,
-            "reason": "success",
-            "quality_score": quality,
-            "points_gained": base_points,
-            "total_points": profile.points,
+            "status": "success",
+            "message_key": (
+                "contribution_success_challenge"
+                if is_challenge_related
+                else "contribution_success"
+            ),
+            "user_language": profile.language,
+            "cid": cid,
+            "quality_score": quality_score,
+            "points_gained": points_gained,
+            "new_total_points": profile.points,
+            "tier": tier,
             "rank": profile.rank,
-            "related_to_challenge": related_challenge,
-            "suffix": suffix,
+            "new_rank": new_rank,
+            "challenge": challenge,
             "evaluation": evaluation,
-            "result": result,
         }
 
-    async def award_residual_points(
-        self, used_aportes: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        awards: List[Dict[str, Any]] = []
-        seen: set = set()
-        for ap in used_aportes:
-            author = ap.get("metadata", {}).get("author_uid", "")
-            if not author or author in seen:
+    async def get_user_status(self, uid: int) -> Dict[str, Any]:
+        profile = await self._identity.get_profile(uid)
+        gf = await get_greenfield_client()
+        stats = await gf.get_user_stats(uid)
+        
+        rank_config = RANK_TABLE.get(profile.rank, RANK_TABLE["🌱 Iniciado"])
+        sorted_ranks = sorted(RANK_TABLE.items(), key=lambda x: x[1]["min_points"])
+        
+        next_rank = None
+        for rank_name, config in sorted_ranks:
+            if config["min_points"] > profile.points:
+                next_rank = {"name": rank_name, "points_needed": config["min_points"] - profile.points}
+                break
+        
+        return {
+            "uid_hash": profile.uid_hash,
+            "rank": profile.rank,
+            "points": profile.points,
+            "daily_aportes_count": profile.daily_aportes_count,
+            "daily_limit": profile.daily_limit,
+            "remaining": profile.remaining_contributions,
+            "total_uses_count": profile.total_uses_count,
+            "contribution_count": stats["contribution_count"],
+            "language": profile.language,
+            "next_rank": next_rank,
+        }
+
+    async def set_language(self, uid: int, lang_code: str) -> Tuple[bool, str]:
+        success = await self._identity.set_language(uid, lang_code)
+        if success:
+            return True, lang_code
+        return False, "es"
+
+    async def get_language(self, uid: int) -> str:
+        return await self._identity.get_language(uid)
+
+    async def _get_conversation_history(self, uid: int) -> List[Dict[str, str]]:
+        async with self._context_cache_lock:
+            return self._context_cache.get(uid, [])
+
+    async def _append_conversation_history(
+        self,
+        uid: int,
+        role: str,
+        content: str,
+    ) -> None:
+        async with self._context_cache_lock:
+            if uid not in self._context_cache:
+                self._context_cache[uid] = []
+            
+            self._context_cache[uid].append({"role": role, "content": content})
+            
+            if len(self._context_cache[uid]) > 14:
+                self._context_cache[uid] = self._context_cache[uid][-14:]
+
+    async def clear_conversation_history(self, uid: int) -> None:
+        async with self._context_cache_lock:
+            self._context_cache.pop(uid, None)
+
+    async def _process_residual_rewards(
+        self,
+        search_results: List[Dict[str, Any]],
+    ) -> None:
+        gf = await get_greenfield_client()
+        
+        rewarded_authors: set = set()
+        
+        for result in search_results:
+            author_uid = result.get("metadata", {}).get("author_uid", "")
+            
+            if not author_uid or author_uid in rewarded_authors:
                 continue
-            seen.add(author)
+            
+            if result.get("score", 0) < 0.4:
+                continue
+            
             try:
-                new_points = await greenfield.add_residual_points(author, 1)
-                awards.append({
-                    "author_uid": author,
-                    "points_added": 1,
-                    "new_total": new_points,
-                })
+                new_points = await gf.add_residual_points(author_uid)
+                rewarded_authors.add(author_uid)
             except Exception:
                 continue
-        return awards
+
+    async def health_check(self) -> Dict[str, bool]:
+        thinker_ok = await self._thinker.health()
+        judge_ok = await self._judge.health()
+        
+        return {
+            "thinker": thinker_ok,
+            "judge": judge_ok,
+            "all_healthy": thinker_ok and judge_ok,
+        }
 
 
-ai_manager = AIManager()
+_ai_manager: Optional[AIManager] = None
+
+
+def get_ai_manager() -> AIManager:
+    global _ai_manager
+    if _ai_manager is None:
+        _ai_manager = AIManager()
+    return _ai_manager
+
+
+__all__ = [
+    "AIManager",
+    "get_ai_manager",
+    "ELITE_THRESHOLD",
+    "LEGENDARY_THRESHOLD",
+    "CHALLENGE_BONUS_POINTS",
+]

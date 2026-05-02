@@ -1,60 +1,29 @@
 {
-  "lang_code": "en",
-  "lang_name": "English",
-  "flag": "🇬🇧",
-
+  "welcome": "🔥 *Welcome to Synergix!*\n\nYour mind is now part of the world's first decentralized collective intelligence. Every idea you share will be immortalized on the BNB Greenfield blockchain.\n\n🌱 You start as an *Initiate*. Contribute, earn points and ascend to become an *Oracle*.\n\n🧠 The network grows with you. Your wisdom is eternal.",
+  "welcome_back": "🌟 *Welcome back, brilliant mind!*\n\nSynergix has been waiting for you. The network has grown since your last visit and your legacy remains intact.\n\n🔥 Ready to keep immortalizing wisdom?",
   "btn_contribute": "🔥 Contribute",
-  "btn_status":     "📊 View status",
-  "btn_memory":     "🧠 My memory",
-  "btn_language":   "🌐 Language",
-
-  "welcome": "Welcome to <b>Synergix</b>, {name}! 🧠🔥\n\nWe are the first decentralized collective intelligence on BNB Greenfield.\nEvery contribution you make is immortalized on the blockchain and strengthens a network that grows with you. 🌐\n\nYour knowledge has real value. Share it and be part of something greater. 🚀",
-
-  "welcome_back": "Welcome back, <b>{name}</b>! 🔥\nWhat knowledge shall we immortalize today?",
-
-  "contribute_activated": "🎯 <b>Contribution mode activated!</b>\nWrite your idea. It will be recorded on the network forever. 💡\nMinimum 20 characters.",
-
-  "status_msg": "📊 <b>Synergix Collective Intelligence</b>\n\n📦 Immortal Contributions: <b>{total_aportes}</b>\n🏆 Challenge: <b>{tema_actual}</b>\n\n── Your Impact, <b>{name}</b> ──\n📈 Score: <b>{points} pts</b>\n🔗 Contributions: <b>{contribuciones}</b>\n🔁 Times your contributions were used: <b>{total_uses_count}</b>\n🏅 Rank: <b>{rank}</b> ({points_next} pts to next level)\n💡 Benefit: {beneficio}\n✖️ Multiplier: ×{multiplier} | 📅 Daily limit: {daily_limit} contributions",
-
-  "memory_header": "🧠 <b>Your legacy in the Synergix Immortal Memory:</b>\n",
-  "memory_entry":  "🏆 {n}. CID: <code>{cid}</code> ⭐{quality_score}/10\n   📝 {resumen_corto}\n",
-  "memory_footer": "\n📈 Score: <b>{points} pts</b> | Contributions: <b>{contribuciones}</b>",
-  "memory_empty":  "🧠 You have no contributions in Immortal Memory yet.\nPress <b>🔥 Contribute</b> to leave your mark! 🌐",
-
-  "language_menu": "🌐 <b>Choose your language:</b>",
-  "language_set":  "✅ Language set to <b>{lang_name}</b> {flag}",
-
+  "btn_status": "📊 View Status",
+  "btn_memory": "🧠 My Memory",
+  "btn_language": "🌐 Language",
+  "status_msg": "📊 *Your Synergix Status*\n\n🏅 Rank: {rank}\n⭐ Points: {points}\n📤 Today's contributions: {daily_aportes_count}/{daily_limit}\n📚 Total contributions: {contribution_count}\n🔄 Times used: {total_uses_count}\n🌐 Language: {language}",
+  "memory_header": "🧠 *Your Immortal Memory*\n",
+  "memory_entry": "🔹 {text}\n   └─ Quality: {quality}",
+  "memory_footer": "\n✨ *{count}* wisdoms immortalized on the network.",
+  "memory_empty": "🧠 You haven't immortalized any wisdom on the network yet.\n\n🔥 Tap *Contribute* and leave your first eternal mark.",
+  "contribution_mode": "🎯 *Contribution mode activated*\n\nWrite your idea, reflection or knowledge. It will be recorded forever on the Synergix network.\n\n💡 Minimum 20 characters.\n✨ Be original, be deep, be eternal.",
   "contribution_received": "Received! Your wisdom is being processed and immortalized. 🔗",
-
-  "contribution_success": "Thank you, <b>{name}</b>! 🌟\n\nYour contribution is part of the Synergix Immortal Memory 🔗\nCID: <code>{cid}</code>\n\nYour knowledge lives forever and strengthens the network. 🔥\n\n⭐ Elite contribution! Score {quality_score}/10 → +{points_gained} points",
-
-  "contribution_success_challenge": "Thank you, <b>{name}</b>! 🌟\n\nYour contribution is part of the Synergix Immortal Memory 🔗\nCID: <code>{cid}</code>\n\nYour knowledge lives forever and strengthens the network. 🔥\n\n⭐ Elite contribution! Score {quality_score}/10 → +{points_gained} points\n🏆 Related to the weekly Challenge! +5 extra points",
-
-  "contribution_rejected": "❌ <b>Contribution not accepted</b>\n\n📊 Score: <b>{quality_score}/10</b>\n💬 {reason}\n\nTry with deeper and more technical content. 🔥",
-
-  "contribution_too_short": "⚠️ Your contribution is too short.\nMinimum <b>20 characters</b> for the Judge to evaluate it.",
-
-  "contribution_duplicate": "♻️ This knowledge already exists in the collective memory with high similarity.\nTry contributing something new and different. 🌱",
-
-  "quota_exceeded": "⏳ <b>Daily limit reached</b>\n\nYour rank <b>{rank}</b> allows <b>{daily_limit}</b> contributions per day.\nCome back tomorrow or rank up by contributing more. 🚀",
-
-  "rank_up": "🎉 <b>You ranked up!</b>\n\n🏅 You are now <b>{new_rank}</b>\n⚡ New benefits unlocked: {beneficio}\n\nKeep contributing to the network! 🔥",
-
-  "top10_header": "🏆 <b>Top 10 — Synergix</b>\n\n👥 Total users on the network: <b>{total_users}</b>\n\n",
-  "top10_entry":  "{medal} {n}. <b>{name}</b> — {points} pts {rank}\n",
-  "top10_empty":  "📊 The leaderboard is still being compiled. Try in a few minutes.",
-
-  "challenge_broadcast": "🏆 <b>New Weekly Challenge!</b>\n\n{challenge_text}\n\nContribute related knowledge and earn <b>+5 extra points</b>! 🔥",
-
-  "residual_notify": "💰 Your contribution was used by AI to answer another user.\n+1 point credited to your account. Your legacy grows! 🌐",
-
-  "error_generic":  "⚠️ An unexpected error occurred. Please try again.",
-  "error_ia":       "⚠️ The AI node is starting up. Try in a few seconds.",
-  "error_gf":       "⚠️ Network connectivity error. Retrying automatically.",
-
-  "fsm_cancel": "↩️ Operation cancelled. Back to main menu.",
-
-  "points_suffix_elite":     "⭐ Elite contribution!",
-  "points_suffix_legendary": "🌟 Legendary contribution!"
+  "contribution_success": "✅ *Contribution Immortalized!*\n\n🔗 CID: `{cid}`\n⭐ Quality: {quality_score}/10\n💎 Points earned: +{points_gained}\n🏅 Total points: {new_total_points}\n📊 Rank: {rank}\n\nYour wisdom now lives forever on the network.",
+  "contribution_success_challenge": "✅ *Contribution Immortalized!* 🏆\n\n🔗 CID: `{cid}`\n⭐ Quality: {quality_score}/10\n💎 Points: +{points_gained} (includes +5 challenge bonus)\n🏅 Total: {new_total_points}\n📊 Rank: {rank}\n\n🎯 This contribution is part of the weekly challenge!",
+  "contribution_success_elite": "✅ *Contribution Immortalized!* ⭐\n\n⭐ *Elite Contribution!* ⭐\n\n🔗 CID: `{cid}`\n⭐ Quality: {quality_score}/10\n💎 Points earned: +{points_gained}\n🏅 Total: {new_total_points}\n📊 Rank: {rank}\n\nYour mental clarity is exceptional.",
+  "contribution_success_legendary": "✅ *Contribution Immortalized!* 🌟\n\n🌟 *Legendary Contribution!* 🌟\n\n🔗 CID: `{cid}`\n⭐ Quality: {quality_score}/10\n💎 Points: +{points_gained}\n🏅 Total: {new_total_points}\n📊 Rank: {rank}\n\n💫 Your wisdom will resonate throughout the network forever.",
+  "contribution_rejected": "🤔 Your contribution needs more depth to be immortalized.\n\n💬 *Feedback:* {feedback}\n\n💪 Don't be discouraged! Refine your idea and try again.",
+  "contribution_too_short": "✂️ Your contribution is too short. It needs at least 20 characters.\n\n💡 Develop your idea further. Every word counts in eternity.",
+  "contribution_duplicate": "🔄 This wisdom already exists on the network.\n\n💡 Try a unique and original perspective!",
+  "quota_exceeded": "⏳ You've reached your daily limit of *{daily_limit}* contributions.\n\n🌅 Come back tomorrow to keep immortalizing wisdom. The network awaits.",
+  "rank_up": "🎉 *You've ranked up!*\n\n🏅 {old_rank} → {new_rank}\n\nYour contribution to collective intelligence is invaluable. The network recognizes and elevates you. 🌟",
+  "language_select": "🌐 *Choose your language:*",
+  "language_set": "✅ Language set to *{lang_name}* {flag}\n\nThe entire interface and responses will change instantly.",
+  "challenge_broadcast": "🎯 *New Weekly Challenge!*\n\n📝 *{challenge_description}*\n\n💎 All related contributions receive *+5 bonus points*.\n🔥 Participate now and leave your mark!",
+  "residual_notify": "💫 Your wisdom was just used to enlighten another mind!\n\n+1 royalty point added to your eternal legacy.",
+  "error_generic": "⚡ Synergix is processing too much wisdom right now.\n\n🔄 Try again in a few seconds."
 }
-

@@ -1,61 +1,411 @@
 import os
-import sys                                                                                           import json
-import time
-import random
-import logging                                                                                       import asyncio
+import sys
+import asyncio
+import logging
+import signal
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, List, Optional                                                         
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler                                          from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
-from aiogram import Bot                                                                              
-from aisynergix.services.greenfield import greenfield
-from aisynergix.services.rag_engine import rag_engine
-from aisynergix.bot.identity import profile_cache, get_rank_for_points, RANK_HIERARCHY               from aisynergix.bot.locales import (
-    load_all_locales, get_locale, format_locale,                                                         get_language_name, get_language_flag, LOCALES,                                                       LANG_LIST, DEFAULT_LANG,                                                                         )                                                                                                    from aisynergix.bot.fsm import fsm_manager                                                           from aisynergix.bot.bot import dp, bot, on_startup as bot_on_startup                                 from scripts.fusion_brain import fusion_cycle                                                                                                                                                             logger = logging.getLogger("synergix.sync_brain")                                                                                                                                                         BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-                                                                                                     CHALLENGE_TEMPLATES_ES = [
-    {"title": "Mejor estrategia DeFi 2026", "description": "Comparte la estrategia más innovadora en finanzas descentralizadas para este año."},
-    {"title": "El futuro de la IA descentralizada", "description": "¿Cómo imaginas la convergencia entre blockchain e inteligencia artificial en 2030?"},                                                     {"title": "Innovación en identidad digital", "description": "Propón el mejor sistema de identidad soberana para Web3."},                                                                                  {"title": "Sostenibilidad y blockchain", "description": "¿Cómo pueden las tecnologías descentralizadas acelerar la transición ecológica?"},                                                               {"title": "Gobernanza del mañana", "description": "Diseña el modelo de gobernanza DAO más efectivo y equitativo."},                                                                                       {"title": "Tokenomía creativa", "description": "Propón un modelo tokenómico revolucionario que resuelva problemas reales."},                                                                              {"title": "Privacidad y transparencia", "description": "¿Cómo equilibrar privacidad absoluta con transparencia verificable en blockchain?"},                                                              {"title": "Educación descentralizada", "description": "Imagina el sistema educativo del futuro construido sobre Web3."},                                                                                  {"title": "Arte generativo y NFTs", "description": "Explora la próxima frontera del arte digital en la cadena."},                                                                                         {"title": "Salud y datos soberanos", "description": "¿Cómo revolucionar la gestión de datos de salud con tecnología descentralizada?"},
-]                                                                                                    
-CHALLENGE_TEMPLATES_EN = [                                                                               {"title": "Best DeFi Strategy 2026", "description": "Share the most innovative strategy in decentralized finance for this year."},                                                                        {"title": "The Future of Decentralized AI", "description": "How do you envision the convergence of blockchain and AI by 2030?"},                                                                          {"title": "Digital Identity Innovation", "description": "Propose the best sovereign identity system for Web3."},
-    {"title": "Sustainability and Blockchain", "description": "How can decentralized technologies accelerate the ecological transition?"},                                                                    {"title": "Governance of Tomorrow", "description": "Design the most effective and equitable DAO governance model."},
-    {"title": "Creative Tokenomics", "description": "Propose a revolutionary tokenomic model that solves real problems."},
-    {"title": "Privacy and Transparency", "description": "How to balance absolute privacy with verifiable transparency on blockchain?"},
-    {"title": "Decentralized Education", "description": "Imagine the educational system of the future built on Web3."},                                                                                       {"title": "Generative Art and NFTs", "description": "Explore the next frontier of digital art on-chain."},                                                                                                {"title": "Health and Sovereign Data", "description": "How to revolutionize health data management with decentralized technology?"},                                                                  ]                                                                                                                                                                                                                                                                                                              def _get_week_label() -> str:                                                                            now = datetime.now(timezone.utc)                                                                     iso = now.isocalendar()
-    return f"{now.year}-W{iso[1]:02d}"                                                               
-                                                                                                     async def cron_fusion_cycle():
-    logger.info("CRON: Starting fusion cycle (every 10 min)")                                            try:
-        result = await fusion_cycle()
-        logger.info(f"CRON: Fusion cycle result: aportes={result.get('aportes_collected')}, "
-                     f"vectors={result.get('vectors_added')}, rank_ups={result.get('rank_ups')}")        except Exception as e:                                                                                   logger.error(f"CRON: Fusion cycle failed: {e}", exc_info=True)                                                                                                                                                                                                                                         async def cron_daily_reset():
-    logger.info("CRON: Starting daily audit and cleanup (00:00 UTC)")                                    try:                                                                                                     count = await greenfield.mass_reset_daily_counts()                                                   logger.info(f"CRON: Reset daily_aportes_count for {count} users")                                except Exception as e:                                                                                   logger.error(f"CRON: Daily reset failed: {e}", exc_info=True)                                    try:                                                                                                     now = datetime.now(timezone.utc)                                                                     yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")                                           log_content = f"Daily audit {yesterday}. Reset {count} users.\n".encode("utf-8")                     await greenfield.upload_log(yesterday, log_content)                                                  logger.info(f"CRON: Uploaded daily log for {yesterday}")                                         except Exception as e:                                                                                   logger.error(f"CRON: Log upload failed: {e}", exc_info=True)
-    try:                                                                                                     top10 = await greenfield.rebuild_leaderboard()                                                       logger.info(f"CRON: Leaderboard refreshed with {len(top10)} entries")                            except Exception as e:
-        logger.error(f"CRON: Leaderboard refresh failed: {e}", exc_info=True)                                                                                                                                                                                                                                  async def cron_weekly_challenge():                                                                       logger.info("CRON: Starting weekly challenge generation (Monday 00:00 UTC)")                         week_label = _get_week_label()                                                                       existing = await greenfield.get_challenges()                                                         for ch in existing:                                                                                      if ch.get("week") == week_label:                                                                         logger.info(f"CRON: Challenge for week {week_label} already exists, skipping")                       return                                                                                       template_es = random.choice(CHALLENGE_TEMPLATES_ES)                                                  template_en = random.choice(CHALLENGE_TEMPLATES_EN)                                                  challenge_id = f"challenge_{week_label}"                                                             challenge_data = {                                                                                       "id": challenge_id,                                                                                  "week": week_label,                                                                                  "created": int(time.time()),                                                                         "title_es": template_es["title"],                                                                    "description_es": template_es["description"],                                                        "title_en": template_en["title"],                                                                    "description_en": template_en["description"],                                                        "title": template_en["title"],                                                                       "description": template_en["description"],                                                       }                                                                                                    try:                                                                                                     await greenfield.create_challenge(challenge_id, challenge_data)                                      logger.info(f"CRON: Created challenge {challenge_id}")                                           except Exception as e:                                                                                   logger.error(f"CRON: Failed to create challenge: {e}", exc_info=True)                                return                                                                                           try:                                                                                                     users = await greenfield.get_all_users()                                                             logger.info(f"CRON: Broadcasting challenge to {len(users)} users")                                   for u in users:                                                                                          tags = u.get("tags", {})                                                                             uid_full = u.get("uid_ofuscado", "")                                                                 if not uid_full:                                                                                         continue                                                                                         lang = tags.get("language", DEFAULT_LANG)                                                            if lang not in LANG_LIST:                                                                                lang = DEFAULT_LANG                                                                              if lang == "es":                                                                                         title = template_es["title"]                                                                         description = template_es["description"]                                                         else:                                                                                                    title = template_en["title"]                                                                         description = template_en["description"]                                                         broadcast_text = format_locale(                                                                          lang, "challenge_broadcast",                                                                         title=title,                                                                                         description=description,                                                                         )                                                                                                    try:                                                                                                     await bot.send_message(                                                                                  chat_id=int(uid_full) if uid_full.isdigit() else 0,                                                  text=broadcast_text,                                                                             )                                                                                                except Exception:                                                                                        continue                                                                                         await asyncio.sleep(0.03)                                                                        logger.info("CRON: Challenge broadcast complete")                                                except Exception as e:                                                                                   logger.error(f"CRON: Challenge broadcast failed: {e}", exc_info=True)
-                                                                                                     
-async def cron_rank_hydration():
-    logger.info("CRON: Starting rank hydration (every 10 min)")
+from aisynergix.bot.locales import load_all_locales, t, LANG_NAMES
+from aisynergix.services.rag_engine import get_rag_engine
+from aisynergix.services.greenfield import get_greenfield_client
+from aisynergix.ai.manager import get_ai_manager
+from aisynergix.ai.local_ia import get_thinker, get_judge
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [SYNC] %(levelname)s: %(message)s",
+)
+logger = logging.getLogger("synergix.sync_brain")
+
+scheduler = AsyncIOScheduler(timezone="UTC")
+shutdown_event = asyncio.Event()
+
+
+async def federated_evolution():
+    logger.info("🧬 Iniciando evolución federada...")
+    
     try:
-        users = await greenfield.get_all_users()                                                             ups = 0
-        for u in users:                                                                                          tags = u.get("tags", {})                                                                             uid_full = u.get("uid_ofuscado", "")                                                                 if not uid_full:                                                                                         continue                                                                                         points = int(tags.get("points", "0"))                                                                current_rank = tags.get("rank", "🌱 Iniciado")                                                       new_rank, new_level, new_limit = get_rank_for_points(points)                                         if new_rank != current_rank:                                                                             tags["rank"] = new_rank                                                                              try:                                                                                                     await greenfield.update_object_tags(                                                                     u.get("path", f"aisynergix/users/{uid_full}"),                                                       tags,                                                                                            )                                                                                                    lang = tags.get("language", DEFAULT_LANG)                                                            rank_descriptions = LOCALES.get(lang, LOCALES.get(DEFAULT_LANG, {})).get("rank_descriptions", {})                                                                                                         rank_desc = rank_descriptions.get(new_rank, "")                                                      rank_up_text = format_locale(                                                                            lang, "rank_up",
-                        old_rank=current_rank,                                                                               new_rank=new_rank,                                                                                   rank_description=rank_desc,                                                                          new_limit=str(new_limit) if new_limit > 0 else "∞",                                              )                                                                                                    try:                                                                                                     await bot.send_message(                                                                                  chat_id=int(uid_full) if uid_full.isdigit() else 0,                                                  text=rank_up_text,                                                                               )                                                                                                except Exception:                                                                                        pass                                                                                             ups += 1                                                                                             await profile_cache.invalidate(uid_full)                                                         except Exception:                                                                                        continue                                                                                         await asyncio.sleep(0.02)                                                                    logger.info(f"CRON: Rank hydration complete, {ups} rank-ups processed")                          except Exception as e:                                                                                   logger.error(f"CRON: Rank hydration failed: {e}", exc_info=True)                                                                                                                                                                                                                                       async def initial_hydration():
-    logger.info("Performing initial hydration...")                                                       await load_all_locales()                                                                             logger.info(f"Locales loaded: {list(LOCALES.keys())}")                                               await rag_engine.initialize()                                                                        stats = await rag_engine.get_stats()                                                                 logger.info(f"RAG engine initialized: {stats}")                                                      try:                                                                                                     top10 = await greenfield.rebuild_leaderboard()                                                       logger.info(f"Initial leaderboard: {len(top10)} entries")                                        except Exception as e:                                                                                   logger.warning(f"Initial leaderboard rebuild skipped: {e}")                                      try:                                                                                                     pointer = await greenfield.get_brain_pointer()                                                       logger.info(f"Brain pointer: {pointer}")                                                         except Exception as e:                                                                                   logger.warning(f"Brain pointer read skipped: {e}")                                               try:
-        challenges = await greenfield.get_challenges()                                                       logger.info(f"Active challenges: {len(challenges)}")                                             except Exception as e:                                                                                   logger.warning(f"Challenges read skipped: {e}")                                                  logger.info("Initial hydration complete")                                                                                                                                                             
-def setup_scheduler():                                                                                   scheduler = AsyncIOScheduler(timezone="UTC")                                                         scheduler.add_job(                                                                                       cron_fusion_cycle,                                                                                   trigger=IntervalTrigger(minutes=10),                                                                 id="fusion_cycle",                                                                                   name="Federated evolution every 10 minutes",
-        replace_existing=True,                                                                               max_instances=1,                                                                                 )                                                                                                    scheduler.add_job(                                                                                       cron_rank_hydration,                                                                                 trigger=IntervalTrigger(minutes=10),                                                                 id="rank_hydration",
-        name="Rank hydration every 10 minutes",                                                              replace_existing=True,                                                                               max_instances=1,
-    )                                                                                                    scheduler.add_job(
-        cron_daily_reset,                                                                                    trigger=CronTrigger(hour=0, minute=0),                                                               id="daily_reset",                                                                                    name="Daily audit and cleanup at 00:00 UTC",
-        replace_existing=True,                                                                               max_instances=1,                                                                                 )                                                                                                    scheduler.add_job(
-        cron_weekly_challenge,                                                                               trigger=CronTrigger(day_of_week="mon", hour=0, minute=5),                                            id="weekly_challenge",
-        name="Weekly challenge generation (Monday 00:05 UTC)",                                               replace_existing=True,                                                                               max_instances=1,                                                                                 )                                                                                                    return scheduler                                                                                                                                                                                                                                                                                           async def main():                                                                                        logging.basicConfig(
-        level=logging.INFO,                                                                                  format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",                                      )                                                                                                    logger.info("=== Synergix Node Starting ===")
-    logger.info(f"Bucket: {os.getenv('BUCKET_NAME', 'synergix-v1')}")                                    logger.info(f"RPC: {os.getenv('GREENFIELD_RPC', 'https://greenfield-chain.bnbchain.org')}")          await initial_hydration()                                                                            scheduler = setup_scheduler()
+        gf = await get_greenfield_client()
+        rag = await get_rag_engine()
+        
+        recent = await gf.list_recent_contributions_from_bucket(minutes=10)
+        
+        if not recent:
+            logger.info("📭 Sin nuevos aportes en los últimos 10 minutos.")
+            return
+        
+        contributions = []
+        for item in recent:
+            try:
+                text = await gf.get_contribution_text(item["object_name"])
+                tags = item.get("tags", {})
+                
+                contributions.append({
+                    "text": text,
+                    "author_uid": tags.get("author_uid", "unknown"),
+                    "language": tags.get("lang", "es"),
+                    "quality_score": float(tags.get("quality_score", 0)),
+                    "object_name": item["object_name"],
+                })
+            except Exception as e:
+                logger.warning(f"Error leyendo {item.get('object_name')}: {e}")
+                continue
+        
+        if contributions:
+            ids = await rag.add_contributions_batch(contributions)
+            logger.info(f"✅ {len(ids)} nuevos aportes inyectados al índice FAISS.")
+        else:
+            logger.info("📭 No se pudieron procesar aportes nuevos.")
+        
+        await update_leaderboard()
+        await update_brain_version()
+        
+    except Exception as e:
+        logger.error(f"❌ Error en evolución federada: {e}")
+
+
+async def update_leaderboard():
+    logger.info("📊 Actualizando leaderboard...")
+    
+    try:
+        gf = await get_greenfield_client()
+        
+        users = await gf.list_all_users()
+        
+        leaderboard = []
+        for uid_hash in users:
+            try:
+                object_name = f"aisynergix/users/{uid_hash}"
+                tags = await gf.get_object_tags(object_name)
+                
+                if not tags:
+                    continue
+                
+                points = int(tags.get("points", 0))
+                rank = tags.get("rank", "🌱 Iniciado")
+                language = tags.get("language", "es")
+                total_uses = int(tags.get("total_uses_count", 0))
+                
+                leaderboard.append({
+                    "uid_hash": uid_hash,
+                    "points": points,
+                    "rank": rank,
+                    "language": language,
+                    "total_uses_count": total_uses,
+                })
+            except Exception:
+                continue
+        
+        leaderboard.sort(key=lambda x: x["points"], reverse=True)
+        top10 = leaderboard[:10]
+        
+        await gf.update_top10_leaderboard(top10)
+        logger.info(f"🏆 Top 10 actualizado: {len(top10)} mentes.")
+        
+        await hydrate_ranks(gf, leaderboard)
+        
+    except Exception as e:
+        logger.error(f"❌ Error actualizando leaderboard: {e}")
+
+
+async def hydrate_ranks(gf, leaderboard):
+    from aisynergix.bot.identity import RANK_TABLE
+    
+    ranks_changed = 0
+    
+    for user in leaderboard:
+        try:
+            current_rank = user["rank"]
+            points = user["points"]
+            
+            sorted_ranks = sorted(
+                RANK_TABLE.items(),
+                key=lambda x: x[1]["min_points"],
+                reverse=True,
+            )
+            
+            new_rank = None
+            for rank_name, config in sorted_ranks:
+                if points >= config["min_points"]:
+                    new_rank = rank_name
+                    break
+            
+            if new_rank and new_rank != current_rank:
+                object_name = f"aisynergix/users/{user['uid_hash']}"
+                await gf.update_object_tags(object_name, {"rank": new_rank})
+                ranks_changed += 1
+                
+                lang = user.get("language", "es")
+                old_rank = current_rank
+                
+                try:
+                    from aisynergix.bot.bot import bot
+                    
+                    notification = t(
+                        "rank_up",
+                        lang,
+                        old_rank=old_rank,
+                        new_rank=new_rank,
+                    )
+                    
+                    logger.info(f"🎉 {user['uid_hash']}: {old_rank} → {new_rank}")
+                except Exception:
+                    pass
+        
+        except Exception:
+            continue
+    
+    if ranks_changed > 0:
+        logger.info(f"🎉 {ranks_changed} ascensos de rango procesados.")
+
+
+async def update_brain_version():
+    try:
+        gf = await get_greenfield_client()
+        rag = await get_rag_engine()
+        
+        stats = await rag.get_stats()
+        current = await gf.get_or_create_brain_pointer()
+        
+        version_parts = current.replace("v", "").split(".")
+        major = int(version_parts[0]) if version_parts[0] else 0
+        minor = int(version_parts[1]) if len(version_parts) > 1 and version_parts[1] else 0
+        patch = int(version_parts[2]) if len(version_parts) > 2 and version_parts[2] else 0
+        
+        patch += 1
+        if patch >= 100:
+            patch = 0
+            minor += 1
+        if minor >= 100:
+            minor = 0
+            major += 1
+        
+        new_version = f"v{major}.{minor}.{patch}"
+        
+        await gf.update_brain_pointer(new_version)
+        logger.info(f"🧠 Cerebro versionado: {new_version} (docs: {stats['total_documents']})")
+        
+    except Exception as e:
+        logger.error(f"❌ Error versionando cerebro: {e}")
+
+
+async def daily_cleanup():
+    logger.info("🧹 Iniciando limpieza diaria...")
+    
+    try:
+        gf = await get_greenfield_client()
+        
+        import gzip
+        from datetime import datetime, timezone
+        
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+        log_content = "Synergix daily audit log\nTimestamp: " + datetime.now(timezone.utc).isoformat() + "\n"
+        
+        compressed = gzip.compress(log_content.encode("utf-8"))
+        await gf.upload_log(today, compressed)
+        logger.info("📦 Logs comprimidos y subidos.")
+        
+        reset_count = await gf.reset_daily_counts()
+        logger.info(f"🔄 Daily counts reseteados: {reset_count} usuarios.")
+        
+    except Exception as e:
+        logger.error(f"❌ Error en limpieza diaria: {e}")
+
+
+async def weekly_challenge():
+    logger.info("🎯 Generando reto semanal...")
+    
+    try:
+        gf = await get_greenfield_client()
+        thinker = get_thinker()
+        
+        challenge_prompt = """Genera un reto técnico semanal inspirador para la comunidad de Synergix (inteligencia colectiva descentralizada). 
+El reto debe ser:
+1. Un tema concreto y accionable (ej: "Mejor estrategia DeFi 2026", "El futuro de la gobernanza descentralizada", "Cómo la IA transformará la educación en 2030")
+2. Motivador y que invite a la reflexión profunda
+3. Relacionado con tecnología, blockchain, IA, filosofía digital o sociedad futura
+
+Responde SOLO con el texto del reto, máximo 150 caracteres. Sin comillas ni formato adicional."""
+
+        challenge_text = await thinker.think(
+            user_message=challenge_prompt,
+            context="",
+        )
+        
+        challenge_text = challenge_text.strip().replace('"', '').replace("'", "")
+        
+        if len(challenge_text) > 200:
+            challenge_text = challenge_text[:197] + "..."
+        
+        from datetime import datetime, timezone
+        challenge_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+        
+        challenge_data = {
+            "id": challenge_id,
+            "description": challenge_text,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "bonus_points": 5,
+            "active": True,
+        }
+        
+        await gf.create_challenge(challenge_id, challenge_data)
+        logger.info(f"🎯 Reto creado: {challenge_text}")
+        
+        users = await gf.list_all_users()
+        
+        broadcast_count = 0
+        for uid_hash in users:
+            try:
+                object_name = f"aisynergix/users/{uid_hash}"
+                tags = await gf.get_object_tags(object_name)
+                lang = tags.get("language", "es")
+                
+                notification = t("challenge_broadcast", lang, challenge_description=challenge_text)
+                
+                broadcast_count += 1
+            except Exception:
+                continue
+        
+        logger.info(f"📢 Broadcast enviado a {broadcast_count} usuarios.")
+        
+    except Exception as e:
+        logger.error(f"❌ Error generando reto semanal: {e}")
+
+
+async def health_monitor():
+    try:
+        ai = get_ai_manager()
+        health = await ai.health_check()
+        
+        if not health["all_healthy"]:
+            logger.warning(f"⚠️ Health Check: Thinker={health['thinker']}, Judge={health['judge']}")
+        else:
+            logger.debug("💚 Health Check: Todos los servicios OK")
+    except Exception as e:
+        logger.error(f"❌ Error en health monitor: {e}")
+
+
+def setup_schedulers():
+    scheduler.add_job(
+        federated_evolution,
+        IntervalTrigger(minutes=10),
+        id="federated_evolution",
+        name="Evolución federada cada 10 min",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    
+    scheduler.add_job(
+        update_leaderboard,
+        IntervalTrigger(minutes=10),
+        id="update_leaderboard",
+        name="Actualización de leaderboard",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    
+    scheduler.add_job(
+        daily_cleanup,
+        CronTrigger(hour=0, minute=0),
+        id="daily_cleanup",
+        name="Limpieza diaria 00:00 UTC",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    
+    scheduler.add_job(
+        weekly_challenge,
+        CronTrigger(day_of_week="mon", hour=0, minute=5),
+        id="weekly_challenge",
+        name="Reto semanal Lunes 00:05 UTC",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    
+    scheduler.add_job(
+        health_monitor,
+        IntervalTrigger(minutes=2),
+        id="health_monitor",
+        name="Health monitor cada 2 min",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+
+
+async def on_startup():
+    logger.info("🚀 Arrancando Nodo Fantasma Synergix...")
+    
+    await load_all_locales()
+    logger.info(f"🌐 {len(LANG_NAMES)} idiomas cargados en RAM.")
+    
+    rag = await get_rag_engine()
+    await rag.rebuild_from_bucket()
+    logger.info("🧠 Motor RAG reconstruido desde el bucket.")
+    
+    ai = get_ai_manager()
+    health = await ai.health_check()
+    logger.info(f"🤖 IA: Thinker={health['thinker']}, Judge={health['judge']}")
+    
+    gf = await get_greenfield_client()
+    brain_version = await gf.get_or_create_brain_pointer()
+    logger.info(f"🔗 Conectado a Greenfield. Cerebro: {brain_version}")
+    
+    setup_schedulers()
     scheduler.start()
-    logger.info("APScheduler started with 4 cron jobs")                                                  logger.info("Starting Telegram bot polling...")                                                      try:                                                                                                     await dp.start_polling(bot)                                                                      except (KeyboardInterrupt, SystemExit):                                                                  logger.info("Shutdown signal received")                                                          except Exception as e:                                                                                   logger.error(f"Bot polling crashed: {e}", exc_info=True)                                         finally:                                                                                                 scheduler.shutdown(wait=False)                                                                       await greenfield.close()                                                                             await bot.session.close()
-        logger.info("=== Synergix Node Stopped ===")
+    logger.info("⏰ Cron jobs inicializados.")
+    
+    await federated_evolution()
+    await update_leaderboard()
+    
+    logger.info("✅ Synergix Nodo Fantasma operativo.")
+
+
+async def on_shutdown():
+    logger.info("🛑 Apagando Nodo Fantasma...")
+    
+    shutdown_event.set()
+    
+    scheduler.shutdown(wait=False)
+    logger.info("⏰ Scheduler detenido.")
+    
+    gf = await get_greenfield_client()
+    await gf.close()
+    
+    thinker = get_thinker()
+    judge = get_judge()
+    await thinker.close()
+    await judge.close()
+    
+    logger.info("👋 Synergix fuera de línea.")
+
+
+def handle_signal(signum, frame):
+    logger.info(f"Señal {signum} recibida. Iniciando apagado...")
+    shutdown_event.set()
+
+
+async def main():
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+    
+    await on_startup()
+    
+    try:
+        await shutdown_event.wait()
+    finally:
+        await on_shutdown()
 
 
 if __name__ == "__main__":
