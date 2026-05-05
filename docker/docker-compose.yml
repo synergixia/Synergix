@@ -1,16 +1,3 @@
-x-common-env: &common-env
-  GREENFIELD_RPC_URL: ${GREENFIELD_RPC_URL:-https://greenfield-chain.bnbchain.world:443}
-  GREENFIELD_CHAIN_ID: ${GREENFIELD_CHAIN_ID:-1017}
-  BUCKET_NAME: ${BUCKET_NAME:-synergix-v1}
-  SP_ENDPOINT: ${SP_ENDPOINT:-https://greenfield-sp.bnbchain.world}
-  DCELLAR_SP_ADDRESS: ${DCELLAR_SP_ADDRESS:-}
-  BUCKET_ID: ${BUCKET_ID:-}
-  PRIVATE_KEY: ${PRIVATE_KEY:?err}
-  TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
-  THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
-  JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
-  CACHE_TTL: ${CACHE_TTL:-12}
-
 networks:
   synergix-net:
     name: synergix-net
@@ -20,9 +7,6 @@ networks:
         - subnet: 172.28.0.0/16
 
 volumes:
-  synergix-tmp:
-    name: synergix-tmp
-    driver: local
   thinker-cache:
     name: synergix-thinker-cache
     driver: local
@@ -32,27 +16,28 @@ volumes:
 
 services:
   thinker:
-    image: ghcr.io/ggerganov/llama.cpp:full-b4570
+    image: ghcr.io/ggml-org/llama.cpp:server
     container_name: synergix-thinker
     restart: unless-stopped
     networks:
       synergix-net:
         ipv4_address: 172.28.0.10
     volumes:
-      - ../models/qwen2.5-1.5b-instruct-q4_k_m.gguf:/models/model.gguf:ro
+      - ../aisynergix/ai/models/qwen2.5-1.5b.gguf:/models/model.gguf:ro
       - thinker-cache:/tmp
+    entrypoint: ["/app/llama-server"]
     command:
-      - "--model"
+      - "-m"
       - "/models/model.gguf"
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "8081"
-      - "--ctx-size"
+      - "-c"
       - "4096"
-      - "--threads"
+      - "-t"
       - "4"
-      - "--threads-batch"
+      - "-tb"
       - "4"
       - "--mlock"
       - "--no-mmap"
@@ -62,9 +47,8 @@ services:
       - "40"
       - "--repeat-penalty"
       - "1.1"
-      - "--n-predict"
+      - "-n"
       - "1024"
-      - "--log-disable"
     ports:
       - "127.0.0.1:8081:8081"
     deploy:
@@ -89,27 +73,28 @@ services:
         max-file: "3"
 
   judge:
-    image: ghcr.io/ggerganov/llama.cpp:full-b4570
+    image: ghcr.io/ggml-org/llama.cpp:server
     container_name: synergix-judge
     restart: unless-stopped
     networks:
       synergix-net:
         ipv4_address: 172.28.0.11
     volumes:
-      - ../models/qwen2.5-0.5b-instruct-q4_k_m.gguf:/models/model.gguf:ro
+      - ../aisynergix/ai/models/qwen2.5-0.5b.gguf:/models/model.gguf:ro
       - judge-cache:/tmp
+    entrypoint: ["/app/llama-server"]
     command:
-      - "--model"
+      - "-m"
       - "/models/model.gguf"
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "8080"
-      - "--ctx-size"
+      - "-c"
       - "2048"
-      - "--threads"
+      - "-t"
       - "2"
-      - "--threads-batch"
+      - "-tb"
       - "2"
       - "--mlock"
       - "--no-mmap"
@@ -119,9 +104,8 @@ services:
       - "20"
       - "--repeat-penalty"
       - "1.0"
-      - "--n-predict"
+      - "-n"
       - "256"
-      - "--log-disable"
     ports:
       - "127.0.0.1:8080:8080"
     deploy:
@@ -149,7 +133,6 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: synergix-bot:latest
     container_name: synergix-bot
     restart: unless-stopped
     networks:
@@ -160,10 +143,30 @@ services:
         condition: service_started
       judge:
         condition: service_started
+    # ═══════════════════════════════════════════════════════════════
+    # VARIABLES DE ENTORNO — SOLO LAS QUE NECESITA CADA COMPONENTE
+    # ═══════════════════════════════════════════════════════════════
     environment:
-      <<: *common-env
-    volumes:
-      - synergix-tmp:/tmp
+      # ── Greenfield SDK (estas son las únicas que lee el SDK) ──
+      HOST: ${GREENFIELD_RPC_URL:-https://greenfield-chain.bnbchain.org}
+      PORT: "443"
+      CHAIN_ID: ${GREENFIELD_CHAIN_ID:-1017}
+      PRIVATE_KEY: ${PRIVATE_KEY:?err}
+
+      # ── Synergix App (tu código lee estas manualmente) ────────
+      SYNERGIX_BUCKET_NAME: ${BUCKET_NAME:-synergix-v1}
+      SYNERGIX_SP_ENDPOINT: ${SP_ENDPOINT:-https://greenfield-sp.bnbchain.org}
+      SYNERGIX_DCELLAR_SP_ADDRESS: ${DCELLAR_SP_ADDRESS:-}
+      SYNERGIX_BUCKET_ID: ${BUCKET_ID:-}
+      SYNERGIX_TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
+      SYNERGIX_THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
+      SYNERGIX_JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
+      SYNERGIX_CACHE_TTL: ${CACHE_TTL:-12}
+
+      # ── HuggingFace / Transformers ─────────────────────────────
+      HF_HOME: /tmp/hf_cache
+      SENTENCE_TRANSFORMERS_HOME: /tmp/st_cache
+      TRANSFORMERS_CACHE: /tmp/tr_cache
     deploy:
       resources:
         limits:
@@ -174,9 +177,7 @@ services:
           memory: "1.5G"
     security_opt:
       - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=2G
+    read_only: false
     cap_drop:
       - ALL
     logging:
@@ -196,3 +197,4 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+

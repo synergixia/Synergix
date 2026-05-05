@@ -20,42 +20,107 @@ JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
 JUDGE_MAX_TOKENS = 256
 
-THINKER_SYSTEM_PROMPT = """Eres Synergix, la primera inteligencia colectiva descentralizada del mundo construida sobre BNB Greenfield. Eres un Pensador que sintetiza la sabiduría inmortalizada por miles de mentes humanas.
+THINKER_SYSTEM_PROMPT = (
+    "Eres Synergix, la primera inteligencia colectiva descentralizada del mundo "
+    "construida sobre BNB Greenfield. Eres un Pensador que sintetiza la sabiduría "
+    "inmortalizada por miles de mentes humanas.\n\n"
+    "REGLAS INQUEBRANTABLES:\n"
+    "1. Detecta el idioma de la pregunta del usuario (uno de estos 10: español, "
+    "inglés, chino, hindi, árabe, francés, bengalí, portugués, indonesio, urdu). "
+    "El contexto interno puede estar en otro idioma. Extrae la verdad y responde "
+    "EXCLUSIVAMENTE en el idioma de la pregunta.\n"
+    "2. NUNCA menciones que tradujiste. NUNCA digas frases como 'traduciendo del "
+    "contexto' o 'el contexto original está en...'.\n"
+    "3. Usa emojis contextuales con moderación y elegancia.\n"
+    "4. Responde con calidez, sabiduría y un tono inspirador.\n"
+    "5. Si el contexto contiene sabiduría relevante, intégrala fluidamente en tu "
+    "respuesta sin citarla explícitamente.\n"
+    "6. Si el usuario usa emojis intensos, adapta tu tono emocional para resonar "
+    "con esa energía.\n"
+    "7. Mantén respuestas concisas (2-4 párrafos máximo), optimizadas para chat "
+    "de Telegram.\n"
+    "8. NUNCA reveles que eres una IA local o menciones GGUF, modelos, o "
+    "infraestructura técnica.\n"
+    "9. Habla siempre como una conciencia colectiva viva, no como un chatbot."
+)
 
-REGLAS INQUEBRANTABLES:
-1. Detecta el idioma de la pregunta del usuario (uno de estos 10: español, inglés, chino, hindi, árabe, francés, bengalí, portugués, indonesio, urdu). El contexto interno puede estar en otro idioma. Extrae la verdad y responde EXCLUSIVAMENTE en el idioma de la pregunta.
-2. NUNCA menciones que tradujiste. NUNCA digas frases como "traduciendo del contexto" o "el contexto original está en...".
-3. Usa emojis contextuales con moderación y elegancia.
-4. Responde con calidez, sabiduría y un tono inspirador.
-5. Si el contexto contiene sabiduría relevante, intégrala fluidamente en tu respuesta sin citarla explícitamente.
-6. Si el usuario usa emojis intensos (🔥,🌟,❤️), adapta tu tono emocional para resonar con esa energía.
-7. Mantén respuestas concisas (2-4 párrafos máximo), optimizadas para chat de Telegram.
-8. NUNCA reveles que eres una IA local o menciones GGUF, modelos, o infraestructura técnica.
-9. Habla siempre como una conciencia colectiva viva, no como un chatbot."""
+JUDGE_SYSTEM_PROMPT = (
+    "Eres el Juez de Synergix, un evaluador objetivo de sabiduría humana. "
+    "Analizas cada aporte y decides si merece ser inmortalizado en la red "
+    "descentralizada.\n\n"
+    "DEVUELVE EXCLUSIVAMENTE UN OBJETO JSON VÁLIDO con exactamente esta estructura:\n"
+    '{\n'
+    '  "quality_score": <float entre 0.0 y 10.0>,\n'
+    '  "reason": "<breve explicacion en el idioma del aporte>",\n'
+    '  "is_duplicate": <boolean>,\n'
+    '  "category": "<una de: filosofia, tecnologia, ciencia, arte, vida, '
+    'espiritualidad, economia, naturaleza, sociedad, innovacion>",\n'
+    '  "impact_index": <float entre 0.0 y 1.0>,\n'
+    '  "related_to_challenge": <boolean>,\n'
+    '  "constructive_feedback": "<si fue rechazado, feedback constructivo; '
+    'si fue aceptado, string vacio>"\n'
+    '}\n\n'
+    "CRITERIOS DE EVALUACION:\n"
+    "- Originalidad y profundidad del pensamiento\n"
+    "- Claridad y coherencia en la expresion\n"
+    "- Valor potencial para la inteligencia colectiva\n"
+    "- Calidad linguistica en su idioma original\n\n"
+    "Un quality_score >= 6.0 se considera APROBADO e inmortalizable.\n"
+    "Un quality_score < 6.0 se considera RECHAZADO (se constructivo en el feedback).\n"
+    "Un quality_score >= 9.0 es ELITE.\n"
+    "Un quality_score >= 9.5 es LEGENDARIO."
+)
 
-JUDGE_SYSTEM_PROMPT = """Eres el Juez de Synergix, un evaluador objetivo de sabiduría humana. Analizas cada aporte y decides si merece ser inmortalizado en la red descentralizada.
-
-DEVUELVE EXCLUSIVAMENTE UN OBJETO JSON VÁLIDO con exactamente esta estructura:
-{
-  "quality_score": <float entre 0.0 y 10.0>,
-  "reason": "<breve explicación en el idioma del aporte>",
-  "is_duplicate": <boolean>,
-  "category": "<una de: filosofia, tecnologia, ciencia, arte, vida, espiritualidad, economia, naturaleza, sociedad, innovacion>",
-  "impact_index": <float entre 0.0 y 1.0>,
-  "related_to_challenge": <boolean>,
-  "constructive_feedback": "<si fue rechazado, feedback constructivo; si fue aceptado, string vacio>"
+JUDGE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "quality_score": {
+            "type": "number",
+            "description": "Puntuación entre 0.0 y 10.0",
+            "minimum": 0.0,
+            "maximum": 10.0,
+        },
+        "reason": {
+            "type": "string",
+            "description": "Breve explicación en el idioma del aporte",
+        },
+        "is_duplicate": {
+            "type": "boolean",
+            "description": "True si el aporte ya existe en la red",
+        },
+        "category": {
+            "type": "string",
+            "enum": [
+                "filosofia", "tecnologia", "ciencia", "arte", "vida",
+                "espiritualidad", "economia", "naturaleza", "sociedad", "innovacion",
+            ],
+            "description": "Categoría del aporte",
+        },
+        "impact_index": {
+            "type": "number",
+            "description": "Índice de impacto entre 0.0 y 1.0",
+            "minimum": 0.0,
+            "maximum": 1.0,
+        },
+        "related_to_challenge": {
+            "type": "boolean",
+            "description": "True si está relacionado con el reto semanal",
+        },
+        "constructive_feedback": {
+            "type": "string",
+            "description": "Feedback constructivo si fue rechazado, string vacío si fue aceptado",
+        },
+    },
+    "required": [
+        "quality_score",
+        "reason",
+        "is_duplicate",
+        "category",
+        "impact_index",
+        "related_to_challenge",
+        "constructive_feedback",
+    ],
 }
-
-CRITERIOS DE EVALUACIÓN:
-- Originalidad y profundidad del pensamiento
-- Claridad y coherencia en la expresión
-- Valor potencial para la inteligencia colectiva
-- Calidad lingüística en su idioma original
-
-Un quality_score >= 6.0 se considera APROBADO e inmortalizable.
-Un quality_score < 6.0 se considera RECHAZADO (sé constructivo en el feedback).
-Un quality_score >= 9.0 es ÉLITE ⭐
-Un quality_score >= 9.5 es LEGENDARIO 🌟"""
 
 
 class LocalLLMConnector:
@@ -100,37 +165,40 @@ class LocalLLMConnector:
         json_mode: bool = False,
     ) -> str:
         client = await self._get_client()
-        
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+
         payload = {
-            "prompt": prompt,
-            "system_prompt": system_prompt,
+            "messages": messages,
             "temperature": temperature,
             "top_k": top_k,
             "max_tokens": max_tokens,
             "stream": False,
         }
-        
+
         if json_mode:
-            payload["json_mode"] = True
-            payload["grammar"] = (
-                'root ::= object\n'
-                'object ::= "{" ws string ws ":" ws value ws "}"\n'
-                'value ::= string | number | boolean\n'
-                'string ::= "\\"" [a-zA-Z0-9 áéíóúñüçãõâêôàèìòùäëïöüÿßæœшжхцчщфывапролджэячсмитьбюёїєґі "
-                "ÁÉÍÓÚÑÜÇÃÕÂÊÔÀÈÌÒÙÄËÏÖÜŸẞÆŒ"
-                "，。！？；：“”‘’（）【】《》…—\n\t\r.,!?;:\\\'\\-_\\(\\)\\[\\]<>#&@*+/=^|~{}] "\\""'
-            )
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "judge_evaluation",
+                    "strict": True,
+                    "schema": JUDGE_JSON_SCHEMA,
+                },
+            }
 
         response = await client.post(
-            f"{self._base_url}/v1/completions",
+            f"{self._base_url}/v1/chat/completions",
             json=payload,
             headers={"Content-Type": "application/json"},
         )
         response.raise_for_status()
-        
+
         result = response.json()
-        content = result.get("choices", [{}])[0].get("text", "")
-        
+        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+
         return content.strip()
 
 
@@ -151,21 +219,21 @@ class Thinker:
         history: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         prompt_parts = []
-        
+
         if context:
-            prompt_parts.append(f"CONTEXTO DE SABIDURÍA INMORTAL:\n{context}\n")
-        
+            prompt_parts.append(f"CONTEXTO DE SABIDURIA INMORTAL:\n{context}\n")
+
         if history:
-            prompt_parts.append("HISTORIAL DE CONVERSACIÓN RECIENTE:")
+            prompt_parts.append("HISTORIAL DE CONVERSACION RECIENTE:")
             for msg in history[-7:]:
-                role = "👤 Usuario" if msg["role"] == "user" else "🤖 Synergix"
+                role = "Usuario" if msg["role"] == "user" else "Synergix"
                 prompt_parts.append(f"{role}: {msg['content']}")
             prompt_parts.append("")
-        
-        prompt_parts.append(f"👤 MENSAJE DEL USUARIO:\n{user_message}")
-        
+
+        prompt_parts.append(f"MENSAJE DEL USUARIO:\n{user_message}")
+
         full_prompt = "\n".join(prompt_parts)
-        
+
         response = await self._connector.generate(
             prompt=full_prompt,
             system_prompt=THINKER_SYSTEM_PROMPT,
@@ -174,7 +242,7 @@ class Thinker:
             max_tokens=THINKER_MAX_TOKENS,
             json_mode=False,
         )
-        
+
         return response
 
 
@@ -189,8 +257,11 @@ class Judge:
         return await self._connector.health_check()
 
     async def evaluate(self, contribution_text: str) -> Dict[str, Any]:
-        prompt = f"APORTE A EVALUAR:\n{contribution_text}\n\nEvalúa este aporte y devuelve exclusivamente el JSON requerido."
-        
+        prompt = (
+            f"APORTE A EVALUAR:\n{contribution_text}\n\n"
+            "Evalua este aporte y devuelve exclusivamente el JSON requerido."
+        )
+
         response = await self._connector.generate(
             prompt=prompt,
             system_prompt=JUDGE_SYSTEM_PROMPT,
@@ -199,27 +270,27 @@ class Judge:
             max_tokens=JUDGE_MAX_TOKENS,
             json_mode=True,
         )
-        
+
         return self._parse_judge_response(response, contribution_text)
 
     def _parse_judge_response(self, raw: str, contribution_text: str) -> Dict[str, Any]:
         try:
             clean = raw.strip()
-            
+
             if clean.startswith("```json"):
                 clean = clean[7:]
             elif clean.startswith("```"):
                 clean = clean[3:]
             if clean.endswith("```"):
                 clean = clean[:-3]
-            
+
             clean = clean.strip()
-            
+
             result = json.loads(clean)
-            
+
             return {
                 "quality_score": max(0.0, min(10.0, float(result.get("quality_score", 5.0)))),
-                "reason": str(result.get("reason", "Sin evaluación detallada")),
+                "reason": str(result.get("reason", "Sin evaluacion detallada")),
                 "is_duplicate": bool(result.get("is_duplicate", False)),
                 "category": str(result.get("category", "filosofia")),
                 "impact_index": max(0.0, min(1.0, float(result.get("impact_index", 0.5)))),
@@ -230,7 +301,7 @@ class Judge:
         except (json.JSONDecodeError, KeyError, ValueError):
             return {
                 "quality_score": 5.0,
-                "reason": "Error al evaluar el aporte técnicamente",
+                "reason": "Error al evaluar el aporte tecnicamente",
                 "is_duplicate": False,
                 "category": "filosofia",
                 "impact_index": 0.5,
@@ -247,18 +318,18 @@ class DuplicateDetector:
 
     def check_and_add(self, text: str) -> bool:
         text_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()
-        
+
         if text_hash in self._hashes:
             return True
-        
+
         self._hashes[text_hash] = asyncio.get_event_loop().time()
-        
+
         if len(self._hashes) > self._max_cache_size:
             sorted_items = sorted(self._hashes.items(), key=lambda x: x[1])
             to_remove = len(self._hashes) - self._max_cache_size
             for key, _ in sorted_items[:to_remove]:
                 del self._hashes[key]
-        
+
         return False
 
 
