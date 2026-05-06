@@ -61,7 +61,7 @@ RUN git clone --depth 1 https://github.com/bnb-chain/data-redundancy-generator-b
     && cp /tmp/bridge/libredgenerator.so $TARGET_DIR/libreedsolec.so \
     && cd /app && rm -rf /tmp/bridge
 
-# 🔁 NUEVA LÍNEA: Hacer visible la librería Go para Python
+# 🔁 Hacer visible la librería Go para Python
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/greenfield_python_sdk/go_library:$LD_LIBRARY_PATH
 
 # ── 5. Configuración de Usuario y Estructura ──
@@ -76,6 +76,10 @@ RUN mkdir -p /app/aisynergix/bot/locales \
 # ── 6. Copia de la Aplicación ──
 COPY .env /app/.env
 COPY aisynergix/ /app/aisynergix/
+
+# ✅ PARCHA EL BOT.PY PARA EVITAR ESCRITURA A GREENFIELD EN /START
+RUN sed -i 's|await ai.set_language(uid, detected_lang)|profile.set_language(detected_lang)\n        identity._cache.set(uid, profile)|' /app/aisynergix/bot/bot.py
+
 COPY scripts/ /app/scripts/
 
 RUN chown -R synergix:synergix /app
@@ -93,4 +97,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 
 EXPOSE 8080 8081
 
-ENTRYPOINT ["python", "-m", "scripts.sync_brain"]
+ENTRYPOINT ["bash", "-c", "python -m scripts.sync_brain & python -m aisynergix.bot.bot & wait -n"]
