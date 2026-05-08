@@ -70,15 +70,14 @@ class UserProfile:
             key=lambda x: x[1]["min_points"],
             reverse=True,
         )
-        
+
         for rank_name, config in sorted_ranks:
             if self.points >= config["min_points"]:
                 if rank_name != self.rank:
-                    old_rank = self.rank
                     self.rank = rank_name
                     return rank_name
                 return None
-        
+
         return None
 
     @classmethod
@@ -92,10 +91,10 @@ class UserProfile:
             language=tags.get("language", "es"),
             fsm_state=tags.get("fsm_state", "idle"),
         )
-        
+
         if profile.rank not in RANK_TABLE:
             profile.rank = "🌱 Iniciado"
-        
+
         return profile
 
     def to_tags(self) -> Dict[str, str]:
@@ -156,35 +155,35 @@ class IdentityManager:
         self._cache = UserCache(max_size=500)
 
     async def get_profile(self, uid: int) -> UserProfile:
-        from aisynergix.services.greenfield import get_greenfield_client
+        from aisynergix.services.greenfield import read_user_tags
 
         cached = self._cache.get(uid)
         if cached:
             return cached
 
-        gf = await get_greenfield_client()
-        tags = await gf.get_user_tags(uid)
-        
-        if tags:
-            profile = UserProfile.from_tags(uid, tags)
-        else:
-            profile = UserProfile(uid=uid)
-            await self._create_new_user(uid, profile)
+        uid_hash = _hash_uid(uid)
+        tags = await read_user_tags(uid_hash)
+
+        # read_user_tags devuelve defaults si el objeto no existe en Greenfield.
+        # NO escribimos aquí — MsgCreateObject con primary_sp_approval=None
+        # falla para objetos 0 bytes. La primera escritura ocurre cuando el
+        # usuario realiza una acción real (aporte, cambio de idioma).
+        profile = UserProfile.from_tags(uid, tags)
 
         self._cache.set(uid, profile)
         return profile
 
-    async def _create_new_user(self, uid: int, profile: UserProfile) -> None:
-        from aisynergix.services.greenfield import get_greenfield_client
-
-        gf = await get_greenfield_client()
-        await gf.upload_user_profile(uid, profile.to_tags())
-
     async def update_profile(self, uid: int, profile: UserProfile) -> None:
-        from aisynergix.services.greenfield import get_greenfield_client
+        from aisynergix.services.greenfield import write_user_tags
 
-        gf = await get_greenfield_client()
-        await gf.update_user_tags(uid, profile.to_tags())
+        uid_hash = _hash_uid(uid)
+        try:
+            await write_user_tags(uid_hash, profile.to_tags())
+        except Exception:
+            # El objeto puede no existir aún en Greenfield (usuario nuevo).
+            # Los datos quedan en cache RAM hasta que el usuario haga su
+            # primera contribución real.
+            pass
         self._cache.set(uid, profile)
 
     async def set_language(self, uid: int, lang_code: str) -> bool:

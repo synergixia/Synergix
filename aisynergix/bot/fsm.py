@@ -1,6 +1,4 @@
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FsmContext
-from aiogram.fsm.storage.base import BaseStorage, StorageKey, StateType
 from typing import Dict, Optional, Any
 import time
 import asyncio
@@ -24,11 +22,11 @@ class L1StateCache:
             entry = self._storage.get(uid)
             if entry is None:
                 return None
-            
+
             if time.time() - entry.get("timestamp", 0) > self._ttl:
                 del self._storage[uid]
                 return None
-            
+
             return entry.get("state", "idle")
 
     async def set_state(self, uid: int, state: str) -> None:
@@ -37,7 +35,7 @@ class L1StateCache:
                 "state": state,
                 "timestamp": time.time(),
             }
-            
+
             if len(self._storage) > self._max_size:
                 sorted_items = sorted(
                     self._storage.items(),
@@ -56,11 +54,11 @@ class L1StateCache:
             entry = self._storage.get(uid)
             if entry is None:
                 return {}
-            
+
             if time.time() - entry.get("timestamp", 0) > self._ttl:
                 del self._storage[uid]
                 return {}
-            
+
             return entry.get("data", {})
 
     async def set_state_data(self, uid: int, data: Dict[str, Any]) -> None:
@@ -92,26 +90,33 @@ class GhostStateManager:
         cached = await self._cache.get_state(uid)
         if cached is not None:
             return cached
-        
+
         from aisynergix.bot.identity import get_identity_manager
-        
         identity = get_identity_manager()
         profile = await identity.get_profile(uid)
-        
+
         state = profile.fsm_state if profile.fsm_state else "idle"
         await self._cache.set_state(uid, state)
-        
         return state
 
     async def set_state(self, uid: int, state: str) -> None:
+        # Siempre actualizar el cache L1 en RAM
         await self._cache.set_state(uid, state)
-        
+
+        # Solo persistir a Greenfield si el usuario ya existe allí
+        # (tiene puntos o aportes reales). Evita MsgCreateObject con
+        # primary_sp_approval=None para usuarios nuevos.
         from aisynergix.bot.identity import get_identity_manager
-        
         identity = get_identity_manager()
         profile = await identity.get_profile(uid)
-        profile.fsm_state = state
-        await identity.update_profile(uid, profile)
+
+        if profile.points > 0 or profile.contribution_count > 0:
+            profile.fsm_state = state
+            await identity.update_profile(uid, profile)
+        else:
+            # Usuario nuevo: solo actualizar en cache RAM
+            profile.fsm_state = state
+            identity._cache.set(uid, profile)
 
     async def reset_state(self, uid: int) -> None:
         await self.set_state(uid, "idle")

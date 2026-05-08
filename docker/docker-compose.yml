@@ -153,7 +153,7 @@ services:
       CHAIN_ID: ${GREENFIELD_CHAIN_ID:-1017}
       PRIVATE_KEY: ${PRIVATE_KEY:?err}
 
-      # ── Synergix App (con prefijo SYNERGIX_) ────────
+      # ── Synergix App (tu código lee estas manualmente) ────────
       SYNERGIX_BUCKET_NAME: ${BUCKET_NAME:-synergix-v1}
       SYNERGIX_SP_ENDPOINT: ${SP_ENDPOINT:-https://greenfield-sp.bnbchain.org}
       SYNERGIX_DCELLAR_SP_ADDRESS: ${DCELLAR_SP_ADDRESS:-}
@@ -172,12 +172,6 @@ services:
       HF_HOME: /tmp/hf_cache
       SENTENCE_TRANSFORMERS_HOME: /tmp/st_cache
       TRANSFORMERS_CACHE: /tmp/tr_cache
-
-    # ───── Bind mounts para usar los archivos corregidos ─────
-    volumes:
-      - ../aisynergix/bot/bot.py:/app/aisynergix/bot/bot.py:ro
-      - ../aisynergix/bot/identity.py:/app/aisynergix/bot/identity.py:ro
-
     deploy:
       resources:
         limits:
@@ -208,3 +202,4 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
