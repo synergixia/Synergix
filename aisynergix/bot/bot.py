@@ -458,7 +458,7 @@ async def handle_contribution_message(
             )
 
     except Exception as e:
-        logger.error(f"Error procesando aporte de {uid}: {e}")
+        logger.exception("Error procesando aporte de %s: %s", uid, e)
         await message.answer(t("error_generic", lang))
 
 
@@ -476,7 +476,7 @@ async def handle_conversation_message(
         await message.answer(response)
 
     except Exception as e:
-        logger.error(f"Error en conversación libre de {uid}: {e}")
+        logger.exception("Error en conversación libre de %s: %s", uid, e)
         await message.answer(t("error_generic", lang))
 
 

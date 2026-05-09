@@ -608,6 +608,11 @@ async def write_json_data(data_path: str, data: Dict[str, Any]) -> None:
 
     if exists:
         await client.object.delete_object(BUCKET_NAME, data_path)
+        # Wait for the delete transaction to propagate to the Storage Provider.
+        # Greenfield has ~2 s block time; the SP needs a few extra seconds to
+        # update its local state after the on-chain delete is confirmed.
+        import asyncio as _asyncio
+        await _asyncio.sleep(8)
 
     await client.object.create_object(
         BUCKET_NAME,
