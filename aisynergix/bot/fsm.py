@@ -8,6 +8,11 @@ class SynergixStates(StatesGroup):
     idle = State()
     awaiting_contribution = State()
     selecting_language = State()
+    # Trading states
+    awaiting_buy_amount = State()
+    awaiting_sell_amount = State()
+    # Wallet verification
+    awaiting_wallet_address = State()
 
 
 class L1StateCache:
@@ -126,6 +131,15 @@ class GhostStateManager:
 
     async def exit_contribution_mode(self, uid: int) -> None:
         await self.set_state(uid, "idle")
+
+    async def enter_buy_mode(self, uid: int) -> None:
+        await self.set_state(uid, "awaiting_buy_amount")
+
+    async def enter_sell_mode(self, uid: int) -> None:
+        await self.set_state(uid, "awaiting_sell_amount")
+
+    async def enter_wallet_verify_mode(self, uid: int) -> None:
+        await self.set_state(uid, "awaiting_wallet_address")
 
 
 _ghost_state_manager: Optional[GhostStateManager] = None

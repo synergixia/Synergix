@@ -168,6 +168,9 @@ services:
       THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
       JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
 
+      # ── BSC / Trading ─────────────────────────────────────────
+      BSC_RPC_URL: ${BSC_RPC_URL:-https://bsc-dataseed1.binance.org}
+
       # ── HuggingFace / Transformers ─────────────────────────────
       HF_HOME: /tmp/hf_cache
       SENTENCE_TRANSFORMERS_HOME: /tmp/st_cache

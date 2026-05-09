@@ -17,7 +17,7 @@ FAISS_INDEX_TYPE = "IVFPQ"
 N_CENTROIDS = 64
 M_SUBQUANTIZERS = 48
 N_BITS = 8
-TOP_K_RESULTS = 7
+TOP_K_RESULTS = 10
 TEMP_INDEX_DIR = Path("/tmp/synergix_faiss")
 TEMP_INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
