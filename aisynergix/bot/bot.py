@@ -26,9 +26,16 @@ from aisynergix.bot.locales import (
     TELEGRAM_LANG_MAP,
     load_all_locales,
 )
-from aisynergix.bot.fsm import get_ghost_state_manager
+from aisynergix.bot.fsm import get_ghost_state_manager, get_l1_cache
 from aisynergix.ai.manager import get_ai_manager
 from aisynergix.bot.identity import get_identity_manager
+from aisynergix.services import trading as trading_svc
+from aisynergix.services.wallet_verify import (
+    build_challenge,
+    verify_signature,
+    get_verified_wallet,
+    save_verified_wallet,
+)
 
 
 logger = logging.getLogger("synergix.bot")
@@ -52,9 +59,44 @@ def get_main_keyboard(lang: str) -> ReplyKeyboardMarkup:
                 KeyboardButton(text=t("btn_memory", lang)),
                 KeyboardButton(text=t("btn_language", lang)),
             ],
+            [
+                KeyboardButton(text=t("btn_synergix", lang)),
+            ],
         ],
         resize_keyboard=True,
         persistent=True,
+    )
+
+
+def get_synergix_inline_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=t("btn_buy", lang), callback_data="synergix:buy"),
+                InlineKeyboardButton(text=t("btn_sell", lang), callback_data="synergix:sell"),
+            ],
+            [
+                InlineKeyboardButton(text=t("btn_token_info", lang), callback_data="synergix:info"),
+                InlineKeyboardButton(text=t("btn_verify_wallet", lang), callback_data="synergix:verify"),
+            ],
+        ]
+    )
+
+
+def get_trade_confirm_keyboard(lang: str, trade_type: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=t("btn_confirm_trade", lang),
+                    callback_data=f"trade:confirm_{trade_type}",
+                ),
+                InlineKeyboardButton(
+                    text=t("btn_cancel_trade", lang),
+                    callback_data="trade:cancel",
+                ),
+            ]
+        ]
     )
 
 
@@ -293,6 +335,18 @@ async def handle_language_button(message: Message) -> None:
     await message.answer(t("language_select", lang), reply_markup=inline_kb)
 
 
+@dp.message(F.text == "💰 Synergix")
+async def handle_synergix_button(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    await ghost.reset_state(uid)
+    inline_kb = get_synergix_inline_keyboard(lang)
+    await message.answer(t("synergix_menu", lang), reply_markup=inline_kb)
+
+
 @dp.callback_query(F.data.startswith("lang:"))
 async def handle_language_selection(callback: CallbackQuery) -> None:
     if not callback.from_user or not callback.data or not callback.message:
@@ -375,6 +429,139 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@dp.message(Command("verify"))
+async def cmd_verify(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    await ghost.reset_state(uid)
+
+    from aisynergix.bot.identity import _hash_uid
+    uid_hash = _hash_uid(uid)
+    existing = await get_verified_wallet(uid_hash)
+
+    if existing:
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=t("btn_new_wallet", lang), callback_data="verify:start"),
+        ]])
+        await message.answer(t("already_verified", lang, address=existing), reply_markup=inline_kb)
+    else:
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Continuar", callback_data="verify:start"),
+        ]])
+        await message.answer(t("verify_intro", lang), reply_markup=inline_kb)
+
+
+@dp.callback_query(F.data.startswith("synergix:"))
+async def handle_synergix_action(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+
+    uid = callback.from_user.id
+    action = callback.data.split(":", 1)[1]
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+
+    if action == "buy":
+        await ghost.enter_buy_mode(uid)
+        await callback.message.edit_text(
+            t("buy_prompt", lang, min_buy=trading_svc.MIN_BUY_BNB)
+        )
+    elif action == "sell":
+        await ghost.enter_sell_mode(uid)
+        await callback.message.edit_text(t("sell_prompt", lang))
+    elif action == "info":
+        prices = await trading_svc.get_token_price()
+        bnb_usd = await trading_svc.get_bnb_usd_price()
+        if not prices:
+            await callback.message.edit_text(t("price_unavailable", lang))
+        else:
+            bnb_per_token, syn_per_bnb = prices
+            price_usd = bnb_per_token * (bnb_usd or 0)
+            await callback.message.edit_text(
+                t(
+                    "token_info",
+                    lang,
+                    contract=trading_svc.SYNERGIX_TOKEN,
+                    price_bnb=bnb_per_token,
+                    price_usd=price_usd,
+                    syn_per_bnb=syn_per_bnb,
+                )
+            )
+    elif action == "verify":
+        from aisynergix.bot.identity import _hash_uid
+        uid_hash = _hash_uid(uid)
+        existing = await get_verified_wallet(uid_hash)
+        if existing:
+            inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=t("btn_new_wallet", lang), callback_data="verify:start"),
+            ]])
+            await callback.message.edit_text(
+                t("already_verified", lang, address=existing),
+                reply_markup=inline_kb,
+            )
+        else:
+            inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Continuar", callback_data="verify:start"),
+            ]])
+            await callback.message.edit_text(t("verify_intro", lang), reply_markup=inline_kb)
+
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "verify:start")
+async def handle_verify_start(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.message:
+        return
+
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+
+    from aisynergix.bot.identity import _hash_uid
+    uid_hash = _hash_uid(uid)
+    challenge = build_challenge(uid_hash)
+
+    await ghost.enter_wallet_verify_mode(uid)
+    await callback.message.edit_text(t("verify_challenge", lang, challenge=challenge))
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("trade:"))
+async def handle_trade_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+
+    uid = callback.from_user.id
+    action = callback.data.split(":", 1)[1]
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+
+    if action == "cancel":
+        await ghost.reset_state(uid)
+        await cache.set_state_data(uid, {})
+        await callback.message.edit_text(t("trade_cancelled", lang))
+        await callback.answer()
+        return
+
+    trade_data = await cache.get_state_data(uid)
+    if not trade_data:
+        await callback.message.edit_text(t("trade_cancelled", lang))
+        await callback.answer()
+        return
+
+    link = trade_data.get("link", "")
+    await ghost.reset_state(uid)
+    await cache.set_state_data(uid, {})
+    await callback.message.edit_text(
+        t("trade_link", lang, link=link, slippage=trading_svc.DEFAULT_SLIPPAGE)
+    )
+    await callback.answer()
+
+
 @dp.message()
 async def handle_free_conversation(message: Message) -> None:
     if not message.from_user:
@@ -392,6 +579,18 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_contribution":
         await handle_contribution_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_buy_amount":
+        await handle_buy_amount_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_sell_amount":
+        await handle_sell_amount_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_wallet_address":
+        await handle_wallet_signature_message(message, uid, text, lang)
         return
 
     await handle_conversation_message(message, uid, text, lang)
@@ -481,9 +680,108 @@ async def handle_conversation_message(
         await message.answer(t("error_generic", lang))
 
 
+async def handle_buy_amount_message(
+    message: Message,
+    uid: int,
+    text: str,
+    lang: str,
+) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+
+    try:
+        bnb_in = float(text.replace(",", "."))
+    except ValueError:
+        await message.answer(t("invalid_amount", lang))
+        return
+
+    if bnb_in < trading_svc.MIN_BUY_BNB:
+        await message.answer(t("amount_too_low_buy", lang, min_buy=trading_svc.MIN_BUY_BNB))
+        return
+
+    syn_out = await trading_svc.calculate_buy_amount(bnb_in)
+    if syn_out is None:
+        await ghost.reset_state(uid)
+        await message.answer(t("price_unavailable", lang))
+        return
+
+    bnb_usd = await trading_svc.get_bnb_usd_price()
+    usd_in = f"{bnb_in * (bnb_usd or 0):.2f}" if bnb_usd else "N/A"
+    link = trading_svc.generate_buy_link(bnb_in)
+
+    await cache.set_state_data(uid, {"type": "buy", "bnb_in": bnb_in, "syn_out": syn_out, "link": link})
+
+    inline_kb = get_trade_confirm_keyboard(lang, "buy")
+    await message.answer(
+        t("buy_summary", lang, bnb_in=bnb_in, usd_in=usd_in, syn_out=syn_out, slippage=trading_svc.DEFAULT_SLIPPAGE),
+        reply_markup=inline_kb,
+    )
+
+
+async def handle_sell_amount_message(
+    message: Message,
+    uid: int,
+    text: str,
+    lang: str,
+) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+
+    try:
+        syn_in = float(text.replace(",", "."))
+    except ValueError:
+        await message.answer(t("invalid_amount", lang))
+        return
+
+    bnb_out = await trading_svc.calculate_sell_amount(syn_in)
+    if bnb_out is None:
+        await ghost.reset_state(uid)
+        await message.answer(t("price_unavailable", lang))
+        return
+
+    if bnb_out < trading_svc.MIN_SELL_BNB_EQUIV:
+        await message.answer(t("amount_too_low_sell", lang, min_bnb_equiv=trading_svc.MIN_SELL_BNB_EQUIV))
+        return
+
+    bnb_usd = await trading_svc.get_bnb_usd_price()
+    usd_out = f"{bnb_out * (bnb_usd or 0):.2f}" if bnb_usd else "N/A"
+    link = trading_svc.generate_sell_link(syn_in)
+
+    await cache.set_state_data(uid, {"type": "sell", "syn_in": syn_in, "bnb_out": bnb_out, "link": link})
+
+    inline_kb = get_trade_confirm_keyboard(lang, "sell")
+    await message.answer(
+        t("sell_summary", lang, syn_in=syn_in, bnb_out=bnb_out, usd_out=usd_out, slippage=trading_svc.DEFAULT_SLIPPAGE),
+        reply_markup=inline_kb,
+    )
+
+
+async def handle_wallet_signature_message(
+    message: Message,
+    uid: int,
+    text: str,
+    lang: str,
+) -> None:
+    ghost = get_ghost_state_manager()
+
+    from aisynergix.bot.identity import _hash_uid
+    uid_hash = _hash_uid(uid)
+
+    recovered = verify_signature(uid_hash, text)
+    await ghost.reset_state(uid)
+
+    if not recovered:
+        await message.answer(t("verify_failed", lang))
+        return
+
+    await save_verified_wallet(uid_hash, recovered)
+    await message.answer(t("verify_success", lang, address=recovered))
+
+
 async def set_bot_commands():
     commands = [
         BotCommand(command="start", description="🔥 Iniciar / Despertar a Synergix"),
+        BotCommand(command="verify", description="🔐 Verificar wallet"),
     ]
     await bot.set_my_commands(commands)
 
