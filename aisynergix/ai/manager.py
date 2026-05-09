@@ -1,7 +1,11 @@
 import asyncio
+import hashlib
+import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from aisynergix.ai.local_ia import (
     get_thinker,
@@ -146,12 +150,20 @@ class AIManager:
             "impact_index": str(evaluation.get("impact_index", 0.5)),
         }
 
-        object_path = await write_aporte(
-            uid_ofuscado=profile.uid_hash,
-            texto=content,
-            tags=aporte_tags,
-            ts=ts,
-        )
+        try:
+            object_path = await write_aporte(
+                uid_ofuscado=profile.uid_hash,
+                texto=content,
+                tags=aporte_tags,
+                ts=ts,
+            )
+        except Exception as gf_err:
+            # Greenfield write failed (SP approval unavailable, network issue, etc.).
+            # Fall back to a local content-addressed ID so the contribution still
+            # enters the RAG index and the user sees success.
+            content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
+            object_path = f"local:{profile.uid_hash}_{ts}_{content_hash}"
+            logger.warning("Greenfield write failed, using local CID %s: %s", object_path, gf_err)
 
         await self._rag.add_contribution(
             text=content,
