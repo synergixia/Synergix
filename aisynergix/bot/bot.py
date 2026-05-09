@@ -133,17 +133,16 @@ async def cmd_start(message: Message) -> None:
 
     profile = await identity.get_profile(uid)
     is_new = profile.points == 0 and profile.total_uses_count == 0
+    name = message.from_user.first_name or "Mente"
 
     if is_new:
-        # Solo actualizar en cache — NO escribir a Greenfield todavía
-        # (evita el bug MsgCreateObject con primary_sp_approval=None)
         profile.set_language(detected_lang)
         identity._cache.set(uid, profile)
         lang = detected_lang
-        welcome_text = t("welcome", lang)
+        welcome_text = t("welcome", lang, name=name)
     else:
         lang = profile.language
-        welcome_text = t("welcome_back", lang)
+        welcome_text = t("welcome_back", lang, name=name)
 
     await ghost.reset_state(uid)
 
@@ -193,29 +192,33 @@ async def handle_status_button(message: Message) -> None:
         return
 
     uid = message.from_user.id
+    name = message.from_user.first_name or ""
     lang = await get_user_language(uid)
 
     ghost = get_ghost_state_manager()
     await ghost.reset_state(uid)
 
     ai = get_ai_manager()
-    status = await ai.get_user_status(uid)
+    status = await ai.get_user_status(uid, name=name)
 
     status_text = t(
         "status_msg",
         lang,
+        name=status["name"],
         rank=status["rank"],
         points=status["points"],
+        contribuciones=status["contribuciones"],
         daily_aportes_count=status["daily_aportes_count"],
         daily_limit=status["daily_limit"],
-        contribution_count=status["contribution_count"],
         total_uses_count=status["total_uses_count"],
+        total_aportes=status["total_aportes"],
+        tema_actual=status["tema_actual"],
+        points_next=status["points_next"],
+        beneficio=status["beneficio"],
+        multiplier=status["multiplier"],
+        contribution_count=status["contribution_count"],
         language=get_lang_name(status["language"]),
     )
-
-    if status.get("next_rank"):
-        next_info = status["next_rank"]
-        status_text += f"\n\n🔜 Próximo rango: {next_info['name']} (faltan {next_info['points_needed']} pts)"
 
     await message.answer(status_text)
 
@@ -339,16 +342,24 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
         await callback.message.edit_text(t("contribution_mode", lang))
     elif action == "status":
         ai = get_ai_manager()
-        status = await ai.get_user_status(uid)
+        cb_name = callback.from_user.first_name or ""
+        status = await ai.get_user_status(uid, name=cb_name)
         status_text = t(
             "status_msg",
             lang,
+            name=status["name"],
             rank=status["rank"],
             points=status["points"],
+            contribuciones=status["contribuciones"],
             daily_aportes_count=status["daily_aportes_count"],
             daily_limit=status["daily_limit"],
-            contribution_count=status["contribution_count"],
             total_uses_count=status["total_uses_count"],
+            total_aportes=status["total_aportes"],
+            tema_actual=status["tema_actual"],
+            points_next=status["points_next"],
+            beneficio=status["beneficio"],
+            multiplier=status["multiplier"],
+            contribution_count=status["contribution_count"],
             language=get_lang_name(status["language"]),
         )
         await callback.message.edit_text(status_text)
