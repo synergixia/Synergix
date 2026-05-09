@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 
 from aisynergix.ai.local_ia import (
@@ -137,7 +137,7 @@ class AIManager:
         profile.increment_contribution()
 
         # Persist aporte to Greenfield: aisynergix/aportes/YYYY-MM/{uid_hash}_{ts}.txt
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        ts = int(datetime.now(timezone.utc).timestamp())
         aporte_tags = {
             "quality_score": str(quality_score),
             "author_uid": profile.uid_hash,
@@ -148,9 +148,9 @@ class AIManager:
 
         object_path = await write_aporte(
             uid_ofuscado=profile.uid_hash,
-            ts=ts,
-            text=content,
+            texto=content,
             tags=aporte_tags,
+            ts=ts,
         )
 
         await self._rag.add_contribution(
@@ -183,31 +183,64 @@ class AIManager:
             "evaluation": evaluation,
         }
 
-    async def get_user_status(self, uid: int) -> Dict[str, Any]:
+    async def get_user_status(self, uid: int, name: str = "") -> Dict[str, Any]:
         profile = await self._identity.get_profile(uid)
 
         sorted_ranks = sorted(RANK_TABLE.items(), key=lambda x: x[1]["min_points"])
 
         next_rank = None
+        points_next: Any = "MAX"
         for rank_name, config in sorted_ranks:
             if config["min_points"] > profile.points:
                 next_rank = {
                     "name": rank_name,
                     "points_needed": config["min_points"] - profile.points,
                 }
+                points_next = config["min_points"] - profile.points
                 break
 
+        rank_config = RANK_TABLE.get(profile.rank, RANK_TABLE["🌱 Iniciado"])
+        multiplier = rank_config.get("multiplier", 1.0)
+        beneficio = rank_config.get("beneficio", "—")
+
+        total_aportes: Any = 0
+        try:
+            await self._ensure_rag()
+            rag_stats = await self._rag.get_stats()
+            total_aportes = rag_stats.get("total_documents", 0)
+        except Exception:
+            pass
+
+        tema_actual = "—"
+        try:
+            challenge = await get_current_challenge()
+            if challenge and challenge.get("active"):
+                desc = challenge.get("description", "")
+                tema_actual = desc[:60] + ("…" if len(desc) > 60 else "")
+        except Exception:
+            pass
+
+        daily_limit_raw = profile.daily_limit
+        daily_limit_display: Any = "∞" if daily_limit_raw >= 9999 else daily_limit_raw
+
         return {
+            "name": name,
             "uid_hash": profile.uid_hash,
             "rank": profile.rank,
             "points": profile.points,
             "daily_aportes_count": profile.daily_aportes_count,
-            "daily_limit": profile.daily_limit,
+            "daily_limit": daily_limit_display,
             "remaining": profile.remaining_contributions,
             "total_uses_count": profile.total_uses_count,
             "contribution_count": profile.contribution_count,
+            "contribuciones": profile.contribution_count,
             "language": profile.language,
             "next_rank": next_rank,
+            "points_next": points_next,
+            "beneficio": beneficio,
+            "multiplier": multiplier,
+            "total_aportes": total_aportes,
+            "tema_actual": tema_actual,
         }
 
     async def set_language(self, uid: int, lang_code: str) -> Tuple[bool, str]:

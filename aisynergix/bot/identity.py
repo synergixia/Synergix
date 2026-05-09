@@ -8,12 +8,12 @@ SALT_UID = "Synergix_"
 UID_HASH_LENGTH = 12
 
 RANK_TABLE = {
-    "🌱 Iniciado": {"min_points": 0, "daily_limit": 5},
-    "📈 Activo": {"min_points": 100, "daily_limit": 12},
-    "🧬 Sincronizado": {"min_points": 500, "daily_limit": 25},
-    "🏗️ Arquitecto": {"min_points": 1500, "daily_limit": 40},
-    "🧠 Mente Colmena": {"min_points": 5000, "daily_limit": 60},
-    "🔮 Oráculo": {"min_points": 15000, "daily_limit": float("inf")},
+    "🌱 Iniciado":     {"min_points": 0,     "daily_limit": 5,          "multiplier": 1.0, "beneficio": "5 aportes/día"},
+    "📈 Activo":       {"min_points": 100,   "daily_limit": 12,         "multiplier": 1.2, "beneficio": "12 aportes/día + ×1.2"},
+    "🧬 Sincronizado": {"min_points": 500,   "daily_limit": 25,         "multiplier": 1.5, "beneficio": "25 aportes/día + ×1.5"},
+    "🏗️ Arquitecto":  {"min_points": 1500,  "daily_limit": 40,         "multiplier": 2.0, "beneficio": "40 aportes/día + ×2.0"},
+    "🧠 Mente Colmena":{"min_points": 5000,  "daily_limit": 60,         "multiplier": 2.5, "beneficio": "60 aportes/día + ×2.5"},
+    "🔮 Oráculo":      {"min_points": 15000, "daily_limit": float("inf"), "multiplier": 3.0, "beneficio": "Sin límite + ×3.0"},
 }
 
 LANGUAGES = {
@@ -54,7 +54,8 @@ class UserProfile:
     @property
     def daily_limit(self) -> int:
         rank_config = RANK_TABLE.get(self.rank, RANK_TABLE["🌱 Iniciado"])
-        return int(rank_config["daily_limit"])
+        lim = rank_config["daily_limit"]
+        return 9999 if lim == float("inf") else int(lim)
 
     @property
     def can_contribute(self) -> bool:
