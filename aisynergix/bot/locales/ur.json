@@ -50,5 +50,22 @@
   "verify_success": "✅ <b>والیٹ تصدیق شدہ!</b>\n\n🔗 ایڈریس: <code>{address}</code>\n\nآپ کی Web3 شناخت آپ کے Synergix پروفائل سے منسلک ہے۔",
   "verify_failed": "❌ غلط یا میعاد ختم دستخط۔ یقینی بنائیں کہ آپ نے فراہم کردہ پیغام پر دستخط کیے۔",
   "already_verified": "✅ آپ کے پاس پہلے سے تصدیق شدہ والیٹ ہے:\n<code>{address}</code>\n\nکیا نیا والیٹ جوڑنا چاہتے ہیں؟",
-  "btn_new_wallet": "🔄 نیا والیٹ"
+  "btn_new_wallet": "🔄 نیا والیٹ",
+  "btn_top_mentes": "🏆 Top Mentes",
+  "top_mentes_header": "🏆 <b>ٹاپ 10 Synergix دماغ</b>\n\nسب سے زیادہ حکمت کو امر کرنے والے:\n",
+  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} پوائنٹس · {contribs} شراکتیں",
+  "top_mentes_empty": "🌱 لیڈر بورڈ ابھی تیار نہیں ہے۔ پہلے شراکت کنندہ بنیں۔",
+  "btn_balance": "📊 میرا بیلنس",
+  "btn_progress": "📈 پیش رفت",
+  "btn_market": "📊 مارکیٹ",
+  "balance_no_wallet": "🔐 پہلے 💰 Synergix مینو سے اپنا والیٹ تصدیق کریں۔",
+  "balance_info": "📊 <b>آپ کا Synergix بیلنس</b>\n\n🔗 والیٹ: <code>{address}</code>\n💰 SYNERGIX: <b>{syn:,.4f}</b> (~${usd:.2f})\n⚡ BNB: <b>{bnb:.6f}</b>",
+  "balance_unavailable": "⚠️ بیلنس پڑھ نہیں سکا۔ چند سیکنڈ بعد دوبارہ کوشش کریں۔",
+  "progress_info": "📈 <b>بانڈنگ کرو پیش رفت</b>\n\n💧 جمع کیا: <b>{raised:.4f} BNB</b> / <b>{target:.4f} BNB</b>\n🎯 پیش رفت: <b>{percent:.2f}%</b>\n\n{bar}\n\n100% پر پہنچتے ہی، ٹوکن PancakeSwap پر گریجویٹ ہو جائے گا۔",
+  "progress_graduated": "🎓 <b>ٹوکن گریجویٹ</b>\n\nSYNERGIX بانڈنگ کرو مکمل کر چکا ہے اور اب مکمل لیکویڈیٹی کے ساتھ PancakeSwap V2 پر ٹریڈ ہو رہا ہے۔",
+  "progress_unavailable": "⚠️ ابھی بانڈنگ کرو کوئری نہیں ہو سکی۔",
+  "market_info": "📊 <b>SYNERGIX مارکیٹ</b>\n\n💰 قیمت: <b>${price_usd:.8f}</b>\n📈 24گ تبدیلی: <b>{change_24h:+.2f}%</b>\n💧 لیکویڈیٹی: <b>${liquidity:,.0f}</b>\n📊 24گ والیوم: <b>${volume:,.0f}</b>\n🏦 مارکیٹ کیپ: <b>${mcap:,.0f}</b>\n🔁 24گ Tx: <b>{buys}</b> خریداری / <b>{sells}</b> فروخت\n🌐 DEX: {dex}",
+  "market_unavailable": "⚠️ مارکیٹ ڈیٹا حاصل نہیں ہو سکا۔ چند سیکنڈ بعد دوبارہ کوشش کریں۔",
+  "verify_address_prompt": "🔐 <b>مرحلہ 1/2 — پتہ</b>\n\nاپنے والیٹ کا پتہ بھیجیں (<code>0x...</code> فارمیٹ، 42 حروف)۔\n\nیہ پتہ آپ کی Synergix شناخت سے منسلک ہو جائے گا۔",
+  "verify_invalid_address": "⚠️ غلط پتہ۔ <code>0x</code> + 40 ہیکس حروف ہونے چاہئیں۔"
 }

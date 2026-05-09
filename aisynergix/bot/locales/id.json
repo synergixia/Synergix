@@ -50,5 +50,22 @@
   "verify_success": "✅ <b>Dompet terverifikasi!</b>\n\n🔗 Alamat: <code>{address}</code>\n\nIdentitas Web3 Anda terhubung ke profil Synergix.",
   "verify_failed": "❌ Tanda tangan tidak valid atau kedaluwarsa. Pastikan Anda menandatangani pesan yang disediakan.",
   "already_verified": "✅ Anda sudah memiliki dompet yang terverifikasi:\n<code>{address}</code>\n\nIngin menghubungkan yang baru?",
-  "btn_new_wallet": "🔄 Dompet baru"
+  "btn_new_wallet": "🔄 Dompet baru",
+  "btn_top_mentes": "🏆 Top Mentes",
+  "top_mentes_header": "🏆 <b>10 Pemikir Synergix Teratas</b>\n\nPikiran yang telah mengabadikan kebijaksanaan terbanyak:\n",
+  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} poin · {contribs} kontribusi",
+  "top_mentes_empty": "🌱 Leaderboard belum tersedia. Jadilah kontributor pertama.",
+  "btn_balance": "📊 Saldo Saya",
+  "btn_progress": "📈 Progres",
+  "btn_market": "📊 Pasar",
+  "balance_no_wallet": "🔐 Verifikasi dompet Anda terlebih dahulu dari menu 💰 Synergix.",
+  "balance_info": "📊 <b>Saldo Synergix Anda</b>\n\n🔗 Dompet: <code>{address}</code>\n💰 SYNERGIX: <b>{syn:,.4f}</b> (~${usd:.2f})\n⚡ BNB: <b>{bnb:.6f}</b>",
+  "balance_unavailable": "⚠️ Tidak dapat membaca saldo. Coba lagi dalam beberapa detik.",
+  "progress_info": "📈 <b>Progres Bonding Curve</b>\n\n💧 Terkumpul: <b>{raised:.4f} BNB</b> dari <b>{target:.4f} BNB</b>\n🎯 Progres: <b>{percent:.2f}%</b>\n\n{bar}\n\nSaat mencapai 100%, token akan bermigrasi ke PancakeSwap.",
+  "progress_graduated": "🎓 <b>Token Lulus</b>\n\nSYNERGIX telah menyelesaikan bonding curve dan kini diperdagangkan di PancakeSwap V2 dengan likuiditas konsolidasi.",
+  "progress_unavailable": "⚠️ Tidak dapat mengkueri bonding curve saat ini.",
+  "market_info": "📊 <b>Pasar SYNERGIX</b>\n\n💰 Harga: <b>${price_usd:.8f}</b>\n📈 Perubahan 24j: <b>{change_24h:+.2f}%</b>\n💧 Likuiditas: <b>${liquidity:,.0f}</b>\n📊 Volume 24j: <b>${volume:,.0f}</b>\n🏦 Kapitalisasi Pasar: <b>${mcap:,.0f}</b>\n🔁 Tx 24j: <b>{buys}</b> beli / <b>{sells}</b> jual\n🌐 DEX: {dex}",
+  "market_unavailable": "⚠️ Tidak dapat mengambil data pasar. Coba lagi dalam beberapa detik.",
+  "verify_address_prompt": "🔐 <b>Langkah 1/2 — Alamat</b>\n\nKirim alamat dompet Anda (format <code>0x...</code>, 42 karakter).\n\nAlamat ini akan terhubung dengan identitas Synergix Anda.",
+  "verify_invalid_address": "⚠️ Alamat tidak valid. Harus <code>0x</code> + 40 karakter heksadesimal."
 }

@@ -73,6 +73,18 @@ _FACTORY_ABI = [
 FACTORY_ADDRESS = "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73"   # PancakeSwap V2 Factory
 
 
+# Minimal ERC-20 ABI (balanceOf only)
+_ERC20_ABI = [
+    {
+        "inputs": [{"internalType": "address", "name": "account", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    }
+]
+
+
 def _get_web3():
     """Return a Web3 instance connected to BSC. Imported lazily to avoid startup cost."""
     from web3 import Web3
@@ -272,6 +284,36 @@ def generate_sell_link(syn_amount: float) -> str:
     return f"https://pancakeswap.finance/swap?{urlencode(params)}"
 
 
+async def get_token_balance(wallet_address: str) -> Optional[float]:
+    """Read SYNERGIX (ERC-20) balance for a wallet on BSC. Returns whole tokens (1e18 decimals)."""
+    try:
+        w3 = await asyncio.to_thread(_get_web3)
+        contract = w3.eth.contract(
+            address=w3.to_checksum_address(SYNERGIX_TOKEN),
+            abi=_ERC20_ABI,
+        )
+        raw = await asyncio.to_thread(
+            contract.functions.balanceOf(w3.to_checksum_address(wallet_address)).call
+        )
+        return raw / 1e18
+    except Exception as exc:
+        logger.warning("Token balance fetch failed for %s: %s", wallet_address, exc)
+        return None
+
+
+async def get_bnb_balance(wallet_address: str) -> Optional[float]:
+    """Read native BNB balance for a wallet on BSC."""
+    try:
+        w3 = await asyncio.to_thread(_get_web3)
+        raw = await asyncio.to_thread(
+            w3.eth.get_balance, w3.to_checksum_address(wallet_address)
+        )
+        return raw / 1e18
+    except Exception as exc:
+        logger.warning("BNB balance fetch failed for %s: %s", wallet_address, exc)
+        return None
+
+
 __all__ = [
     "SYNERGIX_TOKEN",
     "MIN_BUY_BNB",
@@ -283,4 +325,6 @@ __all__ = [
     "calculate_sell_amount",
     "generate_buy_link",
     "generate_sell_link",
+    "get_token_balance",
+    "get_bnb_balance",
 ]

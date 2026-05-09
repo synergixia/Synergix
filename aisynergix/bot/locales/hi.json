@@ -50,5 +50,22 @@
   "verify_success": "✅ <b>वॉलेट सत्यापित!</b>\n\n🔗 पता: <code>{address}</code>\n\nआपकी Web3 पहचान आपके Synergix प्रोफ़ाइल से जुड़ी है।",
   "verify_failed": "❌ अमान्य या समाप्त हस्ताक्षर। सुनिश्चित करें कि आपने प्रदान किए गए संदेश पर हस्ताक्षर किए हैं।",
   "already_verified": "✅ आपके पास पहले से एक सत्यापित वॉलेट है:\n<code>{address}</code>\n\nनया वॉलेट जोड़ना चाहते हैं?",
-  "btn_new_wallet": "🔄 नया वॉलेट"
+  "btn_new_wallet": "🔄 नया वॉलेट",
+  "btn_top_mentes": "🏆 Top Mentes",
+  "top_mentes_header": "🏆 <b>शीर्ष 10 Synergix मस्तिष्क</b>\n\nसबसे अधिक ज्ञान अमर करने वाले:\n",
+  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} अंक · {contribs} योगदान",
+  "top_mentes_empty": "🌱 लीडरबोर्ड अभी तैयार नहीं है। पहले योगदानकर्ता बनें।",
+  "btn_balance": "📊 मेरा बैलेंस",
+  "btn_progress": "📈 प्रगति",
+  "btn_market": "📊 बाज़ार",
+  "balance_no_wallet": "🔐 पहले 💰 Synergix मेनू से अपना वॉलेट सत्यापित करें।",
+  "balance_info": "📊 <b>आपका Synergix बैलेंस</b>\n\n🔗 वॉलेट: <code>{address}</code>\n💰 SYNERGIX: <b>{syn:,.4f}</b> (~${usd:.2f})\n⚡ BNB: <b>{bnb:.6f}</b>",
+  "balance_unavailable": "⚠️ बैलेंस पढ़ नहीं सका। कुछ सेकंड बाद पुनः प्रयास करें।",
+  "progress_info": "📈 <b>बॉन्डिंग कर्व प्रगति</b>\n\n💧 जुटाया: <b>{raised:.4f} BNB</b> / <b>{target:.4f} BNB</b>\n🎯 प्रगति: <b>{percent:.2f}%</b>\n\n{bar}\n\n100% पर पहुँचने पर, टोकन PancakeSwap पर ग्रेजुएट हो जाएगा।",
+  "progress_graduated": "🎓 <b>टोकन ग्रेजुएटेड</b>\n\nSYNERGIX बॉन्डिंग कर्व पूरा कर चुका है और अब पूर्ण लिक्विडिटी के साथ PancakeSwap V2 पर ट्रेड हो रहा है।",
+  "progress_unavailable": "⚠️ अभी बॉन्डिंग कर्व क्वेरी नहीं हो सकी।",
+  "market_info": "📊 <b>SYNERGIX बाज़ार</b>\n\n💰 मूल्य: <b>${price_usd:.8f}</b>\n📈 24घ परिवर्तन: <b>{change_24h:+.2f}%</b>\n💧 लिक्विडिटी: <b>${liquidity:,.0f}</b>\n📊 24घ वॉल्यूम: <b>${volume:,.0f}</b>\n🏦 मार्केट कैप: <b>${mcap:,.0f}</b>\n🔁 24घ Tx: <b>{buys}</b> खरीद / <b>{sells}</b> बिक्री\n🌐 DEX: {dex}",
+  "market_unavailable": "⚠️ बाज़ार डेटा नहीं मिला। कुछ सेकंड बाद पुनः प्रयास करें।",
+  "verify_address_prompt": "🔐 <b>चरण 1/2 — पता</b>\n\nअपना वॉलेट पता भेजें (<code>0x...</code> प्रारूप, 42 वर्ण)।\n\nयह पता आपकी Synergix पहचान से जुड़ जाएगा।",
+  "verify_invalid_address": "⚠️ अमान्य पता। <code>0x</code> + 40 हेक्स वर्ण होने चाहिए।"
 }
