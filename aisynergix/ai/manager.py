@@ -1,11 +1,10 @@
 import asyncio
 import hashlib
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
-
-logger = logging.getLogger(__name__)
 
 from aisynergix.ai.local_ia import (
     get_thinker,
@@ -26,11 +25,44 @@ from aisynergix.services.greenfield import (
     get_current_challenge,
 )
 
+logger = logging.getLogger(__name__)
 
 CHALLENGE_BONUS_POINTS = 5
 MIN_CONTRIBUTION_LENGTH = 20
 ELITE_THRESHOLD = 9.0
 LEGENDARY_THRESHOLD = 9.5
+
+# langdetect code → our system language code
+_LANGDETECT_MAP: Dict[str, str] = {
+    "es": "es", "en": "en",
+    "zh-cn": "zh", "zh-tw": "zh", "zh": "zh",
+    "hi": "hi", "ar": "ar", "fr": "fr",
+    "bn": "bn", "pt": "pt", "id": "id", "ur": "ur",
+}
+
+_STICKER_RE = re.compile(r'\s*\[\[STICKER:([^\]]+)\]\]\s*')
+
+
+def _extract_sticker(response: str) -> Tuple[str, Optional[str]]:
+    """Remove [[STICKER:emoji]] token from response. Returns (clean_text, emoji_or_None)."""
+    match = _STICKER_RE.search(response)
+    if match:
+        emoji = match.group(1).strip()
+        clean = _STICKER_RE.sub(" ", response).strip()
+        return clean, emoji
+    return response, None
+
+
+def _detect_lang(text: str) -> Optional[str]:
+    """Return our language code for the dominant language in text, or None on failure."""
+    if len(text) < 20:
+        return None
+    try:
+        from langdetect import detect, LangDetectException
+        code = detect(text)
+        return _LANGDETECT_MAP.get(code)
+    except Exception:
+        return None
 
 
 class AIManager:
@@ -51,29 +83,52 @@ class AIManager:
         self,
         uid: int,
         message: str,
-    ) -> Tuple[str, List[Dict[str, Any]]]:
+    ) -> Tuple[str, Optional[str], List[Dict[str, Any]]]:
+        """
+        Returns (response_text, sticker_emoji_or_None, search_results).
+        The sticker_emoji is extracted from [[STICKER:X]] tokens in the LLM output.
+        """
         await self._ensure_rag()
 
         profile = await self._identity.get_profile(uid)
         target_language = profile.language
 
         history = await self._get_conversation_history(uid)
-
         context, search_results = await self._rag.query(message, target_language)
 
         response = await self._thinker.think(
             user_message=message,
             context=context,
             history=history,
+            target_language=target_language,
         )
 
+        # Language post-check: if the model responded in the wrong language, retry once.
+        if len(response) >= 30:
+            detected = _detect_lang(response)
+            if detected and detected != target_language:
+                logger.info(
+                    "Language mismatch uid=%s expected=%s detected=%s — retrying",
+                    uid, target_language, detected,
+                )
+                response = await self._thinker.think(
+                    user_message=message,
+                    context=context,
+                    history=history,
+                    target_language=target_language,
+                    force_language=True,
+                )
+
+        # Extract optional sticker token
+        clean_response, sticker_emoji = _extract_sticker(response)
+
         await self._append_conversation_history(uid, "user", message)
-        await self._append_conversation_history(uid, "assistant", response)
+        await self._append_conversation_history(uid, "assistant", clean_response)
 
         if context and search_results:
             await self._process_residual_rewards(search_results)
 
-        return response, search_results
+        return clean_response, sticker_emoji, search_results
 
     async def process_contribution(
         self,
@@ -184,7 +239,7 @@ class AIManager:
                 else "contribution_success"
             ),
             "user_language": profile.language,
-            "cid": object_path,          # path en Greenfield como identificador
+            "cid": object_path,
             "quality_score": quality_score,
             "points_gained": points_gained,
             "new_total_points": profile.points,
@@ -303,7 +358,6 @@ class AIManager:
                 continue
 
             try:
-                # add_residual_points: read tags → +1 points, +1 total_uses_count → write
                 tags = await read_user_tags(author_uid_hash)
                 if tags:
                     tags["points"] = str(int(tags.get("points", 0)) + 1)

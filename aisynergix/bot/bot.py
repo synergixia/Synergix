@@ -471,9 +471,10 @@ async def handle_conversation_message(
     ai = get_ai_manager()
 
     try:
-        response, search_results = await ai.process_conversation(uid, text)
-
+        response, sticker_emoji, search_results = await ai.process_conversation(uid, text)
         await message.answer(response)
+        if sticker_emoji:
+            await message.answer(sticker_emoji)
 
     except Exception as e:
         logger.exception("Error en conversación libre de %s: %s", uid, e)
