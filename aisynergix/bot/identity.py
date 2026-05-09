@@ -47,6 +47,7 @@ class UserProfile:
     last_seen_ts: float = field(default_factory=time.time)
     fsm_state: str = "idle"
     contribution_count: int = 0
+    wallet_address: Optional[str] = None
 
     def __post_init__(self):
         self.uid_hash = _hash_uid(self.uid)
@@ -91,6 +92,7 @@ class UserProfile:
             total_uses_count=int(tags.get("total_uses_count", 0)),
             language=tags.get("language", "es"),
             fsm_state=tags.get("fsm_state", "idle"),
+            wallet_address=tags.get("wallet_address") or None,
         )
 
         if profile.rank not in RANK_TABLE:
@@ -99,7 +101,7 @@ class UserProfile:
         return profile
 
     def to_tags(self) -> Dict[str, str]:
-        return {
+        base: Dict[str, str] = {
             "points": str(self.points),
             "rank": self.rank,
             "daily_aportes_count": str(self.daily_aportes_count),
@@ -108,6 +110,9 @@ class UserProfile:
             "fsm_state": self.fsm_state,
             "last_seen_ts": str(int(self.last_seen_ts)),
         }
+        if self.wallet_address:
+            base["wallet_address"] = self.wallet_address.lower()
+        return base
 
     def add_points(self, points_to_add: int) -> None:
         self.points += points_to_add

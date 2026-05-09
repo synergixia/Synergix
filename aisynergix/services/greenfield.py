@@ -319,39 +319,56 @@ async def read_user_tags(uid_ofuscado: str) -> Dict[str, str]:
 async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
     """
     Crea o actualiza el archivo fantasma (0 bytes) de un usuario.
-    ─────────────────────────────────────────────────────────
-    ENFOQUE HÍBRIDO:
-      • Si el archivo NO existe → MsgCreateObject via broadcast_message
-      • Si YA existe          → MsgSetTag via broadcast_message
-    ─────────────────────────────────────────────────────────
+
+    REGLA DE MERGE: cuando el objeto ya existe, leemos los tags actuales y
+    aplicamos los nuevos encima. Esto garantiza que campos como
+    wallet_address, guardados por rutas independientes (wallet_verify.py),
+    NO sean borrados por MsgSetTag cuando UserProfile.to_tags() los omite.
+    MsgSetTag reemplaza TODOS los tags del objeto; sin el merge perderíamos
+    wallet_address en la siguiente contribución.
     """
     client = await get_client()
     path = _user_path(uid_ofuscado)
 
     exists = False
+    existing_tags: Dict[str, str] = {}
     try:
-        await client.object.get_object_head(BUCKET_NAME, path)
+        obj_info = await client.object.get_object_head(BUCKET_NAME, path)
         exists = True
+        existing_tags = _tags_to_dict(obj_info.tags)
     except Exception:
         exists = False
 
+    # Merge: existing tags act as base, incoming tags take priority.
+    # Preserves wallet_address and any future out-of-profile fields.
+    merged_tags = {**existing_tags, **tags}
+
     if not exists:
-        await client.object.create_object(
-            BUCKET_NAME,
-            path,
-            io.BytesIO(b""),
-            CreateObjectOptions(
-                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-                content_type="application/octet-stream",
-            ),
-        )
-        await client.object.put_object(
-            bucket_name=BUCKET_NAME,
-            object_name=path,
-            object_size=0,
-            reader=io.BytesIO(b""),
-            opts=PutObjectOptions(content_type="application/octet-stream"),
-        )
+        try:
+            await client.object.create_object(
+                BUCKET_NAME,
+                path,
+                io.BytesIO(b""),
+                CreateObjectOptions(
+                    visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+                    content_type="application/octet-stream",
+                ),
+            )
+            await client.object.put_object(
+                bucket_name=BUCKET_NAME,
+                object_name=path,
+                object_size=0,
+                reader=io.BytesIO(b""),
+                opts=PutObjectOptions(content_type="application/octet-stream"),
+            )
+        except Exception as exc:
+            logger.warning(
+                "No se pudo crear el objeto fantasma para %s "
+                "(SP approval pendiente — los tags se guardarán en la siguiente contribución): %s",
+                uid_ofuscado,
+                exc,
+            )
+            raise  # re-raise so save_verified_wallet / update_profile can log and handle
 
     resource = (
         f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
@@ -360,7 +377,7 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
     msg_set = MsgSetTag(
         operator=_key_manager.address if _key_manager else "",
         resource=resource,
-        tags=_dict_to_tags(tags),
+        tags=_dict_to_tags(merged_tags),
     )
     await client.blockchain_client.broadcast_message(
         messages=[msg_set],
@@ -855,6 +872,8 @@ async def upload_log(date_str: str, log_content: str) -> None:
 
     if exists:
         await client.object.delete_object(BUCKET_NAME, data_path)
+        import asyncio as _asyncio
+        await _asyncio.sleep(8)  # wait for SP to sync delete before re-create
 
     await client.object.create_object(
         BUCKET_NAME,
