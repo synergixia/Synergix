@@ -50,5 +50,22 @@
   "verify_success": "✅ <b>钱包已验证！</b>\n\n🔗 地址：<code>{address}</code>\n\n您的 Web3 身份已链接到 Synergix 档案。",
   "verify_failed": "❌ 签名无效或已过期。请确保签名完全与提供的消息一致。",
   "already_verified": "✅ 您已有一个已验证的钱包：\n<code>{address}</code>\n\n是否要绑定新钱包？",
-  "btn_new_wallet": "🔄 新钱包"
+  "btn_new_wallet": "🔄 新钱包",
+  "btn_top_mentes": "🏆 Top Mentes",
+  "top_mentes_header": "🏆 <b>Synergix 思想者前10名</b>\n\n贡献最多智慧的思想者：\n",
+  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} 分 · {contribs} 条贡献",
+  "top_mentes_empty": "🌱 排行榜尚未生成。成为第一个贡献者。",
+  "btn_balance": "📊 我的余额",
+  "btn_progress": "📈 进度",
+  "btn_market": "📊 市场",
+  "balance_no_wallet": "🔐 请先在 💰 Synergix 菜单中验证您的钱包。",
+  "balance_info": "📊 <b>您的 Synergix 余额</b>\n\n🔗 钱包: <code>{address}</code>\n💰 SYNERGIX: <b>{syn:,.4f}</b> (~${usd:.2f})\n⚡ BNB: <b>{bnb:.6f}</b>",
+  "balance_unavailable": "⚠️ 无法读取余额。请几秒后重试。",
+  "progress_info": "📈 <b>联合曲线进度</b>\n\n💧 已筹集: <b>{raised:.4f} BNB</b> / <b>{target:.4f} BNB</b>\n🎯 进度: <b>{percent:.2f}%</b>\n\n{bar}\n\n达到 100% 时，代币将迁移到 PancakeSwap。",
+  "progress_graduated": "🎓 <b>代币已毕业</b>\n\nSYNERGIX 已完成联合曲线，现已在 PancakeSwap V2 上交易，流动性已合并。",
+  "progress_unavailable": "⚠️ 当前无法查询联合曲线。",
+  "market_info": "📊 <b>SYNERGIX 市场</b>\n\n💰 价格: <b>${price_usd:.8f}</b>\n📈 24小时涨跌: <b>{change_24h:+.2f}%</b>\n💧 流动性: <b>${liquidity:,.0f}</b>\n📊 24小时交易量: <b>${volume:,.0f}</b>\n🏦 市值: <b>${mcap:,.0f}</b>\n🔁 24小时交易: <b>{buys}</b> 买入 / <b>{sells}</b> 卖出\n🌐 交易所: {dex}",
+  "market_unavailable": "⚠️ 无法获取市场数据。请几秒后重试。",
+  "verify_address_prompt": "🔐 <b>步骤 1/2 — 地址</b>\n\n发送您的钱包地址（<code>0x...</code> 格式，42 个字符）。\n\n该地址将与您的 Synergix 身份关联。",
+  "verify_invalid_address": "⚠️ 地址无效。必须为 <code>0x</code> + 40 个十六进制字符。"
 }

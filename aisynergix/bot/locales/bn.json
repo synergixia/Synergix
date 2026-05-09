@@ -50,5 +50,22 @@
   "verify_success": "✅ <b>ওয়ালেট যাচাই হয়েছে!</b>\n\n🔗 ঠিকানা: <code>{address}</code>\n\nআপনার Web3 পরিচয় আপনার Synergix প্রোফাইলে সংযুক্ত।",
   "verify_failed": "❌ অবৈধ বা মেয়াদোত্তীর্ণ স্বাক্ষর। প্রদত্ত বার্তায় সঠিকভাবে সাইন নিশ্চিত করুন।",
   "already_verified": "✅ আপনার ইতিমধ্যে একটি যাচাইকৃত ওয়ালেট আছে:\n<code>{address}</code>\n\nনতুন ওয়ালেট সংযুক্ত করতে চান?",
-  "btn_new_wallet": "🔄 নতুন ওয়ালেট"
+  "btn_new_wallet": "🔄 নতুন ওয়ালেট",
+  "btn_top_mentes": "🏆 Top Mentes",
+  "top_mentes_header": "🏆 <b>শীর্ষ ১০ Synergix মন</b>\n\nসবচেয়ে বেশি জ্ঞান অমর করেছে যারা:\n",
+  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} পয়েন্ট · {contribs} অবদান",
+  "top_mentes_empty": "🌱 লিডারবোর্ড এখনো প্রস্তুত নয়। প্রথম অবদানকারী হোন।",
+  "btn_balance": "📊 আমার ব্যালেন্স",
+  "btn_progress": "📈 অগ্রগতি",
+  "btn_market": "📊 বাজার",
+  "balance_no_wallet": "🔐 প্রথমে 💰 Synergix মেনু থেকে আপনার ওয়ালেট যাচাই করুন।",
+  "balance_info": "📊 <b>আপনার Synergix ব্যালেন্স</b>\n\n🔗 ওয়ালেট: <code>{address}</code>\n💰 SYNERGIX: <b>{syn:,.4f}</b> (~${usd:.2f})\n⚡ BNB: <b>{bnb:.6f}</b>",
+  "balance_unavailable": "⚠️ ব্যালেন্স পড়া যায়নি। কয়েক সেকেন্ড পরে আবার চেষ্টা করুন।",
+  "progress_info": "📈 <b>বন্ডিং কার্ভ অগ্রগতি</b>\n\n💧 সংগৃহীত: <b>{raised:.4f} BNB</b> / <b>{target:.4f} BNB</b>\n🎯 অগ্রগতি: <b>{percent:.2f}%</b>\n\n{bar}\n\n১০০% হলে, টোকেন PancakeSwap-এ গ্র্যাজুয়েট হবে।",
+  "progress_graduated": "🎓 <b>টোকেন গ্র্যাজুয়েটেড</b>\n\nSYNERGIX বন্ডিং কার্ভ সম্পূর্ণ করেছে এবং এখন সম্পূর্ণ লিকুইডিটি সহ PancakeSwap V2-এ ট্রেড হচ্ছে।",
+  "progress_unavailable": "⚠️ এই মুহূর্তে বন্ডিং কার্ভ কোয়েরি করা যায়নি।",
+  "market_info": "📊 <b>SYNERGIX বাজার</b>\n\n💰 দাম: <b>${price_usd:.8f}</b>\n📈 ২৪ঘ পরিবর্তন: <b>{change_24h:+.2f}%</b>\n💧 লিকুইডিটি: <b>${liquidity:,.0f}</b>\n📊 ২৪ঘ ভলিউম: <b>${volume:,.0f}</b>\n🏦 মার্কেট ক্যাপ: <b>${mcap:,.0f}</b>\n🔁 ২৪ঘ Tx: <b>{buys}</b> কেনা / <b>{sells}</b> বিক্রি\n🌐 DEX: {dex}",
+  "market_unavailable": "⚠️ বাজার ডেটা পাওয়া যায়নি। কয়েক সেকেন্ড পরে আবার চেষ্টা করুন।",
+  "verify_address_prompt": "🔐 <b>ধাপ ১/২ — ঠিকানা</b>\n\nআপনার ওয়ালেট ঠিকানা পাঠান (<code>0x...</code> ফরম্যাট, ৪২ অক্ষর)।\n\nএই ঠিকানা আপনার Synergix পরিচয়ের সাথে যুক্ত হবে।",
+  "verify_invalid_address": "⚠️ অবৈধ ঠিকানা। <code>0x</code> + ৪০ হেক্স অক্ষর হতে হবে।"
 }

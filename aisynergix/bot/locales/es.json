@@ -50,5 +50,22 @@
   "verify_success": "✅ <b>¡Wallet verificada!</b>\n\n🔗 Dirección: <code>{address}</code>\n\nTu identidad Web3 está vinculada a tu perfil Synergix.",
   "verify_failed": "❌ Firma inválida o caducada. Asegúrate de firmar exactamente el mensaje proporcionado.",
   "already_verified": "✅ Ya tienes una wallet verificada:\n<code>{address}</code>\n\n¿Deseas vincular una nueva?",
-  "btn_new_wallet": "🔄 Nueva wallet"
+  "btn_new_wallet": "🔄 Nueva wallet",
+  "btn_top_mentes": "🏆 Top Mentes",
+  "top_mentes_header": "🏆 <b>Top 10 Mentes Synergix</b>\n\nLas mentes que más sabiduría han inmortalizado:\n",
+  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} pts · {contribs} aportes",
+  "top_mentes_empty": "🌱 Aún no hay datos del leaderboard. Sé el primero en contribuir.",
+  "btn_balance": "📊 Mi Saldo",
+  "btn_progress": "📈 Progreso",
+  "btn_market": "📊 Mercado",
+  "balance_no_wallet": "🔐 Primero debes verificar tu wallet desde el menú 💰 Synergix.",
+  "balance_info": "📊 <b>Tu balance Synergix</b>\n\n🔗 Wallet: <code>{address}</code>\n💰 SYNERGIX: <b>{syn:,.4f}</b> (~${usd:.2f})\n⚡ BNB: <b>{bnb:.6f}</b>",
+  "balance_unavailable": "⚠️ No se pudo leer el balance. Intenta de nuevo en unos segundos.",
+  "progress_info": "📈 <b>Progreso de la Bonding Curve</b>\n\n💧 Recaudado: <b>{raised:.4f} BNB</b> de <b>{target:.4f} BNB</b>\n🎯 Progreso: <b>{percent:.2f}%</b>\n\n{bar}\n\nCuando alcance el 100%, el token graduará a PancakeSwap.",
+  "progress_graduated": "🎓 <b>Token Graduado</b>\n\nSYNERGIX ya completó la bonding curve y trade en PancakeSwap V2 con liquidez consolidada. ¡Misión cumplida!",
+  "progress_unavailable": "⚠️ No se pudo consultar la bonding curve en este momento.",
+  "market_info": "📊 <b>Mercado SYNERGIX</b>\n\n💰 Precio: <b>${price_usd:.8f}</b>\n📈 Cambio 24h: <b>{change_24h:+.2f}%</b>\n💧 Liquidez: <b>${liquidity:,.0f}</b>\n📊 Volumen 24h: <b>${volume:,.0f}</b>\n🏦 Market Cap: <b>${mcap:,.0f}</b>\n🔁 Tx 24h: <b>{buys}</b> compras / <b>{sells}</b> ventas\n🌐 DEX: {dex}",
+  "market_unavailable": "⚠️ No se pudo obtener datos de mercado. Intenta de nuevo en unos segundos.",
+  "verify_address_prompt": "🔐 <b>Paso 1/2 — Dirección</b>\n\nEnvía la dirección de tu wallet (formato <code>0x...</code>, 42 caracteres).\n\nEsta dirección quedará vinculada a tu identidad Synergix.",
+  "verify_invalid_address": "⚠️ Dirección inválida. Debe tener el formato <code>0x</code> + 40 caracteres hexadecimales."
 }

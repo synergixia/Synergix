@@ -50,5 +50,22 @@
   "verify_success": "✅ <b>تم التحقق من المحفظة!</b>\n\n🔗 العنوان: <code>{address}</code>\n\nهويتك على Web3 مرتبطة بملفك الشخصي على Synergix.",
   "verify_failed": "❌ توقيع غير صالح أو منتهي الصلاحية. تأكد من توقيع الرسالة المقدمة بالضبط.",
   "already_verified": "✅ لديك محفظة محققة بالفعل:\n<code>{address}</code>\n\nهل تريد ربط محفظة جديدة؟",
-  "btn_new_wallet": "🔄 محفظة جديدة"
+  "btn_new_wallet": "🔄 محفظة جديدة",
+  "btn_top_mentes": "🏆 Top Mentes",
+  "top_mentes_header": "🏆 <b>أفضل 10 عقول Synergix</b>\n\nالعقول التي خلّدت أكبر قدر من الحكمة:\n",
+  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} نقطة · {contribs} مساهمة",
+  "top_mentes_empty": "🌱 لوحة المتصدرين غير جاهزة بعد. كن أول مساهم.",
+  "btn_balance": "📊 رصيدي",
+  "btn_progress": "📈 التقدم",
+  "btn_market": "📊 السوق",
+  "balance_no_wallet": "🔐 يجب التحقق من محفظتك أولاً من قائمة 💰 Synergix.",
+  "balance_info": "📊 <b>رصيد Synergix الخاص بك</b>\n\n🔗 المحفظة: <code>{address}</code>\n💰 SYNERGIX: <b>{syn:,.4f}</b> (~${usd:.2f})\n⚡ BNB: <b>{bnb:.6f}</b>",
+  "balance_unavailable": "⚠️ تعذر قراءة الرصيد. حاول مجدداً بعد ثوانٍ.",
+  "progress_info": "📈 <b>تقدم منحنى الترابط</b>\n\n💧 جُمع: <b>{raised:.4f} BNB</b> من <b>{target:.4f} BNB</b>\n🎯 التقدم: <b>{percent:.2f}%</b>\n\n{bar}\n\nعند الوصول إلى 100%، سينتقل الرمز إلى PancakeSwap.",
+  "progress_graduated": "🎓 <b>الرمز تخرج</b>\n\nأكمل SYNERGIX منحنى الترابط ويتم تداوله الآن على PancakeSwap V2 بسيولة كاملة.",
+  "progress_unavailable": "⚠️ تعذر استعلام منحنى الترابط الآن.",
+  "market_info": "📊 <b>سوق SYNERGIX</b>\n\n💰 السعر: <b>${price_usd:.8f}</b>\n📈 تغير 24 س: <b>{change_24h:+.2f}%</b>\n💧 السيولة: <b>${liquidity:,.0f}</b>\n📊 حجم 24 س: <b>${volume:,.0f}</b>\n🏦 القيمة السوقية: <b>${mcap:,.0f}</b>\n🔁 معاملات 24 س: <b>{buys}</b> شراء / <b>{sells}</b> بيع\n🌐 منصة: {dex}",
+  "market_unavailable": "⚠️ تعذر جلب بيانات السوق. حاول مجدداً بعد ثوانٍ.",
+  "verify_address_prompt": "🔐 <b>الخطوة 1/2 — العنوان</b>\n\nأرسل عنوان محفظتك (تنسيق <code>0x...</code>، 42 حرفاً).\n\nسيُربط هذا العنوان بهويتك في Synergix.",
+  "verify_invalid_address": "⚠️ عنوان غير صالح. يجب أن يكون <code>0x</code> + 40 حرفاً سداسياً."
 }

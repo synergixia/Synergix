@@ -33,9 +33,13 @@ from aisynergix.services import trading as trading_svc
 from aisynergix.services.wallet_verify import (
     build_challenge,
     verify_signature,
+    clear_pending,
     get_verified_wallet,
     save_verified_wallet,
+    _is_hex_address,
 )
+from aisynergix.services import dexscreener as dex_svc
+from aisynergix.services import four_meme as fourmeme_svc
 
 
 logger = logging.getLogger("synergix.bot")
@@ -60,6 +64,7 @@ def get_main_keyboard(lang: str) -> ReplyKeyboardMarkup:
                 KeyboardButton(text=t("btn_language", lang)),
             ],
             [
+                KeyboardButton(text=t("btn_top_mentes", lang)),
                 KeyboardButton(text=t("btn_synergix", lang)),
             ],
         ],
@@ -72,12 +77,16 @@ def get_synergix_inline_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(text=t("btn_verify_wallet", lang), callback_data="synergix:verify"),
+                InlineKeyboardButton(text=t("btn_balance", lang), callback_data="synergix:balance"),
+            ],
+            [
                 InlineKeyboardButton(text=t("btn_buy", lang), callback_data="synergix:buy"),
                 InlineKeyboardButton(text=t("btn_sell", lang), callback_data="synergix:sell"),
             ],
             [
-                InlineKeyboardButton(text=t("btn_token_info", lang), callback_data="synergix:info"),
-                InlineKeyboardButton(text=t("btn_verify_wallet", lang), callback_data="synergix:verify"),
+                InlineKeyboardButton(text=t("btn_progress", lang), callback_data="synergix:progress"),
+                InlineKeyboardButton(text=t("btn_market", lang), callback_data="synergix:market"),
             ],
         ]
     )
@@ -429,29 +438,40 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-@dp.message(Command("verify"))
-async def cmd_verify(message: Message) -> None:
+@dp.message(F.text == "🏆 Top Mentes")
+async def handle_top_mentes_button(message: Message) -> None:
     if not message.from_user:
         return
+
     uid = message.from_user.id
     lang = await get_user_language(uid)
     ghost = get_ghost_state_manager()
     await ghost.reset_state(uid)
 
-    from aisynergix.bot.identity import _hash_uid
-    uid_hash = _hash_uid(uid)
-    existing = await get_verified_wallet(uid_hash)
+    from aisynergix.services.greenfield import read_json_data
+    top10 = await read_json_data("aisynergix/data/top10.json")
 
-    if existing:
-        inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text=t("btn_new_wallet", lang), callback_data="verify:start"),
-        ]])
-        await message.answer(t("already_verified", lang, address=existing), reply_markup=inline_kb)
-    else:
-        inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Continuar", callback_data="verify:start"),
-        ]])
-        await message.answer(t("verify_intro", lang), reply_markup=inline_kb)
+    if not top10 or not isinstance(top10, list):
+        await message.answer(t("top_mentes_empty", lang))
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    text = t("top_mentes_header", lang) + "\n"
+    for i, user in enumerate(top10):
+        emoji = medals[i] if i < 3 else f"{i + 1}."
+        rank_label = user.get("rank", "🌱 Iniciado")
+        points = user.get("points", 0)
+        contribs = user.get("total_uses_count", 0)
+        text += t(
+            "top_mentes_entry",
+            lang,
+            rank_emoji=emoji,
+            rank_label=rank_label,
+            points=points,
+            contribs=contribs,
+        ) + "\n"
+
+    await message.answer(text)
 
 
 @dp.callback_query(F.data.startswith("synergix:"))
@@ -464,6 +484,9 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
     lang = await get_user_language(uid)
     ghost = get_ghost_state_manager()
 
+    from aisynergix.bot.identity import _hash_uid
+    uid_hash = _hash_uid(uid)
+
     if action == "buy":
         await ghost.enter_buy_mode(uid)
         await callback.message.edit_text(
@@ -472,27 +495,7 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
     elif action == "sell":
         await ghost.enter_sell_mode(uid)
         await callback.message.edit_text(t("sell_prompt", lang))
-    elif action == "info":
-        prices = await trading_svc.get_token_price()
-        bnb_usd = await trading_svc.get_bnb_usd_price()
-        if not prices:
-            await callback.message.edit_text(t("price_unavailable", lang))
-        else:
-            bnb_per_token, syn_per_bnb = prices
-            price_usd = bnb_per_token * (bnb_usd or 0)
-            await callback.message.edit_text(
-                t(
-                    "token_info",
-                    lang,
-                    contract=trading_svc.SYNERGIX_TOKEN,
-                    price_bnb=bnb_per_token,
-                    price_usd=price_usd,
-                    syn_per_bnb=syn_per_bnb,
-                )
-            )
     elif action == "verify":
-        from aisynergix.bot.identity import _hash_uid
-        uid_hash = _hash_uid(uid)
         existing = await get_verified_wallet(uid_hash)
         if existing:
             inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -507,6 +510,71 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
                 InlineKeyboardButton(text="✅ Continuar", callback_data="verify:start"),
             ]])
             await callback.message.edit_text(t("verify_intro", lang), reply_markup=inline_kb)
+    elif action == "balance":
+        existing = await get_verified_wallet(uid_hash)
+        if not existing:
+            await callback.message.edit_text(t("balance_no_wallet", lang))
+        else:
+            syn_bal, bnb_bal, market = await asyncio.gather(
+                trading_svc.get_token_balance(existing),
+                trading_svc.get_bnb_balance(existing),
+                dex_svc.get_token_market(trading_svc.SYNERGIX_TOKEN),
+            )
+            if syn_bal is None or bnb_bal is None:
+                await callback.message.edit_text(t("balance_unavailable", lang))
+            else:
+                price_usd = market["price_usd"] if market else 0.0
+                usd_value = syn_bal * price_usd
+                await callback.message.edit_text(
+                    t(
+                        "balance_info",
+                        lang,
+                        address=existing,
+                        syn=syn_bal,
+                        usd=usd_value,
+                        bnb=bnb_bal,
+                    )
+                )
+    elif action == "progress":
+        progress = await fourmeme_svc.get_curve_progress(trading_svc.SYNERGIX_TOKEN)
+        if progress is None:
+            await callback.message.edit_text(t("progress_unavailable", lang))
+        elif progress["graduated"]:
+            await callback.message.edit_text(t("progress_graduated", lang))
+        else:
+            percent = progress["percent"]
+            filled = int(percent / 5)  # 20-char bar (5% per cell)
+            bar_chars = "█" * filled + "░" * (20 - filled)
+            await callback.message.edit_text(
+                t(
+                    "progress_info",
+                    lang,
+                    raised=progress["raised_bnb"],
+                    target=progress["target_bnb"],
+                    percent=percent,
+                    bar=f"<code>{bar_chars}</code>",
+                )
+            )
+    elif action == "market":
+        market = await dex_svc.get_token_market(trading_svc.SYNERGIX_TOKEN)
+        if not market:
+            await callback.message.edit_text(t("market_unavailable", lang))
+        else:
+            dex_label = (market["dex_id"] or "PancakeSwap").replace("pancakeswap", "PancakeSwap").title()
+            await callback.message.edit_text(
+                t(
+                    "market_info",
+                    lang,
+                    price_usd=market["price_usd"],
+                    change_24h=market["price_change_24h"],
+                    liquidity=market["liquidity_usd"],
+                    volume=market["volume_24h_usd"],
+                    mcap=market["market_cap"] or market["fdv"],
+                    buys=market["txns_24h_buys"],
+                    sells=market["txns_24h_sells"],
+                    dex=dex_label,
+                )
+            )
 
     await callback.answer()
 
@@ -522,10 +590,10 @@ async def handle_verify_start(callback: CallbackQuery) -> None:
 
     from aisynergix.bot.identity import _hash_uid
     uid_hash = _hash_uid(uid)
-    challenge = build_challenge(uid_hash)
+    clear_pending(uid_hash)
 
     await ghost.enter_wallet_verify_mode(uid)
-    await callback.message.edit_text(t("verify_challenge", lang, challenge=challenge))
+    await callback.message.edit_text(t("verify_address_prompt", lang))
     await callback.answer()
 
 
@@ -590,6 +658,10 @@ async def handle_free_conversation(message: Message) -> None:
         return
 
     if current_state == "awaiting_wallet_address":
+        await handle_wallet_address_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_wallet_signature":
         await handle_wallet_signature_message(message, uid, text, lang)
         return
 
@@ -756,6 +828,30 @@ async def handle_sell_amount_message(
     )
 
 
+async def handle_wallet_address_message(
+    message: Message,
+    uid: int,
+    text: str,
+    lang: str,
+) -> None:
+    ghost = get_ghost_state_manager()
+
+    from aisynergix.bot.identity import _hash_uid
+    uid_hash = _hash_uid(uid)
+
+    if not _is_hex_address(text):
+        await message.answer(t("verify_invalid_address", lang))
+        return
+
+    challenge = build_challenge(uid_hash, text)
+    if not challenge:
+        await message.answer(t("verify_invalid_address", lang))
+        return
+
+    await ghost.enter_wallet_signature_mode(uid)
+    await message.answer(t("verify_challenge", lang, challenge=challenge))
+
+
 async def handle_wallet_signature_message(
     message: Message,
     uid: int,
@@ -781,7 +877,6 @@ async def handle_wallet_signature_message(
 async def set_bot_commands():
     commands = [
         BotCommand(command="start", description="🔥 Iniciar / Despertar a Synergix"),
-        BotCommand(command="verify", description="🔐 Verificar wallet"),
     ]
     await bot.set_my_commands(commands)
 

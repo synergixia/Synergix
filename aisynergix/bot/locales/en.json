@@ -50,5 +50,22 @@
   "verify_success": "✅ <b>Wallet verified!</b>\n\n🔗 Address: <code>{address}</code>\n\nYour Web3 identity is linked to your Synergix profile.",
   "verify_failed": "❌ Invalid or expired signature. Make sure to sign exactly the provided message.",
   "already_verified": "✅ You already have a verified wallet:\n<code>{address}</code>\n\nWould you like to link a new one?",
-  "btn_new_wallet": "🔄 New wallet"
+  "btn_new_wallet": "🔄 New wallet",
+  "btn_top_mentes": "🏆 Top Mentes",
+  "top_mentes_header": "🏆 <b>Top 10 Synergix Minds</b>\n\nThe minds that have immortalized the most wisdom:\n",
+  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} pts · {contribs} entries",
+  "top_mentes_empty": "🌱 Leaderboard not built yet. Be the first to contribute.",
+  "btn_balance": "📊 My Balance",
+  "btn_progress": "📈 Progress",
+  "btn_market": "📊 Market",
+  "balance_no_wallet": "🔐 You must verify your wallet first from the 💰 Synergix menu.",
+  "balance_info": "📊 <b>Your Synergix balance</b>\n\n🔗 Wallet: <code>{address}</code>\n💰 SYNERGIX: <b>{syn:,.4f}</b> (~${usd:.2f})\n⚡ BNB: <b>{bnb:.6f}</b>",
+  "balance_unavailable": "⚠️ Could not read balance. Try again in a few seconds.",
+  "progress_info": "📈 <b>Bonding Curve Progress</b>\n\n💧 Raised: <b>{raised:.4f} BNB</b> of <b>{target:.4f} BNB</b>\n🎯 Progress: <b>{percent:.2f}%</b>\n\n{bar}\n\nWhen it reaches 100%, the token will graduate to PancakeSwap.",
+  "progress_graduated": "🎓 <b>Token Graduated</b>\n\nSYNERGIX has completed the bonding curve and now trades on PancakeSwap V2 with full liquidity. Mission accomplished!",
+  "progress_unavailable": "⚠️ Could not query the bonding curve right now.",
+  "market_info": "📊 <b>SYNERGIX Market</b>\n\n💰 Price: <b>${price_usd:.8f}</b>\n📈 24h Change: <b>{change_24h:+.2f}%</b>\n💧 Liquidity: <b>${liquidity:,.0f}</b>\n📊 24h Volume: <b>${volume:,.0f}</b>\n🏦 Market Cap: <b>${mcap:,.0f}</b>\n🔁 24h Tx: <b>{buys}</b> buys / <b>{sells}</b> sells\n🌐 DEX: {dex}",
+  "market_unavailable": "⚠️ Could not fetch market data. Try again in a few seconds.",
+  "verify_address_prompt": "🔐 <b>Step 1/2 — Address</b>\n\nSend your wallet address (<code>0x...</code> format, 42 characters).\n\nThis address will be linked to your Synergix identity.",
+  "verify_invalid_address": "⚠️ Invalid address. Must be <code>0x</code> + 40 hex characters."
 }
