@@ -25,13 +25,11 @@ from greenfield_python_sdk.models.bucket import (
     CreateBucketOptions,
     VisibilityType,
 )
-from greenfield_python_sdk.models.eip712_messages.storage.object_url import (
-    CREATE_OBJECT,
-)
 from greenfield_python_sdk.models.eip712_messages.storage.msg_set_tag import (
     TYPE_URL as MSG_SET_TAG_TYPE_URL,
 )
 from greenfield_python_sdk.models.object import (
+    CreateObjectOptions,
     GetObjectOption,
     ListObjectsOptions,
     ListObjectsResult,
@@ -39,7 +37,6 @@ from greenfield_python_sdk.models.object import (
 )
 from greenfield_python_sdk.models.request import ResourceType
 from greenfield_python_sdk.protos.greenfield.storage import (
-    MsgCreateObject,
     MsgSetTag,
     ResourceTags,
     ResourceTagsTag,
@@ -339,19 +336,21 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
         exists = False
 
     if not exists:
-        create_msg = MsgCreateObject(
-            creator=_key_manager.address if _key_manager else "",
+        await client.object.create_object(
+            BUCKET_NAME,
+            path,
+            io.BytesIO(b""),
+            CreateObjectOptions(
+                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+                content_type="application/octet-stream",
+            ),
+        )
+        await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=path,
-            payload_size=0,
-            visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-            content_type="application/octet-stream",
-            primary_sp_approval=None,
-            expect_checksums=[],
-        )
-        await client.blockchain_client.broadcast_message(
-            messages=[create_msg],
-            type_url=[CREATE_OBJECT],
+            object_size=0,
+            reader=io.BytesIO(b""),
+            opts=PutObjectOptions(content_type="application/octet-stream"),
         )
 
     resource = (
@@ -425,22 +424,15 @@ async def write_aporte(
     reader = io.BytesIO(encoded)
     payload_size = len(encoded)
 
-    create_msg = MsgCreateObject(
-        creator=_key_manager.address if _key_manager else "",
-        bucket_name=BUCKET_NAME,
-        object_name=path,
-        payload_size=payload_size,
-        visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-        content_type="text/plain; charset=utf-8",
-        primary_sp_approval=None,
-        expect_checksums=[],
+    await client.object.create_object(
+        BUCKET_NAME,
+        path,
+        io.BytesIO(encoded),
+        CreateObjectOptions(
+            visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+            content_type="text/plain; charset=utf-8",
+        ),
     )
-    await client.blockchain_client.broadcast_message(
-        messages=[create_msg],
-        type_url=[CREATE_OBJECT],
-    )
-
-    sp = await client.bucket.storage_provider_by_bucket(BUCKET_NAME)
     await client.object.put_object(
         bucket_name=BUCKET_NAME,
         object_name=path,
@@ -614,28 +606,23 @@ async def write_json_data(data_path: str, data: Dict[str, Any]) -> None:
     except Exception:
         exists = False
 
-    if not exists:
-        create_msg = MsgCreateObject(
-            creator=_key_manager.address if _key_manager else "",
-            bucket_name=BUCKET_NAME,
-            object_name=data_path,
-            payload_size=payload_size,
+    if exists:
+        await client.object.delete_object(BUCKET_NAME, data_path)
+
+    await client.object.create_object(
+        BUCKET_NAME,
+        data_path,
+        io.BytesIO(content),
+        CreateObjectOptions(
             visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
             content_type="application/json",
-            primary_sp_approval=None,
-            expect_checksums=[],
-        )
-        await client.blockchain_client.broadcast_message(
-            messages=[create_msg],
-            type_url=[CREATE_OBJECT],
-        )
-
-    sp = await client.bucket.storage_provider_by_bucket(BUCKET_NAME)
+        ),
+    )
     await client.object.put_object(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
         object_size=payload_size,
-        reader=reader,
+        reader=io.BytesIO(content),
         opts=PutObjectOptions(content_type="application/json"),
     )
     logger.debug("JSON escrito en %s", data_path)
@@ -677,19 +664,21 @@ async def set_brain_pointer(version: str) -> None:
         exists = False
 
     if not exists:
-        create_msg = MsgCreateObject(
-            creator=_key_manager.address if _key_manager else "",
+        await client.object.create_object(
+            BUCKET_NAME,
+            data_path,
+            io.BytesIO(b""),
+            CreateObjectOptions(
+                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+                content_type="application/octet-stream",
+            ),
+        )
+        await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=data_path,
-            payload_size=0,
-            visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-            content_type="application/octet-stream",
-            primary_sp_approval=None,
-            expect_checksums=[],
-        )
-        await client.blockchain_client.broadcast_message(
-            messages=[create_msg],
-            type_url=[CREATE_OBJECT],
+            object_size=0,
+            reader=io.BytesIO(b""),
+            opts=PutObjectOptions(content_type="application/octet-stream"),
         )
 
     resource = (
@@ -859,23 +848,18 @@ async def upload_log(date_str: str, log_content: str) -> None:
     except Exception:
         exists = False
 
-    if not exists:
-        create_msg = MsgCreateObject(
-            creator=_key_manager.address if _key_manager else "",
-            bucket_name=BUCKET_NAME,
-            object_name=data_path,
-            payload_size=payload_size,
+    if exists:
+        await client.object.delete_object(BUCKET_NAME, data_path)
+
+    await client.object.create_object(
+        BUCKET_NAME,
+        data_path,
+        io.BytesIO(encoded),
+        CreateObjectOptions(
             visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
             content_type="text/plain; charset=utf-8",
-            primary_sp_approval=None,
-            expect_checksums=[],
-        )
-        await client.blockchain_client.broadcast_message(
-            messages=[create_msg],
-            type_url=[CREATE_OBJECT],
-        )
-
-    sp = await client.bucket.storage_provider_by_bucket(BUCKET_NAME)
+        ),
+    )
     await client.object.put_object(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
