@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import io
 import json
@@ -90,6 +91,11 @@ GREENFIELD_PORT: int = int(os.getenv("PORT", "443"))
 GREENFIELD_CHAIN_ID: int = int(os.getenv("CHAIN_ID", "1017"))
 PRIVATE_KEY: str = os.getenv("PRIVATE_KEY", "")
 
+# Greenfield ~2 s block time + SP indexing lag.  After broadcasting
+# MsgCreateObject the SP needs this many seconds before it will accept
+# put_object for the new object (error 20008 otherwise).
+_SP_SYNC_DELAY: int = 12
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # CLIENTE GLOBAL (inicialización perezosa thread-safe para asyncio)
@@ -158,7 +164,6 @@ async def get_client() -> BaseGreenfieldClient:
         raise RuntimeError("PRIVATE_KEY no está configurada en .env")
 
     if _client_lock:
-        import asyncio
         for _ in range(20):
             if _client is not None:
                 return _client
@@ -354,6 +359,7 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                     content_type="application/octet-stream",
                 ),
             )
+            await asyncio.sleep(_SP_SYNC_DELAY)
             await client.object.put_object(
                 bucket_name=BUCKET_NAME,
                 object_name=path,
@@ -450,6 +456,7 @@ async def write_aporte(
             content_type="text/plain; charset=utf-8",
         ),
     )
+    await asyncio.sleep(_SP_SYNC_DELAY)
     await client.object.put_object(
         bucket_name=BUCKET_NAME,
         object_name=path,
@@ -625,11 +632,7 @@ async def write_json_data(data_path: str, data: Dict[str, Any]) -> None:
 
     if exists:
         await client.object.delete_object(BUCKET_NAME, data_path)
-        # Wait for the delete transaction to propagate to the Storage Provider.
-        # Greenfield has ~2 s block time; the SP needs a few extra seconds to
-        # update its local state after the on-chain delete is confirmed.
-        import asyncio as _asyncio
-        await _asyncio.sleep(8)
+        await asyncio.sleep(_SP_SYNC_DELAY)
 
     await client.object.create_object(
         BUCKET_NAME,
@@ -640,6 +643,7 @@ async def write_json_data(data_path: str, data: Dict[str, Any]) -> None:
             content_type="application/json",
         ),
     )
+    await asyncio.sleep(_SP_SYNC_DELAY)
     await client.object.put_object(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
@@ -695,6 +699,7 @@ async def set_brain_pointer(version: str) -> None:
                 content_type="application/octet-stream",
             ),
         )
+        await asyncio.sleep(_SP_SYNC_DELAY)
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=data_path,
@@ -872,8 +877,7 @@ async def upload_log(date_str: str, log_content: str) -> None:
 
     if exists:
         await client.object.delete_object(BUCKET_NAME, data_path)
-        import asyncio as _asyncio
-        await _asyncio.sleep(8)  # wait for SP to sync delete before re-create
+        await asyncio.sleep(_SP_SYNC_DELAY)
 
     await client.object.create_object(
         BUCKET_NAME,
@@ -884,6 +888,7 @@ async def upload_log(date_str: str, log_content: str) -> None:
             content_type="text/plain; charset=utf-8",
         ),
     )
+    await asyncio.sleep(_SP_SYNC_DELAY)
     await client.object.put_object(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
