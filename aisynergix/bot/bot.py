@@ -448,8 +448,8 @@ async def handle_top_mentes_button(message: Message) -> None:
     ghost = get_ghost_state_manager()
     await ghost.reset_state(uid)
 
-    from aisynergix.services.greenfield import read_json_data
-    top10 = await read_json_data("aisynergix/data/top10.json")
+    from aisynergix.services.greenfield import get_top10_cached
+    top10 = get_top10_cached()
 
     if not top10 or not isinstance(top10, list):
         await message.answer(t("top_mentes_empty", lang))

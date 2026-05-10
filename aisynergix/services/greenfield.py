@@ -783,6 +783,18 @@ async def reset_all_daily_counts() -> int:
 # LEADERBOARD (top10 desde datos reales)
 # ═══════════════════════════════════════════════════════════════════════
 
+# In-process cache — avoids put_object on a previously-SEALED path.
+# The SP rejects put_object with 50004 when we delete+recreate an object
+# at the same path it already knows as SEALED.  Storing the leaderboard
+# only in RAM (rebuilt every 10 min by the cron job) is safer and faster.
+_top10_cache: List[Dict[str, Any]] = []
+
+
+def get_top10_cached() -> List[Dict[str, Any]]:
+    """Return the last-computed top-10 list from the in-process cache."""
+    return _top10_cache
+
+
 @retry(
     retry=retry_if_exception_type(
         (httpx.HTTPError, ConnectionError, TimeoutError, OSError)
@@ -793,9 +805,12 @@ async def reset_all_daily_counts() -> int:
 async def rebuild_top10() -> List[Dict[str, Any]]:
     """
     Reconstruye el leaderboard global leyendo todos los usuarios reales
-    de Greenfield y guarda el resultado en aisynergix/data/top10.json.
+    de Greenfield y actualiza el cache RAM.  No escribe a Greenfield para
+    evitar el ciclo delete+create+put que falla con error 50004 cuando el
+    SP tiene en caché el objeto anterior como SEALED.
     Retorna la lista de los 10 mejores.
     """
+    global _top10_cache
     client = await get_client()
     usuarios: List[Dict[str, Any]] = []
     prefix = "aisynergix/users/"
@@ -826,9 +841,9 @@ async def rebuild_top10() -> List[Dict[str, Any]]:
 
     usuarios.sort(key=lambda u: u["points"], reverse=True)
     top10 = usuarios[:10]
-    await write_json_data("aisynergix/data/top10.json", top10)
+    _top10_cache = top10
     logger.info(
-        "🏆 Leaderboard reconstruido: %d usuarios en top10", len(top10)
+        "🏆 Leaderboard reconstruido: %d usuarios en top10 (RAM cache)", len(top10)
     )
     return top10
 
@@ -837,19 +852,22 @@ async def rebuild_top10() -> List[Dict[str, Any]]:
 # CHALLENGES SEMANALES
 # ═══════════════════════════════════════════════════════════════════════
 
+# Same rationale as top10: avoid write_json_data (put_object) on a path
+# the SP has previously seen as SEALED.  Challenges are regenerated weekly;
+# losing the current one on container restart is acceptable.
+_challenge_cache: Optional[Dict[str, Any]] = None
+
+
 async def get_current_challenge() -> Optional[Dict[str, Any]]:
-    """Obtiene el challenge semanal actual desde Greenfield."""
-    data = await read_json_data(
-        "aisynergix/data/challenges/current.json"
-    )
-    return data if data else None
+    """Obtiene el challenge semanal actual (RAM cache, sin lectura de Greenfield)."""
+    return _challenge_cache
 
 
 async def save_challenge(challenge: Dict[str, Any]) -> None:
-    """Guarda el challenge semanal actual en Greenfield."""
-    await write_json_data(
-        "aisynergix/data/challenges/current.json", challenge
-    )
+    """Guarda el challenge semanal en el cache RAM."""
+    global _challenge_cache
+    _challenge_cache = challenge
+    logger.info("🎯 Challenge guardado en cache RAM: %s", challenge.get("id"))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -949,6 +967,7 @@ __all__ = [
     "set_brain_pointer",
     "reset_all_daily_counts",
     "rebuild_top10",
+    "get_top10_cached",
     "get_all_user_uids",
     "get_current_challenge",
     "save_challenge",
