@@ -36,6 +36,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("synergix.sync_brain")
 
+
+def _log_exc(msg: str, exc: Exception) -> None:
+    """
+    Log an exception with full traceback.  When tenacity wraps the root cause
+    inside RetryError, unwrap it so we see the actual OSError / HTTPError.
+    """
+    from tenacity import RetryError
+    if isinstance(exc, RetryError) and exc.last_attempt is not None:
+        inner = exc.last_attempt.exception()
+        if inner is not None:
+            logger.error("%s (after retries): %s", msg, inner, exc_info=inner)
+            return
+    logger.exception(msg)
+
 scheduler = AsyncIOScheduler(timezone="UTC")
 shutdown_event = asyncio.Event()
 
@@ -84,48 +98,38 @@ async def federated_evolution():
         await update_brain_version()
 
     except Exception as e:
-        logger.error(f"❌ Error en evolución federada: {e}")
+        _log_exc("❌ Error en evolución federada", e)
 
 
 async def update_leaderboard():
     logger.info("📊 Actualizando leaderboard...")
 
     try:
-        user_uids = await get_all_user_uids()
+        top10 = await rebuild_top10()
+        logger.info("🏆 Top 10 actualizado: %d mentes.", len(top10))
 
+        # Hydrate rank promotions using the same data rebuild_top10 collected.
+        user_uids = await get_all_user_uids()
         leaderboard = []
         for uid_hash in user_uids:
             try:
                 tags = await read_user_tags(uid_hash)
-
                 if not tags:
                     continue
-
-                points = int(tags.get("points", 0))
-                rank = tags.get("rank", "🌱 Iniciado")
-                language = tags.get("language", "es")
-                total_uses = int(tags.get("total_uses_count", 0))
-
                 leaderboard.append({
                     "uid_hash": uid_hash,
-                    "points": points,
-                    "rank": rank,
-                    "language": language,
-                    "total_uses_count": total_uses,
+                    "points": int(tags.get("points", 0)),
+                    "rank": tags.get("rank", "🌱 Iniciado"),
+                    "language": tags.get("language", "es"),
+                    "total_uses_count": int(tags.get("total_uses_count", 0)),
                 })
             except Exception:
                 continue
 
-        leaderboard.sort(key=lambda x: x["points"], reverse=True)
-        top10 = leaderboard[:10]
-
-        await rebuild_top10()
-        logger.info(f"🏆 Top 10 actualizado: {len(top10)} mentes.")
-
         await hydrate_ranks(leaderboard)
 
     except Exception as e:
-        logger.error(f"❌ Error actualizando leaderboard: {e}")
+        _log_exc("❌ Error actualizando leaderboard", e)
 
 
 async def hydrate_ranks(leaderboard):
@@ -206,7 +210,7 @@ async def update_brain_version():
         logger.info(f"🧠 Cerebro versionado: {new_version} (docs: {stats['total_documents']})")
 
     except Exception as e:
-        logger.error(f"❌ Error versionando cerebro: {e}")
+        _log_exc("❌ Error versionando cerebro", e)
 
 
 async def daily_cleanup():
@@ -231,7 +235,7 @@ async def daily_cleanup():
         logger.info(f"🔄 Daily counts reseteados: {reset_count} usuarios.")
 
     except Exception as e:
-        logger.error(f"❌ Error en limpieza diaria: {e}")
+        _log_exc("❌ Error en limpieza diaria", e)
 
 
 async def weekly_challenge():
@@ -290,7 +294,7 @@ Responde SOLO con el texto del reto, máximo 150 caracteres. Sin comillas ni for
         logger.info(f"📢 Broadcast enviado a {broadcast_count} usuarios.")
 
     except Exception as e:
-        logger.error(f"❌ Error generando reto semanal: {e}")
+        _log_exc("❌ Error generando reto semanal", e)
 
 
 async def health_monitor():
@@ -299,11 +303,27 @@ async def health_monitor():
         health = await ai.health_check()
 
         if not health["all_healthy"]:
-            logger.warning(f"⚠️ Health Check: Thinker={health['thinker']}, Judge={health['judge']}")
+            logger.warning(
+                "⚠️ Health Check: Thinker=%s, Judge=%s",
+                health["thinker"],
+                health["judge"],
+            )
         else:
-            logger.debug("💚 Health Check: Todos los servicios OK")
+            logger.debug("💚 Health Check AI: OK")
+
+        # Greenfield connectivity — get_brain_pointer is a lightweight HEAD
+        try:
+            version = await get_brain_pointer()
+            logger.debug("💚 Health Check Greenfield: OK (brain=%s)", version)
+        except Exception as gf_exc:
+            logger.error(
+                "🔴 Health Check Greenfield: FALLO — %s",
+                gf_exc,
+                exc_info=gf_exc,
+            )
+
     except Exception as e:
-        logger.error(f"❌ Error en health monitor: {e}")
+        _log_exc("❌ Error en health monitor", e)
 
 
 def setup_schedulers():
