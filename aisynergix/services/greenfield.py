@@ -359,7 +359,20 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                     content_type="application/octet-stream",
                 ),
             )
-            await asyncio.sleep(_SP_SYNC_DELAY)
+        except Exception as create_exc:
+            logger.warning(
+                "create_object falló para usuario %s: %s — no se pueden fijar tags",
+                uid_ofuscado,
+                create_exc,
+            )
+            raise  # Object not on-chain at all — MsgSetTag would fail
+
+        # The object is now on-chain (CREATED status).  Try to seal it via
+        # put_object; if it fails (SP auto-sealed the 0-byte object or timing
+        # issue) we log a warning but CONTINUE to MsgSetTag.  Tags work on
+        # both CREATED and SEALED objects.
+        await asyncio.sleep(_SP_SYNC_DELAY)
+        try:
             await client.object.put_object(
                 bucket_name=BUCKET_NAME,
                 object_name=path,
@@ -367,14 +380,12 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                 reader=io.BytesIO(b""),
                 opts=PutObjectOptions(content_type="application/octet-stream"),
             )
-        except Exception as exc:
+        except Exception as put_exc:
             logger.warning(
-                "No se pudo crear el objeto fantasma para %s "
-                "(SP approval pendiente — los tags se guardarán en la siguiente contribución): %s",
+                "put_object para objeto fantasma %s: %s — continuando con MsgSetTag",
                 uid_ofuscado,
-                exc,
+                put_exc,
             )
-            raise  # re-raise so save_verified_wallet / update_profile can log and handle
 
     resource = (
         f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
@@ -845,7 +856,49 @@ async def rebuild_top10() -> List[Dict[str, Any]]:
     logger.info(
         "🏆 Leaderboard reconstruido: %d usuarios en top10 (RAM cache)", len(top10)
     )
+
+    # Best-effort: write top10.json to Greenfield the FIRST TIME only.
+    # We never delete+recreate it (that causes SP error 50004 on SEALED objects).
+    # The RAM cache is the authoritative source; this write is for visibility in DCellar.
+    await _write_top10_if_missing(top10)
+
     return top10
+
+
+async def _write_top10_if_missing(top10: List[Dict[str, Any]]) -> None:
+    """Create aisynergix/data/top10.json only if it doesn't already exist."""
+    data_path = "aisynergix/data/top10.json"
+    try:
+        client = await get_client()
+        try:
+            await client.object.get_object_head(BUCKET_NAME, data_path)
+            return  # Already exists — never overwrite a SEALED object
+        except Exception:
+            pass  # Does not exist yet — create it
+
+        content = json.dumps(top10, ensure_ascii=False, indent=2).encode("utf-8")
+        payload_size = len(content)
+
+        await client.object.create_object(
+            BUCKET_NAME,
+            data_path,
+            io.BytesIO(content),
+            CreateObjectOptions(
+                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+                content_type="application/json",
+            ),
+        )
+        await asyncio.sleep(_SP_SYNC_DELAY)
+        await client.object.put_object(
+            bucket_name=BUCKET_NAME,
+            object_name=data_path,
+            object_size=payload_size,
+            reader=io.BytesIO(content),
+            opts=PutObjectOptions(content_type="application/json"),
+        )
+        logger.info("📊 top10.json creado en Greenfield (primera vez)")
+    except Exception as exc:
+        logger.warning("No se pudo escribir top10.json en Greenfield: %s", exc)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -876,34 +929,34 @@ async def save_challenge(challenge: Dict[str, Any]) -> None:
 
 async def upload_log(date_str: str, log_content: str) -> None:
     """
-    Sube un archivo de log diario a Greenfield.
-    Ruta: aisynergix/logs/{YYYY-MM-DD}.log
+    Sube un archivo de log diario comprimido a Greenfield.
+    Ruta: aisynergix/logs/{YYYY-MM-DD}.log.gz
     HÍBRIDO: MsgCreateObject broadcast + put_object.
+    El log diario se escribe UNA sola vez (si ya existe, se omite) para
+    evitar el ciclo delete+recreate que genera error 50004 del SP.
     """
+    import gzip as _gzip
     client = await get_client()
-    data_path = f"aisynergix/logs/{date_str}.log"
-    encoded = log_content.encode("utf-8")
-    reader = io.BytesIO(encoded)
-    payload_size = len(encoded)
+    data_path = f"aisynergix/logs/{date_str}.log.gz"
 
-    exists = False
+    # Skip if today's log already exists — delete+recreate causes SP error 50004
     try:
         await client.object.get_object_head(BUCKET_NAME, data_path)
-        exists = True
+        logger.debug("Log %s ya existe en Greenfield — omitiendo subida", data_path)
+        return
     except Exception:
-        exists = False
+        pass  # Does not exist yet — proceed to create
 
-    if exists:
-        await client.object.delete_object(BUCKET_NAME, data_path)
-        await asyncio.sleep(_SP_SYNC_DELAY)
+    compressed = _gzip.compress(log_content.encode("utf-8"))
+    payload_size = len(compressed)
 
     await client.object.create_object(
         BUCKET_NAME,
         data_path,
-        io.BytesIO(encoded),
+        io.BytesIO(compressed),
         CreateObjectOptions(
             visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-            content_type="text/plain; charset=utf-8",
+            content_type="application/gzip",
         ),
     )
     await asyncio.sleep(_SP_SYNC_DELAY)
@@ -911,8 +964,8 @@ async def upload_log(date_str: str, log_content: str) -> None:
         bucket_name=BUCKET_NAME,
         object_name=data_path,
         object_size=payload_size,
-        reader=reader,
-        opts=PutObjectOptions(content_type="text/plain; charset=utf-8"),
+        reader=io.BytesIO(compressed),
+        opts=PutObjectOptions(content_type="application/gzip"),
     )
     logger.info("📄 Log subido: %s", data_path)
 
