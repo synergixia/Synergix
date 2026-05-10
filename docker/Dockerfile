@@ -59,6 +59,7 @@ RUN git clone --depth 1 https://github.com/bnb-chain/data-redundancy-generator-b
     && cp /tmp/bridge/libredgenerator.so $TARGET_DIR/libredgenerator.so \
     && cp /tmp/bridge/libredgenerator.so $TARGET_DIR/libobject.so \
     && cp /tmp/bridge/libredgenerator.so $TARGET_DIR/libreedsolec.so \
+    && cp /tmp/bridge/libredgenerator.so $TARGET_DIR/main.so \
     && cd /app && rm -rf /tmp/bridge
 
 # 🔁 NUEVA LÍNEA: Hacer visible la librería Go para Python
