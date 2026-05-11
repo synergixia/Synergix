@@ -67,5 +67,11 @@
   "market_info": "📊 <b>سوق SYNERGIX</b>\n\n💰 السعر: <b>${price_usd:.8f}</b>\n📈 تغير 24 س: <b>{change_24h:+.2f}%</b>\n💧 السيولة: <b>${liquidity:,.0f}</b>\n📊 حجم 24 س: <b>${volume:,.0f}</b>\n🏦 القيمة السوقية: <b>${mcap:,.0f}</b>\n🔁 معاملات 24 س: <b>{buys}</b> شراء / <b>{sells}</b> بيع\n🌐 منصة: {dex}",
   "market_unavailable": "⚠️ تعذر جلب بيانات السوق. حاول مجدداً بعد ثوانٍ.",
   "verify_address_prompt": "🔐 <b>الخطوة 1/2 — العنوان</b>\n\nأرسل عنوان محفظتك (تنسيق <code>0x...</code>، 42 حرفاً).\n\nسيُربط هذا العنوان بهويتك في Synergix.",
-  "verify_invalid_address": "⚠️ عنوان غير صالح. يجب أن يكون <code>0x</code> + 40 حرفاً سداسياً."
+  "verify_invalid_address": "⚠️ عنوان غير صالح. يجب أن يكون <code>0x</code> + 40 حرفاً سداسياً.",
+  "emergency_lock_active": "🔒 Synergix في وضع الصيانة. المساهمات متوقفة مؤقتاً.",
+  "ai_guard_blocked": "⚠️ لا يمكن معالجة هذه الرسالة وفقاً لسياسات الشبكة.",
+  "status_trust_score": "🎯 درجة الثقة: {trust_score}/10",
+  "status_verified": "✅ المحفظة موثقة",
+  "admin_lock_enabled": "🔒 تم تفعيل القفل الطارئ. المساهمات متوقفة.",
+  "admin_lock_disabled": "🔓 تم تعطيل القفل الطارئ. المساهمات نشطة."
 }

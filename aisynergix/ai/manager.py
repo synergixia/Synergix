@@ -23,6 +23,9 @@ from aisynergix.services.greenfield import (
     read_user_tags,
     write_user_tags,
     get_current_challenge,
+    get_system_config,
+    check_ai_guard,
+    is_emergency_locked,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,7 +157,15 @@ class AIManager:
                 "daily_limit": profile.daily_limit,
             }
 
+        cfg = get_system_config()
+        elite_threshold = cfg.get("elite_threshold", ELITE_THRESHOLD)
+        legendary_threshold = cfg.get("legendary_threshold", LEGENDARY_THRESHOLD)
+        trust_decrement = cfg.get("trust_score_decrement", 0.2)
+        trust_increment = cfg.get("trust_score_increment", 0.1)
+
         if self._duplicate_detector.check_and_add(content):
+            profile.update_trust_score(-trust_decrement)
+            await self._identity.update_profile(uid, profile)
             return {
                 "status": "duplicate",
                 "message_key": "contribution_duplicate",
@@ -164,6 +175,8 @@ class AIManager:
         evaluation = await self._judge.evaluate(content)
 
         if not evaluation["approved"]:
+            profile.update_trust_score(-trust_decrement)
+            await self._identity.update_profile(uid, profile)
             return {
                 "status": "rejected",
                 "message_key": "contribution_rejected",
@@ -176,10 +189,10 @@ class AIManager:
 
         base_points = int(quality_score * 2)
 
-        if quality_score >= LEGENDARY_THRESHOLD:
+        if quality_score >= legendary_threshold:
             points_gained = base_points + 15
             tier = "legendary"
-        elif quality_score >= ELITE_THRESHOLD:
+        elif quality_score >= elite_threshold:
             points_gained = base_points + 8
             tier = "elite"
         else:
@@ -194,6 +207,7 @@ class AIManager:
 
         profile.add_points(points_gained)
         profile.increment_contribution()
+        profile.update_trust_score(trust_increment)
 
         # Persist aporte to Greenfield: aisynergix/aportes/YYYY-MM/{uid_hash}_{ts}.txt
         ts = int(datetime.now(timezone.utc).timestamp())
@@ -204,6 +218,8 @@ class AIManager:
             "category": evaluation.get("category", "filosofia"),
             "impact_index": str(evaluation.get("impact_index", 0.5)),
         }
+        if profile.human_verified and profile.wallet_address:
+            aporte_tags["signature"] = profile.wallet_address.lower()
 
         try:
             object_path = await write_aporte(
@@ -308,6 +324,8 @@ class AIManager:
             "multiplier": multiplier,
             "total_aportes": total_aportes,
             "tema_actual": tema_actual,
+            "trust_score": profile.trust_score,
+            "human_verified": profile.human_verified,
         }
 
     async def set_language(self, uid: int, lang_code: str) -> Tuple[bool, str]:

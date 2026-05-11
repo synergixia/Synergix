@@ -67,5 +67,11 @@
   "market_info": "📊 <b>Pasar SYNERGIX</b>\n\n💰 Harga: <b>${price_usd:.8f}</b>\n📈 Perubahan 24j: <b>{change_24h:+.2f}%</b>\n💧 Likuiditas: <b>${liquidity:,.0f}</b>\n📊 Volume 24j: <b>${volume:,.0f}</b>\n🏦 Kapitalisasi Pasar: <b>${mcap:,.0f}</b>\n🔁 Tx 24j: <b>{buys}</b> beli / <b>{sells}</b> jual\n🌐 DEX: {dex}",
   "market_unavailable": "⚠️ Tidak dapat mengambil data pasar. Coba lagi dalam beberapa detik.",
   "verify_address_prompt": "🔐 <b>Langkah 1/2 — Alamat</b>\n\nKirim alamat dompet Anda (format <code>0x...</code>, 42 karakter).\n\nAlamat ini akan terhubung dengan identitas Synergix Anda.",
-  "verify_invalid_address": "⚠️ Alamat tidak valid. Harus <code>0x</code> + 40 karakter heksadesimal."
+  "verify_invalid_address": "⚠️ Alamat tidak valid. Harus <code>0x</code> + 40 karakter heksadesimal.",
+  "emergency_lock_active": "🔒 Synergix dalam mode pemeliharaan. Kontribusi sementara dijeda.",
+  "ai_guard_blocked": "⚠️ Pesan ini tidak dapat diproses sesuai kebijakan jaringan.",
+  "status_trust_score": "🎯 Skor Kepercayaan: {trust_score}/10",
+  "status_verified": "✅ Dompet terverifikasi",
+  "admin_lock_enabled": "🔒 Kunci darurat DIAKTIFKAN. Kontribusi dijeda.",
+  "admin_lock_disabled": "🔓 Kunci darurat DINONAKTIFKAN. Kontribusi aktif."
 }

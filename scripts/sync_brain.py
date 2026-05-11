@@ -26,6 +26,10 @@ from aisynergix.services.greenfield import (
     save_challenge,
     get_brain_pointer,
     set_brain_pointer,
+    load_ai_guard,
+    load_system_config,
+    check_emergency_lock,
+    is_emergency_locked,
 )
 from aisynergix.ai.manager import get_ai_manager
 from aisynergix.ai.local_ia import get_thinker, get_judge
@@ -55,6 +59,9 @@ shutdown_event = asyncio.Event()
 
 
 async def federated_evolution():
+    if is_emergency_locked():
+        logger.warning("🔒 Emergency lock activo — saltando evolución federada")
+        return
     logger.info("🧬 Iniciando evolución federada...")
 
     try:
@@ -214,6 +221,9 @@ async def update_brain_version():
 
 
 async def daily_cleanup():
+    if is_emergency_locked():
+        logger.warning("🔒 Emergency lock activo — saltando limpieza diaria")
+        return
     logger.info("🧹 Iniciando limpieza diaria...")
 
     try:
@@ -239,6 +249,9 @@ async def daily_cleanup():
 
 
 async def weekly_challenge():
+    if is_emergency_locked():
+        logger.warning("🔒 Emergency lock activo — saltando reto semanal")
+        return
     logger.info("🎯 Generando reto semanal...")
 
     try:
@@ -322,6 +335,9 @@ async def health_monitor():
                 exc_info=gf_exc,
             )
 
+        # Keep emergency lock state fresh
+        await check_emergency_lock()
+
     except Exception as e:
         _log_exc("❌ Error en health monitor", e)
 
@@ -383,6 +399,16 @@ async def on_startup():
 
     await load_all_locales()
     logger.info(f"🌐 {len(LANG_NAMES)} idiomas cargados en RAM.")
+
+    await load_system_config()
+    logger.info("⚙️ System config cargado.")
+
+    await load_ai_guard()
+    logger.info("🛡️ AI Guard inicializado.")
+
+    locked = await check_emergency_lock()
+    if locked:
+        logger.warning("🔒 Emergency lock ACTIVO al inicio")
 
     rag = await get_rag_engine()
     await rag.rebuild_from_bucket()
