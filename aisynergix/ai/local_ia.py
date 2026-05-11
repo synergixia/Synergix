@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import hashlib
 import asyncio
@@ -6,6 +7,13 @@ from typing import Optional, Dict, Any, List, Tuple
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# Strip <think>...</think> blocks that Qwen3 emits in thinking mode
+_THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
+
+
+def _strip_thinking(text: str) -> str:
+    return _THINK_RE.sub('', text).strip()
 
 
 THINKER_HOST = os.getenv("THINKER_HOST", "http://thinker:8081")
@@ -20,7 +28,7 @@ THINKER_TOP_K = 40
 THINKER_MAX_TOKENS = 1024
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
-JUDGE_MAX_TOKENS = 256
+JUDGE_MAX_TOKENS = 768
 PROGRAMMER_TEMPERATURE = 0.2
 PROGRAMMER_TOP_K = 20
 PROGRAMMER_MAX_TOKENS = 1024
@@ -209,9 +217,12 @@ class LocalLLMConnector:
     ) -> str:
         client = await self._get_client()
 
+        # /no_think disables Qwen3 thinking mode, keeping output clean JSON
+        user_content = f"/no_think\n{prompt}" if json_mode else prompt
+
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": user_content},
         ]
 
         payload = {
@@ -242,7 +253,7 @@ class LocalLLMConnector:
         result = response.json()
         content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
 
-        return content.strip()
+        return _strip_thinking(content.strip())
 
 
 class Thinker:
