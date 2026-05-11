@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import random
 from typing import Optional, Dict, Any
 
 from aiogram import Bot, Dispatcher, types, F
@@ -43,6 +44,14 @@ from aisynergix.services import four_meme as fourmeme_svc
 
 
 logger = logging.getLogger("synergix.bot")
+
+
+def _is_emoji_only(text: str) -> bool:
+    """True if text is short and contains no ASCII letters/digits (likely emoji-only)."""
+    cleaned = text.strip()
+    if not cleaned or len(cleaned) > 20:
+        return False
+    return not any(c.isascii() and (c.isalpha() or c.isdigit()) for c in cleaned)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TELEGRAM_TOKEN:
@@ -700,6 +709,51 @@ async def cmd_admin(message: Message) -> None:
         await message.answer("Uso: /admin lock | /admin unlock")
 
 
+@dp.message(F.sticker)
+async def handle_sticker_message(message: Message) -> None:
+    if not message.from_user or not message.sticker:
+        return
+
+    uid = message.from_user.id
+    lang = await get_user_language(uid)
+    sticker = message.sticker
+    sticker_emoji = sticker.emoji or "✨"
+    set_name = sticker.set_name
+
+    # Reply with a different sticker from the same pack
+    if set_name:
+        try:
+            sticker_set = await bot.get_sticker_set(set_name)
+            others = [s for s in sticker_set.stickers if s.file_id != sticker.file_id]
+            if others:
+                await message.answer_sticker(random.choice(others).file_id)
+        except Exception:
+            pass
+
+    # Only generate text in free-conversation states
+    ghost = get_ghost_state_manager()
+    current_state = await ghost.get_state(uid)
+    if current_state in (
+        "awaiting_contribution", "awaiting_buy_amount", "awaiting_sell_amount",
+        "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_code_request",
+    ):
+        return
+
+    ai = get_ai_manager()
+    try:
+        context_text = (
+            f"[El usuario envió el sticker {sticker_emoji}. "
+            "Interpreta la emoción o expresión que transmite este emoji y "
+            "responde de forma inteligente y empática en el idioma del usuario.]"
+        )
+        response, reply_emoji, _ = await ai.process_conversation(uid, context_text)
+        if response:
+            final = f"{response}\n{reply_emoji}" if reply_emoji else response
+            await message.answer(final)
+    except Exception as e:
+        logger.exception("Error en respuesta a sticker de %s: %s", uid, e)
+
+
 @dp.message()
 async def handle_free_conversation(message: Message) -> None:
     if not message.from_user:
@@ -825,11 +879,19 @@ async def handle_conversation_message(
 
     ai = get_ai_manager()
 
+    # Emoji-only message → add interpretation hint so the AI responds meaningfully
+    ai_text = text
+    if _is_emoji_only(text):
+        ai_text = (
+            f"[El usuario envió solo el emoji/expresión: {text}. "
+            "Interpreta qué emoción o situación expresa y responde de forma "
+            "inteligente y empática en texto, en el idioma del usuario.]"
+        )
+
     try:
-        response, sticker_emoji, search_results = await ai.process_conversation(uid, text)
-        await message.answer(response)
-        if sticker_emoji:
-            await message.answer(sticker_emoji)
+        response, sticker_emoji, search_results = await ai.process_conversation(uid, ai_text)
+        final = f"{response}\n{sticker_emoji}" if sticker_emoji else response
+        await message.answer(final)
 
     except Exception as e:
         logger.exception("Error en conversación libre de %s: %s", uid, e)
