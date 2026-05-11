@@ -1019,23 +1019,10 @@ async def get_all_user_uids() -> List[str]:
 # ═══════════════════════════════════════════════════════════════════════
 
 async def load_ai_guard() -> List[str]:
-    """Load ai_guard.txt from Greenfield; create with defaults if missing."""
+    """Load ai_guard.txt from Greenfield; create with defaults only if truly missing."""
     global _ai_guard_patterns
     client = await get_client()
     path = "ai_guard.txt"
-    try:
-        raw, _ = await client.object.get_object(BUCKET_NAME, path, GetObjectOption())
-        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-        patterns = [
-            line.strip()
-            for line in text.splitlines()
-            if line.strip() and not line.startswith("#")
-        ]
-        _ai_guard_patterns = patterns
-        logger.info("🛡️ AI Guard cargado: %d patrones", len(patterns))
-        return patterns
-    except Exception:
-        pass
 
     default_content = (
         "# Synergix AI Guard — anti-jailbreak patterns\n"
@@ -1050,6 +1037,43 @@ async def load_ai_guard() -> List[str]:
         "jailbreak\n"
         "DAN\n"
     )
+    default_patterns = [
+        line.strip()
+        for line in default_content.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+
+    # Step 1: try to read the file content
+    try:
+        raw, _ = await client.object.get_object(BUCKET_NAME, path, GetObjectOption())
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        patterns = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        _ai_guard_patterns = patterns
+        logger.info("🛡️ AI Guard cargado: %d patrones", len(patterns))
+        return patterns
+    except Exception:
+        pass
+
+    # Step 2: reading failed — check if the object exists on-chain (SEALED/CREATED)
+    object_exists = False
+    try:
+        await client.object.get_object_head(BUCKET_NAME, path)
+        object_exists = True
+    except Exception:
+        object_exists = False
+
+    if object_exists:
+        # Object exists but content is unreadable (SP quirk / SEALED state).
+        # Use default patterns in RAM without attempting to create a duplicate.
+        logger.info("🛡️ ai_guard.txt existe en Greenfield — usando patrones por defecto en RAM")
+        _ai_guard_patterns = default_patterns
+        return default_patterns
+
+    # Step 3: object genuinely doesn't exist — create it with defaults
     try:
         encoded = default_content.encode("utf-8")
         await client.object.create_object(
@@ -1073,11 +1097,6 @@ async def load_ai_guard() -> List[str]:
     except Exception as create_exc:
         logger.warning("No se pudo crear ai_guard.txt: %s", create_exc)
 
-    default_patterns = [
-        line.strip()
-        for line in default_content.splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
     _ai_guard_patterns = default_patterns
     return default_patterns
 
