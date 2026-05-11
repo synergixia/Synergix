@@ -48,6 +48,12 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TELEGRAM_TOKEN:
     raise EnvironmentError("TELEGRAM_TOKEN no configurada en el entorno.")
 
+_ADMIN_IDS: set = set(
+    int(x.strip())
+    for x in os.getenv("SYNERGIX_ADMIN_IDS", "").split(",")
+    if x.strip().isdigit()
+)
+
 bot = Bot(token=TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
@@ -270,6 +276,11 @@ async def handle_status_button(message: Message) -> None:
         contribution_count=status["contribution_count"],
         language=get_lang_name(status["language"]),
     )
+    status_text += "\n" + t(
+        "status_trust_score", lang, trust_score=f"{status.get('trust_score', 5.0):.1f}"
+    )
+    if status.get("human_verified"):
+        status_text += "\n" + t("status_verified", lang)
 
     await message.answer(status_text)
 
@@ -425,6 +436,11 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
             contribution_count=status["contribution_count"],
             language=get_lang_name(status["language"]),
         )
+        status_text += "\n" + t(
+            "status_trust_score", lang, trust_score=f"{status.get('trust_score', 5.0):.1f}"
+        )
+        if status.get("human_verified"):
+            status_text += "\n" + t("status_verified", lang)
         await callback.message.edit_text(status_text)
     elif action == "memory":
         await handle_memory_button(callback.message)
@@ -630,6 +646,30 @@ async def handle_trade_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@dp.message(Command("admin"))
+async def cmd_admin(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    if uid not in _ADMIN_IDS:
+        return  # Silently ignore non-admins
+    lang = await get_user_language(uid)
+    args = (message.text or "").split()
+    if len(args) < 2:
+        await message.answer("Uso: /admin lock | /admin unlock")
+        return
+    action = args[1].lower()
+    from aisynergix.services.greenfield import create_emergency_lock, delete_emergency_lock
+    if action == "lock":
+        await create_emergency_lock()
+        await message.answer(t("admin_lock_enabled", lang))
+    elif action == "unlock":
+        await delete_emergency_lock()
+        await message.answer(t("admin_lock_disabled", lang))
+    else:
+        await message.answer("Uso: /admin lock | /admin unlock")
+
+
 @dp.message()
 async def handle_free_conversation(message: Message) -> None:
     if not message.from_user:
@@ -678,6 +718,11 @@ async def handle_contribution_message(
     ai = get_ai_manager()
 
     await ghost.exit_contribution_mode(uid)
+
+    from aisynergix.services.greenfield import is_emergency_locked
+    if is_emergency_locked():
+        await message.answer(t("emergency_lock_active", lang))
+        return
 
     await message.answer(t("contribution_received", lang))
 
@@ -739,6 +784,11 @@ async def handle_conversation_message(
     text: str,
     lang: str,
 ) -> None:
+    from aisynergix.services.greenfield import check_ai_guard
+    if check_ai_guard(text):
+        await message.answer(t("ai_guard_blocked", lang))
+        return
+
     ai = get_ai_manager()
 
     try:
@@ -888,6 +938,15 @@ async def on_startup():
     logger.info(f"🌐 Locales cargados: {list(LOCALES.keys())}")
 
     await set_bot_commands()
+
+    from aisynergix.services.greenfield import load_ai_guard, load_system_config, check_emergency_lock
+    await load_system_config()
+    logger.info("⚙️ System config cargado")
+    await load_ai_guard()
+    logger.info("🛡️ AI Guard inicializado")
+    locked = await check_emergency_lock()
+    if locked:
+        logger.warning("🔒 Emergency lock ACTIVO al inicio")
 
     from aisynergix.services.rag_engine import get_rag_engine
     rag = await get_rag_engine()

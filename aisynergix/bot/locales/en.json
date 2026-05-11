@@ -67,5 +67,11 @@
   "market_info": "📊 <b>SYNERGIX Market</b>\n\n💰 Price: <b>${price_usd:.8f}</b>\n📈 24h Change: <b>{change_24h:+.2f}%</b>\n💧 Liquidity: <b>${liquidity:,.0f}</b>\n📊 24h Volume: <b>${volume:,.0f}</b>\n🏦 Market Cap: <b>${mcap:,.0f}</b>\n🔁 24h Tx: <b>{buys}</b> buys / <b>{sells}</b> sells\n🌐 DEX: {dex}",
   "market_unavailable": "⚠️ Could not fetch market data. Try again in a few seconds.",
   "verify_address_prompt": "🔐 <b>Step 1/2 — Address</b>\n\nSend your wallet address (<code>0x...</code> format, 42 characters).\n\nThis address will be linked to your Synergix identity.",
-  "verify_invalid_address": "⚠️ Invalid address. Must be <code>0x</code> + 40 hex characters."
+  "verify_invalid_address": "⚠️ Invalid address. Must be <code>0x</code> + 40 hex characters.",
+  "emergency_lock_active": "🔒 Synergix is in maintenance mode. Contributions are temporarily paused.",
+  "ai_guard_blocked": "⚠️ This message cannot be processed under network policies.",
+  "status_trust_score": "🎯 Trust Score: {trust_score}/10",
+  "status_verified": "✅ Wallet verified",
+  "admin_lock_enabled": "🔒 Emergency lock ENABLED. Contributions are paused.",
+  "admin_lock_disabled": "🔓 Emergency lock DISABLED. Contributions are active."
 }

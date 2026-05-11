@@ -67,5 +67,11 @@
   "market_info": "📊 <b>Mercado SYNERGIX</b>\n\n💰 Preço: <b>${price_usd:.8f}</b>\n📈 Mudança 24h: <b>{change_24h:+.2f}%</b>\n💧 Liquidez: <b>${liquidity:,.0f}</b>\n📊 Volume 24h: <b>${volume:,.0f}</b>\n🏦 Market Cap: <b>${mcap:,.0f}</b>\n🔁 Tx 24h: <b>{buys}</b> compras / <b>{sells}</b> vendas\n🌐 DEX: {dex}",
   "market_unavailable": "⚠️ Não foi possível obter dados de mercado. Tente novamente em alguns segundos.",
   "verify_address_prompt": "🔐 <b>Passo 1/2 — Endereço</b>\n\nEnvie o endereço da sua wallet (formato <code>0x...</code>, 42 caracteres).\n\nEste endereço será vinculado à sua identidade Synergix.",
-  "verify_invalid_address": "⚠️ Endereço inválido. Deve ser <code>0x</code> + 40 caracteres hexadecimais."
+  "verify_invalid_address": "⚠️ Endereço inválido. Deve ser <code>0x</code> + 40 caracteres hexadecimais.",
+  "emergency_lock_active": "🔒 Synergix está em modo de manutenção. As contribuições estão temporariamente pausadas.",
+  "ai_guard_blocked": "⚠️ Esta mensagem não pode ser processada pelas políticas da rede.",
+  "status_trust_score": "🎯 Trust Score: {trust_score}/10",
+  "status_verified": "✅ Carteira verificada",
+  "admin_lock_enabled": "🔒 Bloqueio de emergência ATIVADO. As contribuições estão pausadas.",
+  "admin_lock_disabled": "🔓 Bloqueio de emergência DESATIVADO. As contribuições estão ativas."
 }

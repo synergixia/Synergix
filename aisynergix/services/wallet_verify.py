@@ -146,11 +146,12 @@ async def get_verified_wallet(uid_hash: str) -> Optional[str]:
 
 
 async def save_verified_wallet(uid_hash: str, address: str) -> None:
-    """Persist the verified wallet address into the user's Greenfield tags."""
+    """Persist the verified wallet address and human_verified flag into user tags."""
     from aisynergix.services.greenfield import read_user_tags, write_user_tags
     try:
         tags = await read_user_tags(uid_hash)
         tags["wallet_address"] = address.lower()
+        tags["human_verified"] = "true"
         await write_user_tags(uid_hash, tags)
         logger.info("Wallet verified for %s -> %s", uid_hash, address)
     except Exception as exc:

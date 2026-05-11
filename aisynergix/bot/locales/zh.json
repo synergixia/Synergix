@@ -67,5 +67,11 @@
   "market_info": "📊 <b>SYNERGIX 市场</b>\n\n💰 价格: <b>${price_usd:.8f}</b>\n📈 24小时涨跌: <b>{change_24h:+.2f}%</b>\n💧 流动性: <b>${liquidity:,.0f}</b>\n📊 24小时交易量: <b>${volume:,.0f}</b>\n🏦 市值: <b>${mcap:,.0f}</b>\n🔁 24小时交易: <b>{buys}</b> 买入 / <b>{sells}</b> 卖出\n🌐 交易所: {dex}",
   "market_unavailable": "⚠️ 无法获取市场数据。请几秒后重试。",
   "verify_address_prompt": "🔐 <b>步骤 1/2 — 地址</b>\n\n发送您的钱包地址（<code>0x...</code> 格式，42 个字符）。\n\n该地址将与您的 Synergix 身份关联。",
-  "verify_invalid_address": "⚠️ 地址无效。必须为 <code>0x</code> + 40 个十六进制字符。"
+  "verify_invalid_address": "⚠️ 地址无效。必须为 <code>0x</code> + 40 个十六进制字符。",
+  "emergency_lock_active": "🔒 Synergix 正在维护模式。贡献暂时暂停。",
+  "ai_guard_blocked": "⚠️ 此消息无法根据网络政策进行处理。",
+  "status_trust_score": "🎯 信任分数: {trust_score}/10",
+  "status_verified": "✅ 钱包已验证",
+  "admin_lock_enabled": "🔒 紧急锁定已启用。贡献已暂停。",
+  "admin_lock_disabled": "🔓 紧急锁定已禁用。贡献已激活。"
 }

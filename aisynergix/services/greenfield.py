@@ -96,6 +96,24 @@ PRIVATE_KEY: str = os.getenv("PRIVATE_KEY", "")
 # put_object for the new object (error 20008 otherwise).
 _SP_SYNC_DELAY: int = 12
 
+# ── AI Guard (anti-jailbreak) ─────────────────────────────────────────
+_ai_guard_patterns: List[str] = []
+
+# ── Emergency Lock ────────────────────────────────────────────────────
+_emergency_lock_active: bool = False
+
+# ── System Config ─────────────────────────────────────────────────────
+_system_config: Dict[str, Any] = {}
+
+_DEFAULT_SYSTEM_CONFIG: Dict[str, Any] = {
+    "quality_threshold": 5.0,
+    "elite_threshold": 9.0,
+    "legendary_threshold": 9.5,
+    "trust_score_increment": 0.1,
+    "trust_score_decrement": 0.2,
+    "min_contribution_length": 20,
+}
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # CLIENTE GLOBAL (inicialización perezosa thread-safe para asyncio)
@@ -996,6 +1014,219 @@ async def get_all_user_uids() -> List[str]:
     return uids
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# AI GUARD — Anti-jailbreak pattern list
+# ═══════════════════════════════════════════════════════════════════════
+
+async def load_ai_guard() -> List[str]:
+    """Load ai_guard.txt from Greenfield; create with defaults if missing."""
+    global _ai_guard_patterns
+    client = await get_client()
+    path = "ai_guard.txt"
+    try:
+        raw, _ = await client.object.get_object(BUCKET_NAME, path, GetObjectOption())
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        patterns = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        _ai_guard_patterns = patterns
+        logger.info("🛡️ AI Guard cargado: %d patrones", len(patterns))
+        return patterns
+    except Exception:
+        pass
+
+    default_content = (
+        "# Synergix AI Guard — anti-jailbreak patterns\n"
+        "ignore previous instructions\n"
+        "ignore all previous\n"
+        "disregard your instructions\n"
+        "forget your instructions\n"
+        "you are now\n"
+        "act as\n"
+        "pretend you are\n"
+        "roleplay as\n"
+        "jailbreak\n"
+        "DAN\n"
+    )
+    try:
+        encoded = default_content.encode("utf-8")
+        await client.object.create_object(
+            BUCKET_NAME,
+            path,
+            io.BytesIO(encoded),
+            CreateObjectOptions(
+                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+                content_type="text/plain",
+            ),
+        )
+        await asyncio.sleep(_SP_SYNC_DELAY)
+        await client.object.put_object(
+            bucket_name=BUCKET_NAME,
+            object_name=path,
+            object_size=len(encoded),
+            reader=io.BytesIO(encoded),
+            opts=PutObjectOptions(content_type="text/plain"),
+        )
+        logger.info("🛡️ ai_guard.txt creado con patrones por defecto")
+    except Exception as create_exc:
+        logger.warning("No se pudo crear ai_guard.txt: %s", create_exc)
+
+    default_patterns = [
+        line.strip()
+        for line in default_content.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    _ai_guard_patterns = default_patterns
+    return default_patterns
+
+
+def get_ai_guard_patterns() -> List[str]:
+    """Return current in-memory AI guard pattern list."""
+    return _ai_guard_patterns
+
+
+def check_ai_guard(text: str) -> bool:
+    """Return True if text contains a blocked pattern (case-insensitive)."""
+    text_lower = text.lower()
+    return any(pattern.lower() in text_lower for pattern in _ai_guard_patterns)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# EMERGENCY LOCK — Write-blocker switch (0-byte object in bucket root)
+# ═══════════════════════════════════════════════════════════════════════
+
+async def check_emergency_lock() -> bool:
+    """Check if emergency_lock exists in Greenfield and update global flag."""
+    global _emergency_lock_active
+    client = await get_client()
+    try:
+        await client.object.get_object_head(BUCKET_NAME, "emergency_lock")
+        _emergency_lock_active = True
+        return True
+    except Exception:
+        _emergency_lock_active = False
+        return False
+
+
+def is_emergency_locked() -> bool:
+    """Return current in-memory emergency lock state (no network call)."""
+    return _emergency_lock_active
+
+
+async def create_emergency_lock() -> None:
+    """Create emergency_lock ghost object to halt all writes."""
+    global _emergency_lock_active
+    client = await get_client()
+    path = "emergency_lock"
+    try:
+        await client.object.get_object_head(BUCKET_NAME, path)
+        _emergency_lock_active = True
+        return
+    except Exception:
+        pass
+    await client.object.create_object(
+        BUCKET_NAME,
+        path,
+        io.BytesIO(b""),
+        CreateObjectOptions(
+            visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+            content_type="application/octet-stream",
+        ),
+    )
+    await asyncio.sleep(_SP_SYNC_DELAY)
+    try:
+        await client.object.put_object(
+            bucket_name=BUCKET_NAME,
+            object_name=path,
+            object_size=0,
+            reader=io.BytesIO(b""),
+            opts=PutObjectOptions(content_type="application/octet-stream"),
+        )
+    except Exception:
+        pass
+    _emergency_lock_active = True
+    logger.warning("🔒 Emergency lock ACTIVADO")
+
+
+async def delete_emergency_lock() -> None:
+    """Remove emergency_lock to resume writes."""
+    global _emergency_lock_active
+    client = await get_client()
+    try:
+        await client.object.delete_object(BUCKET_NAME, "emergency_lock")
+    except Exception:
+        pass
+    _emergency_lock_active = False
+    logger.warning("🔓 Emergency lock DESACTIVADO")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SYSTEM CONFIG — Centralized thresholds in Greenfield
+# ═══════════════════════════════════════════════════════════════════════
+
+async def _write_system_config_if_missing() -> None:
+    """Create aisynergix/data/system_config.json in Greenfield if absent."""
+    data_path = "aisynergix/data/system_config.json"
+    try:
+        client = await get_client()
+        try:
+            await client.object.get_object_head(BUCKET_NAME, data_path)
+            return
+        except Exception:
+            pass
+        content = json.dumps(_DEFAULT_SYSTEM_CONFIG, ensure_ascii=False, indent=2).encode("utf-8")
+        await client.object.create_object(
+            BUCKET_NAME,
+            data_path,
+            io.BytesIO(content),
+            CreateObjectOptions(
+                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+                content_type="application/json",
+            ),
+        )
+        await asyncio.sleep(_SP_SYNC_DELAY)
+        await client.object.put_object(
+            bucket_name=BUCKET_NAME,
+            object_name=data_path,
+            object_size=len(content),
+            reader=io.BytesIO(content),
+            opts=PutObjectOptions(content_type="application/json"),
+        )
+        logger.info("⚙️ system_config.json creado con valores por defecto")
+    except Exception as exc:
+        logger.warning("No se pudo crear system_config.json: %s", exc)
+
+
+async def load_system_config() -> Dict[str, Any]:
+    """Load system_config.json from Greenfield; create with defaults if missing."""
+    global _system_config
+    data_path = "aisynergix/data/system_config.json"
+    try:
+        data = await read_json_data(data_path)
+        if data:
+            merged = {**_DEFAULT_SYSTEM_CONFIG, **data}
+            _system_config = merged
+            logger.info("⚙️ system_config.json cargado desde Greenfield")
+            return merged
+    except Exception:
+        pass
+    try:
+        await _write_system_config_if_missing()
+    except Exception:
+        pass
+    _system_config = dict(_DEFAULT_SYSTEM_CONFIG)
+    return _system_config
+
+
+def get_system_config() -> Dict[str, Any]:
+    """Return current system config dict (falls back to defaults if not loaded)."""
+    if not _system_config:
+        return dict(_DEFAULT_SYSTEM_CONFIG)
+    return _system_config
+
+
 # ── Alias para compatibilidad con sync_brain.py ───────────────────────
 get_greenfield_client = get_client
 
@@ -1025,6 +1256,19 @@ __all__ = [
     "get_current_challenge",
     "save_challenge",
     "upload_log",
+    # AI Guard
+    "load_ai_guard",
+    "get_ai_guard_patterns",
+    "check_ai_guard",
+    # Emergency Lock
+    "check_emergency_lock",
+    "is_emergency_locked",
+    "create_emergency_lock",
+    "delete_emergency_lock",
+    # System Config
+    "load_system_config",
+    "get_system_config",
+    # Constants
     "BUCKET_NAME",
     "PRIVATE_KEY",
     "GREENFIELD_RPC_URL",

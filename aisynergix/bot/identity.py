@@ -48,6 +48,8 @@ class UserProfile:
     fsm_state: str = "idle"
     contribution_count: int = 0
     wallet_address: Optional[str] = None
+    human_verified: bool = False
+    trust_score: float = 5.0
 
     def __post_init__(self):
         self.uid_hash = _hash_uid(self.uid)
@@ -93,6 +95,8 @@ class UserProfile:
             language=tags.get("language", "es"),
             fsm_state=tags.get("fsm_state", "idle"),
             wallet_address=tags.get("wallet_address") or None,
+            human_verified=tags.get("human_verified", "false").lower() == "true",
+            trust_score=float(tags.get("trust_score", "5.0")),
         )
 
         if profile.rank not in RANK_TABLE:
@@ -112,7 +116,12 @@ class UserProfile:
         }
         if self.wallet_address:
             base["wallet_address"] = self.wallet_address.lower()
+        base["trust_score"] = f"{self.trust_score:.2f}"
+        base["human_verified"] = "true" if self.human_verified else "false"
         return base
+
+    def update_trust_score(self, delta: float) -> None:
+        self.trust_score = max(0.0, min(10.0, self.trust_score + delta))
 
     def add_points(self, points_to_add: int) -> None:
         self.points += points_to_add

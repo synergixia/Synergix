@@ -67,5 +67,11 @@
   "market_info": "📊 <b>SYNERGIX مارکیٹ</b>\n\n💰 قیمت: <b>${price_usd:.8f}</b>\n📈 24گ تبدیلی: <b>{change_24h:+.2f}%</b>\n💧 لیکویڈیٹی: <b>${liquidity:,.0f}</b>\n📊 24گ والیوم: <b>${volume:,.0f}</b>\n🏦 مارکیٹ کیپ: <b>${mcap:,.0f}</b>\n🔁 24گ Tx: <b>{buys}</b> خریداری / <b>{sells}</b> فروخت\n🌐 DEX: {dex}",
   "market_unavailable": "⚠️ مارکیٹ ڈیٹا حاصل نہیں ہو سکا۔ چند سیکنڈ بعد دوبارہ کوشش کریں۔",
   "verify_address_prompt": "🔐 <b>مرحلہ 1/2 — پتہ</b>\n\nاپنے والیٹ کا پتہ بھیجیں (<code>0x...</code> فارمیٹ، 42 حروف)۔\n\nیہ پتہ آپ کی Synergix شناخت سے منسلک ہو جائے گا۔",
-  "verify_invalid_address": "⚠️ غلط پتہ۔ <code>0x</code> + 40 ہیکس حروف ہونے چاہئیں۔"
+  "verify_invalid_address": "⚠️ غلط پتہ۔ <code>0x</code> + 40 ہیکس حروف ہونے چاہئیں۔",
+  "emergency_lock_active": "🔒 Synergix دیکھ بھال موڈ میں ہے۔ شراکتیں عارضی طور پر روک دی گئی ہیں۔",
+  "ai_guard_blocked": "⚠️ نیٹ ورک پالیسیوں کی وجہ سے یہ پیغام پروسیس نہیں کیا جا سکتا۔",
+  "status_trust_score": "🎯 ٹرسٹ اسکور: {trust_score}/10",
+  "status_verified": "✅ والٹ تصدیق شدہ",
+  "admin_lock_enabled": "🔒 ایمرجنسی لاک فعال۔ شراکتیں روک دی گئی ہیں۔",
+  "admin_lock_disabled": "🔓 ایمرجنسی لاک غیر فعال۔ شراکتیں فعال ہیں۔"
 }

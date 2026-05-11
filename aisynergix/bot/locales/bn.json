@@ -67,5 +67,11 @@
   "market_info": "📊 <b>SYNERGIX বাজার</b>\n\n💰 দাম: <b>${price_usd:.8f}</b>\n📈 ২৪ঘ পরিবর্তন: <b>{change_24h:+.2f}%</b>\n💧 লিকুইডিটি: <b>${liquidity:,.0f}</b>\n📊 ২৪ঘ ভলিউম: <b>${volume:,.0f}</b>\n🏦 মার্কেট ক্যাপ: <b>${mcap:,.0f}</b>\n🔁 ২৪ঘ Tx: <b>{buys}</b> কেনা / <b>{sells}</b> বিক্রি\n🌐 DEX: {dex}",
   "market_unavailable": "⚠️ বাজার ডেটা পাওয়া যায়নি। কয়েক সেকেন্ড পরে আবার চেষ্টা করুন।",
   "verify_address_prompt": "🔐 <b>ধাপ ১/২ — ঠিকানা</b>\n\nআপনার ওয়ালেট ঠিকানা পাঠান (<code>0x...</code> ফরম্যাট, ৪২ অক্ষর)।\n\nএই ঠিকানা আপনার Synergix পরিচয়ের সাথে যুক্ত হবে।",
-  "verify_invalid_address": "⚠️ অবৈধ ঠিকানা। <code>0x</code> + ৪০ হেক্স অক্ষর হতে হবে।"
+  "verify_invalid_address": "⚠️ অবৈধ ঠিকানা। <code>0x</code> + ৪০ হেক্স অক্ষর হতে হবে।",
+  "emergency_lock_active": "🔒 Synergix রক্ষণাবেক্ষণ মোডে আছে। অবদান সাময়িকভাবে বিরতি দেওয়া হয়েছে।",
+  "ai_guard_blocked": "⚠️ নেটওয়ার্ক নীতির কারণে এই বার্তাটি প্রক্রিয়া করা যাচ্ছে না।",
+  "status_trust_score": "🎯 বিশ্বাস স্কোর: {trust_score}/10",
+  "status_verified": "✅ ওয়ালেট যাচাইকৃত",
+  "admin_lock_enabled": "🔒 জরুরি লক সক্রিয়। অবদান বিরতি দেওয়া হয়েছে।",
+  "admin_lock_disabled": "🔓 জরুরি লক নিষ্ক্রিয়। অবদান সক্রিয়।"
 }
