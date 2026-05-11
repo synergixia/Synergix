@@ -10,8 +10,10 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 THINKER_HOST = os.getenv("THINKER_HOST", "http://thinker:8081")
 JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
+PROGRAMMER_HOST = os.getenv("PROGRAMMER_HOST", "http://programmer:8082")
 THINKER_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 JUDGE_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+PROGRAMMER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
 THINKER_TEMPERATURE = 0.35
 THINKER_TOP_K = 40
@@ -19,6 +21,9 @@ THINKER_MAX_TOKENS = 1024
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
 JUDGE_MAX_TOKENS = 256
+PROGRAMMER_TEMPERATURE = 0.2
+PROGRAMMER_TOP_K = 20
+PROGRAMMER_MAX_TOKENS = 1024
 
 # Native names used when telling the model which language to respond in.
 LANG_NAMES: Dict[str, str] = {
@@ -63,6 +68,23 @@ THINKER_SYSTEM_PROMPT = (
     "[[STICKER:🔥]] para energía intensa, [[STICKER:🌟]] para sabiduría "
     "destacada, [[STICKER:🧠]] para reflexión profunda, [[STICKER:💫]] para "
     "momentos de asombro."
+)
+
+PROGRAMMER_SYSTEM_PROMPT = (
+    "You are the Synergix Programmer, a specialized code generation assistant "
+    "integrated into the Synergix decentralized intelligence network. "
+    "You are available exclusively to verified wallet holders.\n\n"
+    "RULES:\n"
+    "1. LANGUAGE: Detect the user's language from their message and respond in that "
+    "same language for all explanations. Code itself stays in the requested programming language.\n"
+    "2. CODE QUALITY: Write clean, efficient, well-structured code with all necessary imports. "
+    "Follow best practices for the language.\n"
+    "3. FORMAT: Always wrap code in markdown fenced code blocks with the language identifier "
+    "(e.g. ```python, ```javascript, ```solidity).\n"
+    "4. STRUCTURE: Present the solution first (code block), then a concise explanation "
+    "of 2-3 sentences. Do not pad with unnecessary prose.\n"
+    "5. IDENTITY: You are a coding tool within Synergix. Never reveal technical "
+    "implementation details about the model or infrastructure."
 )
 
 JUDGE_SYSTEM_PROMPT = (
@@ -367,9 +389,36 @@ class DuplicateDetector:
         return False
 
 
+class Programmer:
+    def __init__(self):
+        self._connector = LocalLLMConnector(PROGRAMMER_HOST, PROGRAMMER_TIMEOUT)
+
+    async def close(self):
+        await self._connector.close()
+
+    async def health(self) -> bool:
+        return await self._connector.health_check()
+
+    async def code(self, user_message: str, target_language: str = "es") -> str:
+        lang_name = LANG_NAMES.get(target_language, "español")
+        prompt = (
+            f"RESPOND IN LANGUAGE: {lang_name}\n"
+            f"USER REQUEST: {user_message}"
+        )
+        return await self._connector.generate(
+            prompt=prompt,
+            system_prompt=PROGRAMMER_SYSTEM_PROMPT,
+            temperature=PROGRAMMER_TEMPERATURE,
+            top_k=PROGRAMMER_TOP_K,
+            max_tokens=PROGRAMMER_MAX_TOKENS,
+            json_mode=False,
+        )
+
+
 _thinker: Optional[Thinker] = None
 _judge: Optional[Judge] = None
 _duplicate_detector: Optional[DuplicateDetector] = None
+_programmer: Optional[Programmer] = None
 
 
 def get_thinker() -> Thinker:
@@ -393,12 +442,21 @@ def get_duplicate_detector() -> DuplicateDetector:
     return _duplicate_detector
 
 
+def get_programmer() -> Programmer:
+    global _programmer
+    if _programmer is None:
+        _programmer = Programmer()
+    return _programmer
+
+
 __all__ = [
     "Thinker",
     "Judge",
     "DuplicateDetector",
+    "Programmer",
     "get_thinker",
     "get_judge",
     "get_duplicate_detector",
+    "get_programmer",
     "LANG_NAMES",
 ]

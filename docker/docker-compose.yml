@@ -13,6 +13,9 @@ volumes:
   judge-cache:
     name: synergix-judge-cache
     driver: local
+  programmer-cache:
+    name: synergix-programmer-cache
+    driver: local
 
 services:
   thinker:
@@ -23,7 +26,7 @@ services:
       synergix-net:
         ipv4_address: 172.28.0.10
     volumes:
-      - ../aisynergix/ai/models/qwen2.5-1.5b.gguf:/models/model.gguf:ro
+      - ../aisynergix/ai/models/qwen3-1.7b.gguf:/models/model.gguf:ro
       - thinker-cache:/tmp
     entrypoint: ["/app/llama-server"]
     command:
@@ -34,12 +37,11 @@ services:
       - "--port"
       - "8081"
       - "-c"
-      - "4096"
+      - "2048"
       - "-t"
-      - "4"
+      - "2"
       - "-tb"
-      - "4"
-      - "--mlock"
+      - "2"
       - "--no-mmap"
       - "--temp"
       - "0.3"
@@ -54,18 +56,16 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "3.0"
-          memory: "2.5G"
-        reservations:
           cpus: "2.0"
-          memory: "1.5G"
+          memory: "1.8G"
+        reservations:
+          cpus: "1.0"
+          memory: "1.2G"
     security_opt:
       - no-new-privileges:true
     read_only: false
     cap_drop:
       - ALL
-    cap_add:
-      - IPC_LOCK
     logging:
       driver: "json-file"
       options:
@@ -80,7 +80,7 @@ services:
       synergix-net:
         ipv4_address: 172.28.0.11
     volumes:
-      - ../aisynergix/ai/models/qwen2.5-0.5b.gguf:/models/model.gguf:ro
+      - ../aisynergix/ai/models/qwen3-0.6b.gguf:/models/model.gguf:ro
       - judge-cache:/tmp
     entrypoint: ["/app/llama-server"]
     command:
@@ -91,12 +91,11 @@ services:
       - "--port"
       - "8080"
       - "-c"
-      - "2048"
+      - "1024"
       - "-t"
-      - "2"
+      - "1"
       - "-tb"
-      - "2"
-      - "--mlock"
+      - "1"
       - "--no-mmap"
       - "--temp"
       - "0.1"
@@ -111,18 +110,70 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.5"
-          memory: "1.0G"
-        reservations:
           cpus: "1.0"
+          memory: "0.8G"
+        reservations:
+          cpus: "0.5"
           memory: "512M"
     security_opt:
       - no-new-privileges:true
     read_only: false
     cap_drop:
       - ALL
-    cap_add:
-      - IPC_LOCK
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  programmer:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: synergix-programmer
+    restart: unless-stopped
+    networks:
+      synergix-net:
+        ipv4_address: 172.28.0.12
+    volumes:
+      - ../aisynergix/ai/models/starcoder2-3b.gguf:/models/model.gguf:ro
+      - programmer-cache:/tmp
+    entrypoint: ["/app/llama-server"]
+    command:
+      - "-m"
+      - "/models/model.gguf"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8082"
+      - "-c"
+      - "2048"
+      - "-t"
+      - "2"
+      - "-tb"
+      - "2"
+      - "--no-mmap"
+      - "--temp"
+      - "0.2"
+      - "--top-k"
+      - "20"
+      - "--repeat-penalty"
+      - "1.1"
+      - "-n"
+      - "1024"
+    ports:
+      - "127.0.0.1:8082:8082"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: "2.5G"
+        reservations:
+          cpus: "1.0"
+          memory: "1.8G"
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    cap_drop:
+      - ALL
     logging:
       driver: "json-file"
       options:
@@ -143,6 +194,8 @@ services:
         condition: service_started
       judge:
         condition: service_started
+      programmer:
+        condition: service_started
     # ═══════════════════════════════════════════════════════════════
     # VARIABLES DE ENTORNO — SOLO LAS QUE NECESITA CADA COMPONENTE
     # ═══════════════════════════════════════════════════════════════
@@ -161,12 +214,14 @@ services:
       SYNERGIX_TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
       SYNERGIX_THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
       SYNERGIX_JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
+      SYNERGIX_PROGRAMMER_HOST: ${PROGRAMMER_HOST:-http://programmer:8082}
       SYNERGIX_CACHE_TTL: ${CACHE_TTL:-12}
 
       # ── Variables sin prefijo (requeridas por bot.py y local_ia.py) ──
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
       THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
       JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
+      PROGRAMMER_HOST: ${PROGRAMMER_HOST:-http://programmer:8082}
 
       # ── BSC / Trading ─────────────────────────────────────────
       BSC_RPC_URL: ${BSC_RPC_URL:-https://bsc-dataseed1.binance.org}
@@ -178,8 +233,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2.5"
-          memory: "3.0G"
+          cpus: "2.0"
+          memory: "2.5G"
         reservations:
           cpus: "1.0"
           memory: "1.5G"
@@ -205,4 +260,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-
