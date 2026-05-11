@@ -80,7 +80,11 @@ class FAISSEngine:
                 await self._train_with_dummy()
 
     async def _train_with_dummy(self):
-        dummy_vectors = np.random.randn(N_CENTROIDS * 10, EMBEDDING_DIM).astype(np.float32)
+        # FAISS IVFPQ requires ≥39×n_centroids training points; PQ sub-quantizers
+        # use 256 codewords so need ≥9984 points.  Use 10 000 to stay above that
+        # threshold and silence the "please provide at least N training points" warnings.
+        n_train = max(10_000, N_CENTROIDS * 160)
+        dummy_vectors = np.random.randn(n_train, EMBEDDING_DIM).astype(np.float32)
         faiss.normalize_L2(dummy_vectors)
         await asyncio.to_thread(self._index.train, dummy_vectors)
         self._is_trained = True
