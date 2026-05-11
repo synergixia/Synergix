@@ -145,6 +145,9 @@ class GhostStateManager:
     async def enter_wallet_signature_mode(self, uid: int) -> None:
         await self.set_state(uid, "awaiting_wallet_signature")
 
+    async def enter_programmer_mode(self, uid: int) -> None:
+        await self.set_state(uid, "awaiting_code_request")
+
 
 _ghost_state_manager: Optional[GhostStateManager] = None
 

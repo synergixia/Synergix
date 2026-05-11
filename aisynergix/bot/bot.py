@@ -73,6 +73,9 @@ def get_main_keyboard(lang: str) -> ReplyKeyboardMarkup:
                 KeyboardButton(text=t("btn_top_mentes", lang)),
                 KeyboardButton(text=t("btn_synergix", lang)),
             ],
+            [
+                KeyboardButton(text=t("btn_programmer", lang)),
+            ],
         ],
         resize_keyboard=True,
         persistent=True,
@@ -353,6 +356,33 @@ async def handle_language_button(message: Message) -> None:
 
     inline_kb = get_language_inline_keyboard()
     await message.answer(t("language_select", lang), reply_markup=inline_kb)
+
+
+@dp.message(F.text == "👨‍💻 Programador")
+@dp.message(F.text == "👨‍💻 Programmer")
+@dp.message(F.text == "👨‍💻 程序员")
+@dp.message(F.text == "👨‍💻 प्रोग्रामर")
+@dp.message(F.text == "👨‍💻 مبرمج")
+@dp.message(F.text == "👨‍💻 Programmeur")
+@dp.message(F.text == "👨‍💻 প্রোগ্রামার")
+@dp.message(F.text == "👨‍💻 پروگرامر")
+async def handle_programmer_button(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    identity = get_identity_manager()
+    profile = await identity.get_profile(uid)
+
+    await ghost.reset_state(uid)
+
+    if not profile.human_verified:
+        await message.answer(t("programmer_not_verified", lang))
+        return
+
+    await ghost.enter_programmer_mode(uid)
+    await message.answer(t("programmer_mode", lang))
 
 
 @dp.message(F.text == "💰 Synergix")
@@ -705,6 +735,10 @@ async def handle_free_conversation(message: Message) -> None:
         await handle_wallet_signature_message(message, uid, text, lang)
         return
 
+    if current_state == "awaiting_code_request":
+        await handle_code_request_message(message, uid, text, lang)
+        return
+
     await handle_conversation_message(message, uid, text, lang)
 
 
@@ -799,6 +833,33 @@ async def handle_conversation_message(
 
     except Exception as e:
         logger.exception("Error en conversación libre de %s: %s", uid, e)
+        await message.answer(t("error_generic", lang))
+
+
+async def handle_code_request_message(
+    message: Message,
+    uid: int,
+    text: str,
+    lang: str,
+) -> None:
+    ghost = get_ghost_state_manager()
+    ai = get_ai_manager()
+
+    await ghost.reset_state(uid)
+    await message.answer(t("programmer_received", lang))
+
+    try:
+        result = await ai.process_code_request(uid, text)
+
+        if result["status"] == "success":
+            await message.answer(result["response"])
+        elif result["status"] == "not_verified":
+            await message.answer(t("programmer_not_verified", lang))
+        else:
+            await message.answer(t("error_generic", lang))
+
+    except Exception as e:
+        logger.exception("Error en solicitud de código de %s: %s", uid, e)
         await message.answer(t("error_generic", lang))
 
 
@@ -962,10 +1023,13 @@ async def on_startup():
 
 async def on_shutdown():
     logger.info("🛑 Apagando Nodo Fantasma...")
+    from aisynergix.ai.local_ia import get_programmer
     thinker = get_ai_manager()._thinker
     judge = get_ai_manager()._judge
+    programmer = get_programmer()
     await thinker.close()
     await judge.close()
+    await programmer.close()
 
 
 async def main():

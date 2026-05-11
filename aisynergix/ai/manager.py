@@ -10,6 +10,7 @@ from aisynergix.ai.local_ia import (
     get_thinker,
     get_judge,
     get_duplicate_detector,
+    get_programmer,
 )
 from aisynergix.services.rag_engine import get_rag_engine
 from aisynergix.bot.identity import (
@@ -385,13 +386,44 @@ class AIManager:
             except Exception:
                 continue
 
+    async def process_code_request(self, uid: int, message: str) -> Dict[str, Any]:
+        profile = await self._identity.get_profile(uid)
+
+        if not profile.human_verified:
+            return {
+                "status": "not_verified",
+                "message_key": "programmer_not_verified",
+                "user_language": profile.language,
+            }
+
+        programmer = get_programmer()
+        try:
+            response = await programmer.code(
+                user_message=message,
+                target_language=profile.language,
+            )
+            return {
+                "status": "success",
+                "response": response,
+                "user_language": profile.language,
+            }
+        except Exception as exc:
+            logger.warning("Programmer error for uid=%s: %s", uid, exc)
+            return {
+                "status": "error",
+                "message_key": "error_generic",
+                "user_language": profile.language,
+            }
+
     async def health_check(self) -> Dict[str, bool]:
         thinker_ok = await self._thinker.health()
         judge_ok = await self._judge.health()
+        programmer_ok = await get_programmer().health()
 
         return {
             "thinker": thinker_ok,
             "judge": judge_ok,
+            "programmer": programmer_ok,
             "all_healthy": thinker_ok and judge_ok,
         }
 
