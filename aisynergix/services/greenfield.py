@@ -160,6 +160,8 @@ def _extract_txhash(tx_result: Any) -> str:
     """Extract blockchain tx hash from a broadcast_message response (best-effort)."""
     if tx_result is None:
         return ""
+    if isinstance(tx_result, str):
+        return tx_result
     try:
         if isinstance(tx_result, dict):
             return str(tx_result.get("txhash") or tx_result.get("tx_hash") or "")
@@ -391,6 +393,7 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
 
     if not exists:
         try:
+            # Tags bundled atomically with MsgCreateObject via CreateObjectOptions
             await client.object.create_object(
                 BUCKET_NAME,
                 path,
@@ -398,6 +401,7 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                 CreateObjectOptions(
                     visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
                     content_type="application/octet-stream",
+                    tags=_dict_to_tags(merged_tags),
                 ),
             )
         except Exception as create_exc:
@@ -406,12 +410,9 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                 uid_ofuscado,
                 create_exc,
             )
-            raise  # Object not on-chain at all — MsgSetTag would fail
+            raise  # Object not on-chain at all — tags were not set
 
-        # The object is now on-chain (CREATED status).  Try to seal it via
-        # put_object; if it fails (SP auto-sealed the 0-byte object or timing
-        # issue) we log a warning but CONTINUE to MsgSetTag.  Tags work on
-        # both CREATED and SEALED objects.
+        # Try to seal the 0-byte object; SP may auto-seal it (error 50004 is OK).
         await asyncio.sleep(_SP_SYNC_DELAY)
         try:
             await client.object.put_object(
@@ -423,24 +424,26 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
             )
         except Exception as put_exc:
             logger.warning(
-                "put_object para objeto fantasma %s: %s — continuando con MsgSetTag",
+                "put_object para objeto fantasma %s: %s (esperado si el SP auto-selló)",
                 uid_ofuscado,
                 put_exc,
             )
+    else:
+        # Object already exists — update tags via standalone MsgSetTag
+        resource = (
+            f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
+            f"::{BUCKET_NAME}/{path}"
+        )
+        msg_set = MsgSetTag(
+            operator=_key_manager.address if _key_manager else "",
+            resource=resource,
+            tags=_dict_to_tags(merged_tags),
+        )
+        await client.blockchain_client.broadcast_message(
+            messages=[msg_set],
+            type_url=[MSG_SET_TAG_TYPE_URL],
+        )
 
-    resource = (
-        f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
-        f"::{BUCKET_NAME}/{path}"
-    )
-    msg_set = MsgSetTag(
-        operator=_key_manager.address if _key_manager else "",
-        resource=resource,
-        tags=_dict_to_tags(merged_tags),
-    )
-    await client.blockchain_client.broadcast_message(
-        messages=[msg_set],
-        type_url=[MSG_SET_TAG_TYPE_URL],
-    )
     logger.info("✅ Usuario %s actualizado en Greenfield", uid_ofuscado)
 
 
@@ -513,23 +516,28 @@ async def write_aporte(
     except Exception:
         object_exists = False
 
+    tx_hash = ""
+
     if not object_exists:
-        await client.object.create_object(
+        # Tags bundled atomically with MsgCreateObject — single transaction
+        create_result = await client.object.create_object(
             BUCKET_NAME,
             path,
             io.BytesIO(encoded),
             CreateObjectOptions(
                 visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
                 content_type="text/plain; charset=utf-8",
+                tags=_dict_to_tags(full_tags),
             ),
         )
+        tx_hash = _extract_txhash(create_result)
         # Give the SP time to index the new object before put_object
         await asyncio.sleep(_SP_SYNC_DELAY)
 
     # ── Step 2: upload content to SP (best-effort) ────────────────────
     # Small objects are often auto-sealed by the SP immediately after
     # create_object, making put_object fail with error 50004 / 50002.
-    # Content is already on-chain in that case; tags are what matters.
+    # Content is already on-chain in that case.
     try:
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
@@ -540,27 +548,28 @@ async def write_aporte(
         )
     except Exception as put_exc:
         logger.warning(
-            "put_object para aporte %s: %s — continuando con MsgSetTag",
+            "put_object para aporte %s: %s (esperado si el SP auto-selló)",
             path, put_exc,
         )
 
-    # ── Step 3: set metadata tags (critical — never skip) ─────────────
-    resource = (
-        f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
-        f"::{BUCKET_NAME}/{path}"
-    )
-    msg_set = MsgSetTag(
-        operator=_key_manager.address if _key_manager else "",
-        resource=resource,
-        tags=_dict_to_tags(full_tags),
-    )
-    tx_result = await client.blockchain_client.broadcast_message(
-        messages=[msg_set],
-        type_url=[MSG_SET_TAG_TYPE_URL],
-    )
-
-    # Extract blockchain tx hash for user display (best-effort)
-    tx_hash = _extract_txhash(tx_result)
+    # ── Step 3: update tags only for existing objects ─────────────────
+    # New objects already have tags set atomically in create_object above.
+    if object_exists:
+        resource = (
+            f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
+            f"::{BUCKET_NAME}/{path}"
+        )
+        msg_set = MsgSetTag(
+            operator=_key_manager.address if _key_manager else "",
+            resource=resource,
+            tags=_dict_to_tags(full_tags),
+        )
+        tx_result = await client.blockchain_client.broadcast_message(
+            messages=[msg_set],
+            type_url=[MSG_SET_TAG_TYPE_URL],
+        )
+        if not tx_hash:
+            tx_hash = _extract_txhash(tx_result)
 
     logger.info("✅ Aporte escrito en %s (tx: %s)", path, tx_hash or "N/A")
     return tx_hash if tx_hash else path
