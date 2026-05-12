@@ -358,13 +358,6 @@ def _user_path(uid_ofuscado: str) -> str:
     return _normalize_path("aisynergix", "users", uid_ofuscado)
 
 
-@retry(
-    retry=retry_if_exception_type(
-        (httpx.HTTPError, ConnectionError, TimeoutError, OSError)
-    ),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-)
 _USER_TAG_DEFAULTS: Dict[str, str] = {
     "fsm_state": "idle",
     "points": "0",
@@ -376,6 +369,13 @@ _USER_TAG_DEFAULTS: Dict[str, str] = {
 }
 
 
+@retry(
+    retry=retry_if_exception_type(
+        (httpx.HTTPError, ConnectionError, TimeoutError, OSError)
+    ),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
 async def read_user_tags(uid_ofuscado: str) -> Dict[str, str]:
     """
     Lee el perfil completo de un usuario desde Greenfield.
