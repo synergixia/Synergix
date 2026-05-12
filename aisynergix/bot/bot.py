@@ -53,6 +53,20 @@ def _is_emoji_only(text: str) -> bool:
         return False
     return not any(c.isascii() and (c.isalpha() or c.isdigit()) for c in cleaned)
 
+
+async def _keep_typing(chat_id: int, stop_event: asyncio.Event) -> None:
+    """Refreshes the Telegram typing indicator every 4 s until stop_event is set."""
+    while not stop_event.is_set():
+        try:
+            await bot.send_chat_action(chat_id=chat_id, action="typing")
+        except Exception:
+            pass
+        # Sleep in 0.5 s slices so we can react quickly to stop_event
+        for _ in range(8):
+            if stop_event.is_set():
+                return
+            await asyncio.sleep(0.5)
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TELEGRAM_TOKEN:
     raise EnvironmentError("TELEGRAM_TOKEN no configurada en el entorno.")
@@ -740,6 +754,8 @@ async def handle_sticker_message(message: Message) -> None:
         return
 
     ai = get_ai_manager()
+    stop_typing = asyncio.Event()
+    typing_task = asyncio.create_task(_keep_typing(message.chat.id, stop_typing))
     try:
         context_text = (
             f"[El usuario envió el sticker {sticker_emoji}. "
@@ -752,6 +768,13 @@ async def handle_sticker_message(message: Message) -> None:
             await message.answer(final)
     except Exception as e:
         logger.exception("Error en respuesta a sticker de %s: %s", uid, e)
+    finally:
+        stop_typing.set()
+        typing_task.cancel()
+        try:
+            await typing_task
+        except asyncio.CancelledError:
+            pass
 
 
 @dp.message()
@@ -888,14 +911,28 @@ async def handle_conversation_message(
             "inteligente y empática en texto, en el idioma del usuario.]"
         )
 
+    stop_typing = asyncio.Event()
+    typing_task = asyncio.create_task(_keep_typing(message.chat.id, stop_typing))
     try:
-        response, sticker_emoji, search_results = await ai.process_conversation(uid, ai_text)
+        response, sticker_emoji, _ = await ai.process_conversation(uid, ai_text)
+
+        # Empty response = uid was already in-flight; first response will arrive soon
+        if not response:
+            return
+
         final = f"{response}\n{sticker_emoji}" if sticker_emoji else response
         await message.answer(final)
 
     except Exception as e:
         logger.exception("Error en conversación libre de %s: %s", uid, e)
         await message.answer(t("error_generic", lang))
+    finally:
+        stop_typing.set()
+        typing_task.cancel()
+        try:
+            await typing_task
+        except asyncio.CancelledError:
+            pass
 
 
 async def handle_code_request_message(

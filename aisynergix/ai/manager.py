@@ -3,7 +3,7 @@ import hashlib
 import logging
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from datetime import datetime, timezone
 
 from aisynergix.ai.local_ia import (
@@ -35,6 +35,14 @@ CHALLENGE_BONUS_POINTS = 5
 MIN_CONTRIBUTION_LENGTH = 20
 ELITE_THRESHOLD = 9.0
 LEGENDARY_THRESHOLD = 9.5
+
+# Cap concurrent thinker calls so the llama.cpp server is never overwhelmed.
+# Matches --parallel 2 in docker-compose; extras queue in asyncio (no timeout risk).
+_THINKER_SEM = asyncio.Semaphore(3)
+
+# UIDs whose conversation request is currently being processed.
+# Prevents the same user from stacking duplicate in-flight requests.
+_in_flight: Set[int] = set()
 
 # langdetect code → our system language code
 _LANGDETECT_MAP: Dict[str, str] = {
@@ -90,49 +98,68 @@ class AIManager:
     ) -> Tuple[str, Optional[str], List[Dict[str, Any]]]:
         """
         Returns (response_text, sticker_emoji_or_None, search_results).
-        The sticker_emoji is extracted from [[STICKER:X]] tokens in the LLM output.
+        Returns ("", None, []) when this uid already has an in-flight request.
         """
-        await self._ensure_rag()
+        # Per-user dedup: drop duplicate requests from the same user
+        if uid in _in_flight:
+            logger.info("uid=%s already in-flight — dropping duplicate request", uid)
+            return "", None, []
 
-        profile = await self._identity.get_profile(uid)
-        target_language = profile.language
+        _in_flight.add(uid)
+        try:
+            # Parallelize: profile load and RAG warm-up are independent
+            profile, _ = await asyncio.gather(
+                self._identity.get_profile(uid),
+                self._ensure_rag(),
+            )
+            target_language = profile.language
 
-        history = await self._get_conversation_history(uid)
-        context, search_results = await self._rag.query(message, target_language)
+            # Parallelize: conversation history and RAG search are independent
+            history, (context, search_results) = await asyncio.gather(
+                self._get_conversation_history(uid),
+                self._rag.query(message, target_language),
+            )
 
-        response = await self._thinker.think(
-            user_message=message,
-            context=context,
-            history=history,
-            target_language=target_language,
-        )
-
-        # Language post-check: if the model responded in the wrong language, retry once.
-        if len(response) >= 30:
-            detected = _detect_lang(response)
-            if detected and detected != target_language:
-                logger.info(
-                    "Language mismatch uid=%s expected=%s detected=%s — retrying",
-                    uid, target_language, detected,
-                )
+            # Semaphore ensures at most 3 concurrent thinker calls (matches --parallel 2
+            # on the server with one extra slot queued in asyncio, avoiding HTTP timeouts)
+            async with _THINKER_SEM:
                 response = await self._thinker.think(
                     user_message=message,
                     context=context,
                     history=history,
                     target_language=target_language,
-                    force_language=True,
                 )
 
-        # Extract optional sticker token
-        clean_response, sticker_emoji = _extract_sticker(response)
+                # Language post-check: retry once if model answered in the wrong language
+                if len(response) >= 30:
+                    detected = _detect_lang(response)
+                    if detected and detected != target_language:
+                        logger.info(
+                            "Language mismatch uid=%s expected=%s detected=%s — retrying",
+                            uid, target_language, detected,
+                        )
+                        response = await self._thinker.think(
+                            user_message=message,
+                            context=context,
+                            history=history,
+                            target_language=target_language,
+                            force_language=True,
+                        )
 
-        await self._append_conversation_history(uid, "user", message)
-        await self._append_conversation_history(uid, "assistant", clean_response)
+            clean_response, sticker_emoji = _extract_sticker(response)
 
-        if context and search_results:
-            await self._process_residual_rewards(search_results)
+            await self._append_conversation_history(uid, "user", message)
+            await self._append_conversation_history(uid, "assistant", clean_response)
 
-        return clean_response, sticker_emoji, search_results
+            # Fire residual rewards in the background — Greenfield writes must not
+            # block the user from receiving their response
+            if context and search_results:
+                asyncio.create_task(self._process_residual_rewards(search_results))
+
+            return clean_response, sticker_emoji, search_results
+
+        finally:
+            _in_flight.discard(uid)
 
     async def process_contribution(
         self,
@@ -354,8 +381,8 @@ class AIManager:
 
             self._context_cache[uid].append({"role": role, "content": content})
 
-            if len(self._context_cache[uid]) > 14:
-                self._context_cache[uid] = self._context_cache[uid][-14:]
+            if len(self._context_cache[uid]) > 10:
+                self._context_cache[uid] = self._context_cache[uid][-10:]
 
     async def clear_conversation_history(self, uid: int) -> None:
         async with self._context_cache_lock:
