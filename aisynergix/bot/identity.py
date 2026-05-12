@@ -139,19 +139,36 @@ class UserProfile:
 
 
 class UserCache:
+    """
+    Cache de perfiles con TTL corto para garantizar que el bucket Greenfield
+    sea la fuente de verdad en tiempo real. TTL=30s significa staleness máxima
+    de 30 segundos — suficiente para que cualquier escritura externa al
+    IdentityManager (p. ej. wallet_verify.py, sync_brain.py) se refleje pronto.
+    """
+
+    TTL_SECONDS: int = 30
+
     def __init__(self, max_size: int = 500):
-        self._cache: Dict[int, UserProfile] = {}
+        self._cache: Dict[int, tuple] = {}  # uid -> (profile, cached_at_ts)
         self._max_size = max_size
 
     def get(self, uid: int) -> Optional[UserProfile]:
-        return self._cache.get(uid)
+        entry = self._cache.get(uid)
+        if entry is None:
+            return None
+        profile, cached_at = entry
+        if time.time() - cached_at > self.TTL_SECONDS:
+            # TTL expirado — eliminar y forzar relectura desde Greenfield
+            self._cache.pop(uid, None)
+            return None
+        return profile
 
     def set(self, uid: int, profile: UserProfile) -> None:
-        self._cache[uid] = profile
+        self._cache[uid] = (profile, time.time())
         if len(self._cache) > self._max_size:
             oldest = min(
                 self._cache.items(),
-                key=lambda x: x[1].last_seen_ts,
+                key=lambda x: x[1][1],
             )
             del self._cache[oldest[0]]
 

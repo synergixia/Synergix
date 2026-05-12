@@ -392,8 +392,9 @@ async def read_user_tags(uid_ofuscado: str) -> Dict[str, str]:
     path = _user_path(uid_ofuscado)
 
     # ── Intento 1: get_object (lee contenido + tags) ──────────────────
+    # SDK retorna (ObjectInfo, data) — orden crítico, ver examples/basic_storage.py
     try:
-        raw, obj_info = await client.object.get_object(
+        obj_info, raw = await client.object.get_object(
             BUCKET_NAME, path, GetObjectOption()
         )
         content = raw if isinstance(raw, bytes) else (raw.encode("utf-8") if raw else b"")
@@ -471,11 +472,14 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                     tags=_dict_to_tags(packed_tags),
                 ),
             )
+            logger.info(
+                "✅ create_object atómico OK para usuario %s — tags=%s",
+                uid_ofuscado, list(packed_tags.keys()),
+            )
         except Exception as create_exc:
-            logger.warning(
-                "create_object falló para usuario %s: %s — no se pueden fijar tags",
-                uid_ofuscado,
-                create_exc,
+            logger.exception(
+                "❌ create_object con tags falló para usuario %s — tags=%s err=%s",
+                uid_ofuscado, list(packed_tags.keys()), create_exc,
             )
             raise
 
@@ -509,10 +513,21 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
             resource=resource,
             tags=_dict_to_tags(packed_tags),
         )
-        await client.blockchain_client.broadcast_message(
-            messages=[msg_set],
-            type_url=[MSG_SET_TAG_TYPE_URL],
-        )
+        try:
+            await client.blockchain_client.broadcast_message(
+                messages=[msg_set],
+                type_url=[MSG_SET_TAG_TYPE_URL],
+            )
+            logger.info(
+                "✅ MsgSetTag OK para usuario %s — tags=%s",
+                uid_ofuscado, list(packed_tags.keys()),
+            )
+        except Exception as set_exc:
+            logger.exception(
+                "❌ MsgSetTag falló para usuario %s — tags=%s err=%s",
+                uid_ofuscado, list(packed_tags.keys()), set_exc,
+            )
+            raise
 
     logger.info("✅ Usuario %s actualizado en Greenfield", uid_ofuscado)
 
@@ -595,17 +610,28 @@ async def write_aporte(
 
     if not object_exists:
         # Tags bundled atomically with MsgCreateObject — single transaction
-        create_result = await client.object.create_object(
-            BUCKET_NAME,
-            path,
-            io.BytesIO(encoded),
-            CreateObjectOptions(
-                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-                content_type="text/plain; charset=utf-8",
-                tags=_dict_to_tags(packed_tags),
-            ),
-        )
-        tx_hash = _extract_txhash(create_result)
+        try:
+            create_result = await client.object.create_object(
+                BUCKET_NAME,
+                path,
+                io.BytesIO(encoded),
+                CreateObjectOptions(
+                    visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+                    content_type="text/plain; charset=utf-8",
+                    tags=_dict_to_tags(packed_tags),
+                ),
+            )
+            tx_hash = _extract_txhash(create_result)
+            logger.info(
+                "✅ create_object atómico OK para aporte %s — tags=%s tx=%s",
+                path, list(packed_tags.keys()), tx_hash or "N/A",
+            )
+        except Exception as create_exc:
+            logger.exception(
+                "❌ create_object con tags falló para aporte %s — tags=%s err=%s",
+                path, list(packed_tags.keys()), create_exc,
+            )
+            raise
         # Give the SP time to index the new object before put_object
         await asyncio.sleep(_SP_SYNC_DELAY)
 
@@ -639,12 +665,23 @@ async def write_aporte(
             resource=resource,
             tags=_dict_to_tags(packed_tags),
         )
-        tx_result = await client.blockchain_client.broadcast_message(
-            messages=[msg_set],
-            type_url=[MSG_SET_TAG_TYPE_URL],
-        )
-        if not tx_hash:
-            tx_hash = _extract_txhash(tx_result)
+        try:
+            tx_result = await client.blockchain_client.broadcast_message(
+                messages=[msg_set],
+                type_url=[MSG_SET_TAG_TYPE_URL],
+            )
+            if not tx_hash:
+                tx_hash = _extract_txhash(tx_result)
+            logger.info(
+                "✅ MsgSetTag OK para aporte existente %s — tx=%s",
+                path, tx_hash or "N/A",
+            )
+        except Exception as set_exc:
+            logger.exception(
+                "❌ MsgSetTag falló para aporte existente %s — err=%s",
+                path, set_exc,
+            )
+            raise
 
     logger.info("✅ Aporte escrito en %s (tx: %s)", path, tx_hash or "N/A")
     return tx_hash if tx_hash else path
@@ -663,7 +700,8 @@ async def read_aporte(path: str) -> Tuple[str, Dict[str, str]]:
     Retorna (texto, tags_dict).
     """
     client = await get_client()
-    raw_data, obj_info = await client.object.get_object(
+    # SDK retorna (ObjectInfo, data) en ese orden
+    obj_info, raw_data = await client.object.get_object(
         BUCKET_NAME, path, GetObjectOption()
     )
     texto = (
@@ -758,7 +796,8 @@ async def read_json_data(data_path: str) -> Dict[str, Any]:
     """
     client = await get_client()
     try:
-        raw_data, _ = await client.object.get_object(
+        # SDK retorna (ObjectInfo, data) en ese orden
+        _, raw_data = await client.object.get_object(
             BUCKET_NAME, data_path, GetObjectOption()
         )
         text = (
@@ -1184,8 +1223,9 @@ async def load_ai_guard() -> List[str]:
     ]
 
     # Step 1: try to read the file content
+    # SDK retorna (ObjectInfo, data) en ese orden
     try:
-        raw, _ = await client.object.get_object(BUCKET_NAME, path, GetObjectOption())
+        _, raw = await client.object.get_object(BUCKET_NAME, path, GetObjectOption())
         text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
         patterns = [
             line.strip()
