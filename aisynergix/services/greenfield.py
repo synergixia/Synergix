@@ -156,6 +156,36 @@ def _normalize_path(*segments: str) -> str:
     return p[1:] if p.startswith("/") else p
 
 
+# Keys stored as visible Greenfield tags (max 3 explicit + 1 "meta" JSON = 4 total).
+# All remaining fields are packed into the "meta" tag as compact JSON.
+_EXPLICIT_USER_KEYS: frozenset = frozenset({"points", "rank", "language"})
+_EXPLICIT_APORTE_KEYS: frozenset = frozenset({"author_uid", "quality_score", "category"})
+
+
+def _pack_tags(tags: Dict[str, str], explicit_keys: frozenset) -> Dict[str, str]:
+    """
+    Reduce an arbitrary tag dict to at most 4 Greenfield tags.
+    3 explicit (visible in DCellar) + 1 'meta' tag with the rest as compact JSON.
+    """
+    packed = {k: v for k, v in tags.items() if k in explicit_keys}
+    meta = {k: v for k, v in tags.items() if k not in explicit_keys}
+    if meta:
+        packed["meta"] = json.dumps(meta, separators=(",", ":"), ensure_ascii=False)
+    return packed
+
+
+def _unpack_tags(tags: Dict[str, str]) -> Dict[str, str]:
+    """Inverse of _pack_tags: expand the 'meta' JSON tag back into the flat dict."""
+    result = {k: v for k, v in tags.items() if k != "meta"}
+    meta_str = tags.get("meta")
+    if meta_str:
+        try:
+            result.update(json.loads(meta_str))
+        except Exception:
+            pass
+    return result
+
+
 def _extract_txhash(tx_result: Any) -> str:
     """Extract blockchain tx hash from a broadcast_message response (best-effort)."""
     if tx_result is None:
@@ -335,26 +365,56 @@ def _user_path(uid_ofuscado: str) -> str:
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
+_USER_TAG_DEFAULTS: Dict[str, str] = {
+    "fsm_state": "idle",
+    "points": "0",
+    "rank": "🌱 Iniciado",
+    "daily_aportes_count": "0",
+    "total_uses_count": "0",
+    "language": "es",
+    "last_seen_ts": "0",
+}
+
+
 async def read_user_tags(uid_ofuscado: str) -> Dict[str, str]:
     """
-    Lee los tags Web3 del archivo fantasma de un usuario.
-    Si el archivo no existe, retorna valores por defecto.
+    Lee el perfil completo de un usuario desde Greenfield.
+
+    Soporta dos formatos:
+    - Opción B (usuarios nuevos): contenido JSON completo en el objeto +
+      4 tags visibles. Se intenta leer el JSON del contenido primero.
+    - Opción A / formato antiguo: perfil en tags (empaquetado con meta JSON
+      o tags directos del formato anterior). Se desempaqueta con _unpack_tags.
+
+    Si el objeto no existe, retorna valores por defecto.
     """
     client = await get_client()
     path = _user_path(uid_ofuscado)
+
+    # ── Intento 1: get_object (lee contenido + tags) ──────────────────
+    try:
+        raw, obj_info = await client.object.get_object(
+            BUCKET_NAME, path, GetObjectOption()
+        )
+        content = raw if isinstance(raw, bytes) else (raw.encode("utf-8") if raw else b"")
+        if content and len(content) > 2:
+            try:
+                return json.loads(content.decode("utf-8"))
+            except Exception:
+                pass
+        # Contenido vacío o no JSON (objeto fantasma 0 bytes) — leer desde tags
+        result = _unpack_tags(_tags_to_dict(obj_info.tags))
+        return result if result else dict(_USER_TAG_DEFAULTS)
+    except Exception:
+        pass
+
+    # ── Intento 2: get_object_head (solo tags, sin contenido) ─────────
     try:
         obj_info = await client.object.get_object_head(BUCKET_NAME, path)
-        return _tags_to_dict(obj_info.tags)
+        result = _unpack_tags(_tags_to_dict(obj_info.tags))
+        return result if result else dict(_USER_TAG_DEFAULTS)
     except Exception:
-        return {
-            "fsm_state": "idle",
-            "points": "0",
-            "rank": "🌱 Iniciado",
-            "daily_aportes_count": "0",
-            "total_uses_count": "0",
-            "language": "es",
-            "last_seen_ts": "0",
-        }
+        return dict(_USER_TAG_DEFAULTS)
 
 
 @retry(
@@ -383,7 +443,8 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
     try:
         obj_info = await client.object.get_object_head(BUCKET_NAME, path)
         exists = True
-        existing_tags = _tags_to_dict(obj_info.tags)
+        # Unpack meta JSON so existing fields merge cleanly (not as raw JSON string)
+        existing_tags = _unpack_tags(_tags_to_dict(obj_info.tags))
     except Exception:
         exists = False
 
@@ -391,17 +452,23 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
     # Preserves wallet_address and any future out-of-profile fields.
     merged_tags = {**existing_tags, **tags}
 
+    # Pack tags to ≤4: 3 explicit (points, rank, language) + 1 "meta" JSON
+    packed_tags = _pack_tags(merged_tags, _EXPLICIT_USER_KEYS)
+
     if not exists:
+        # ── Opción B: nuevo usuario ────────────────────────────────────
+        # Contenido del objeto = JSON completo (todos los campos del perfil).
+        # 4 tags Greenfield = campos más visibles en DCellar + meta con el resto.
+        content_json = json.dumps(merged_tags, ensure_ascii=False).encode("utf-8")
         try:
-            # Tags bundled atomically with MsgCreateObject via CreateObjectOptions
             await client.object.create_object(
                 BUCKET_NAME,
                 path,
-                io.BytesIO(b""),
+                io.BytesIO(content_json),
                 CreateObjectOptions(
                     visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-                    content_type="application/octet-stream",
-                    tags=_dict_to_tags(merged_tags),
+                    content_type="application/json",
+                    tags=_dict_to_tags(packed_tags),
                 ),
             )
         except Exception as create_exc:
@@ -410,26 +477,29 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                 uid_ofuscado,
                 create_exc,
             )
-            raise  # Object not on-chain at all — tags were not set
+            raise
 
-        # Try to seal the 0-byte object; SP may auto-seal it (error 50004 is OK).
+        # Subir el contenido JSON al SP (best-effort; el SP podría auto-sellar).
         await asyncio.sleep(_SP_SYNC_DELAY)
         try:
             await client.object.put_object(
                 bucket_name=BUCKET_NAME,
                 object_name=path,
-                object_size=0,
-                reader=io.BytesIO(b""),
-                opts=PutObjectOptions(content_type="application/octet-stream"),
+                object_size=len(content_json),
+                reader=io.BytesIO(content_json),
+                opts=PutObjectOptions(content_type="application/json"),
             )
         except Exception as put_exc:
             logger.warning(
-                "put_object para objeto fantasma %s: %s (esperado si el SP auto-selló)",
+                "put_object para usuario %s: %s (el contenido JSON puede no estar en el SP aún)",
                 uid_ofuscado,
                 put_exc,
             )
     else:
-        # Object already exists — update tags via standalone MsgSetTag
+        # ── Opción A: usuario existente (objeto SEALED) ────────────────
+        # No se puede actualizar el contenido de un objeto SEALED sin
+        # delete+recreate (arriesga error 50004 del SP). Actualizamos solo
+        # los 4 tags vía MsgSetTag: 3 explícitos + meta JSON con el resto.
         resource = (
             f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
             f"::{BUCKET_NAME}/{path}"
@@ -437,7 +507,7 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
         msg_set = MsgSetTag(
             operator=_key_manager.address if _key_manager else "",
             resource=resource,
-            tags=_dict_to_tags(merged_tags),
+            tags=_dict_to_tags(packed_tags),
         )
         await client.blockchain_client.broadcast_message(
             messages=[msg_set],
@@ -516,6 +586,11 @@ async def write_aporte(
     except Exception:
         object_exists = False
 
+    # ── Opción A: empaquetar en ≤4 tags ──────────────────────────────────
+    # 3 explícitos (author_uid, quality_score, category) visibles en DCellar
+    # + 1 tag "meta" con el resto como JSON compacto (lang, impact_index, etc.)
+    packed_tags = _pack_tags(full_tags, _EXPLICIT_APORTE_KEYS)
+
     tx_hash = ""
 
     if not object_exists:
@@ -527,7 +602,7 @@ async def write_aporte(
             CreateObjectOptions(
                 visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
                 content_type="text/plain; charset=utf-8",
-                tags=_dict_to_tags(full_tags),
+                tags=_dict_to_tags(packed_tags),
             ),
         )
         tx_hash = _extract_txhash(create_result)
@@ -562,7 +637,7 @@ async def write_aporte(
         msg_set = MsgSetTag(
             operator=_key_manager.address if _key_manager else "",
             resource=resource,
-            tags=_dict_to_tags(full_tags),
+            tags=_dict_to_tags(packed_tags),
         )
         tx_result = await client.blockchain_client.broadcast_message(
             messages=[msg_set],
@@ -596,7 +671,7 @@ async def read_aporte(path: str) -> Tuple[str, Dict[str, str]]:
         if isinstance(raw_data, bytes)
         else str(raw_data)
     )
-    tags = _tags_to_dict(obj_info.tags)
+    tags = _unpack_tags(_tags_to_dict(obj_info.tags))
     return texto, tags
 
 
@@ -845,8 +920,10 @@ async def reset_all_daily_counts() -> int:
                 obj_info = await client.object.get_object_head(
                     BUCKET_NAME, obj.object_name
                 )
-                current = _tags_to_dict(obj_info.tags)
+                # Unpack meta JSON → full dict, update field, re-pack to ≤4 tags
+                current = _unpack_tags(_tags_to_dict(obj_info.tags))
                 current["daily_aportes_count"] = "0"
+                packed = _pack_tags(current, _EXPLICIT_USER_KEYS)
 
                 resource = (
                     f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
@@ -855,7 +932,7 @@ async def reset_all_daily_counts() -> int:
                 msg = MsgSetTag(
                     operator=_key_manager.address if _key_manager else "",
                     resource=resource,
-                    tags=_dict_to_tags(current),
+                    tags=_dict_to_tags(packed),
                 )
                 await client.blockchain_client.broadcast_message(
                     messages=[msg],
