@@ -51,6 +51,9 @@ services:
       - "1.1"
       - "-n"
       - "1024"
+      - "--parallel"
+      - "2"
+      - "--cont-batching"
     ports:
       - "127.0.0.1:8081:8081"
     deploy:
@@ -104,7 +107,7 @@ services:
       - "--repeat-penalty"
       - "1.0"
       - "-n"
-      - "256"
+      - "768"
     ports:
       - "127.0.0.1:8080:8080"
     deploy:
