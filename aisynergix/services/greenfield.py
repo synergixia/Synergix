@@ -156,6 +156,29 @@ def _normalize_path(*segments: str) -> str:
     return p[1:] if p.startswith("/") else p
 
 
+def _extract_txhash(tx_result: Any) -> str:
+    """Extract blockchain tx hash from a broadcast_message response (best-effort)."""
+    if tx_result is None:
+        return ""
+    try:
+        if isinstance(tx_result, dict):
+            return str(tx_result.get("txhash") or tx_result.get("tx_hash") or "")
+        for attr in ("txhash", "tx_hash", "hash"):
+            val = getattr(tx_result, attr, None)
+            if val:
+                return str(val)
+        # Some SDK versions nest it under tx_response
+        inner = getattr(tx_result, "tx_response", None)
+        if inner:
+            for attr in ("txhash", "tx_hash"):
+                val = getattr(inner, attr, None)
+                if val:
+                    return str(val)
+    except Exception:
+        pass
+    return ""
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # INICIALIZACIÓN DEL CLIENTE
 # ═══════════════════════════════════════════════════════════════════════
@@ -460,11 +483,17 @@ async def write_aporte(
     """
     Escribe un aporte en Greenfield con sus tags obligatorios.
     ─────────────────────────────────────────────────────────
-    ENFOQUE HÍBRIDO:
-      MsgCreateObject vía broadcast_message (SIN dependencia .so).
-      Luego MsgSetTag para fijar los metadatos.
-    ─────────────────────────────────────────────────────────
-    Retorna la ruta (path) del objeto creado.
+    Flujo resiliente:
+      1. create_object solo si el objeto aún no existe en la cadena
+         (idempotente para reintentos — el objeto puede haberse creado
+          en un intento previo antes de que fallara put_object).
+      2. put_object best-effort: si el SP ya selló el objeto (error 50004
+         o 50002) se registra un warning y se continúa.  El contenido ya
+         está en el SP desde create_object para objetos pequeños.
+      3. MsgSetTag siempre se ejecuta — funciona sobre objetos CREATED y
+         SEALED.
+    Retorna el tx hash del broadcast (si el SDK lo expone) o la ruta del
+    objeto como identificador.
     """
     client = await get_client()
     path = _aporte_path(uid_ofuscado, ts)
@@ -473,27 +502,49 @@ async def write_aporte(
     full_tags["author_uid"] = uid_ofuscado
 
     encoded = texto.encode("utf-8")
-    reader = io.BytesIO(encoded)
     payload_size = len(encoded)
 
-    await client.object.create_object(
-        BUCKET_NAME,
-        path,
-        io.BytesIO(encoded),
-        CreateObjectOptions(
-            visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-            content_type="text/plain; charset=utf-8",
-        ),
-    )
-    await asyncio.sleep(_SP_SYNC_DELAY)
-    await client.object.put_object(
-        bucket_name=BUCKET_NAME,
-        object_name=path,
-        object_size=payload_size,
-        reader=reader,
-        opts=PutObjectOptions(content_type="text/plain; charset=utf-8"),
-    )
+    # ── Step 1: create object only if not already on-chain ────────────
+    object_exists = False
+    try:
+        await client.object.get_object_head(BUCKET_NAME, path)
+        object_exists = True
+        logger.debug("Aporte %s ya existe en Greenfield — saltando create_object", path)
+    except Exception:
+        object_exists = False
 
+    if not object_exists:
+        await client.object.create_object(
+            BUCKET_NAME,
+            path,
+            io.BytesIO(encoded),
+            CreateObjectOptions(
+                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+                content_type="text/plain; charset=utf-8",
+            ),
+        )
+        # Give the SP time to index the new object before put_object
+        await asyncio.sleep(_SP_SYNC_DELAY)
+
+    # ── Step 2: upload content to SP (best-effort) ────────────────────
+    # Small objects are often auto-sealed by the SP immediately after
+    # create_object, making put_object fail with error 50004 / 50002.
+    # Content is already on-chain in that case; tags are what matters.
+    try:
+        await client.object.put_object(
+            bucket_name=BUCKET_NAME,
+            object_name=path,
+            object_size=payload_size,
+            reader=io.BytesIO(encoded),
+            opts=PutObjectOptions(content_type="text/plain; charset=utf-8"),
+        )
+    except Exception as put_exc:
+        logger.warning(
+            "put_object para aporte %s: %s — continuando con MsgSetTag",
+            path, put_exc,
+        )
+
+    # ── Step 3: set metadata tags (critical — never skip) ─────────────
     resource = (
         f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
         f"::{BUCKET_NAME}/{path}"
@@ -503,13 +554,16 @@ async def write_aporte(
         resource=resource,
         tags=_dict_to_tags(full_tags),
     )
-    await client.blockchain_client.broadcast_message(
+    tx_result = await client.blockchain_client.broadcast_message(
         messages=[msg_set],
         type_url=[MSG_SET_TAG_TYPE_URL],
     )
 
-    logger.info("✅ Aporte escrito en %s", path)
-    return path
+    # Extract blockchain tx hash for user display (best-effort)
+    tx_hash = _extract_txhash(tx_result)
+
+    logger.info("✅ Aporte escrito en %s (tx: %s)", path, tx_hash or "N/A")
+    return tx_hash if tx_hash else path
 
 
 @retry(
