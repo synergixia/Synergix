@@ -848,10 +848,20 @@ async def handle_contribution_message(
             elif result.get("tier") == "elite":
                 message_key = "contribution_success_elite"
 
+            cid_raw = result.get("cid", "")
+            # CIDs reales son 64 hex chars (Greenfield tx hash sin 0x).
+            # Un "local:" prefix indica que la escritura a Greenfield falló;
+            # mostramos solo los primeros 8 chars para no alarmar al usuario
+            # pero el log ERROR detalla la causa real.
+            if cid_raw.startswith("local:"):
+                cid_display = cid_raw[6:18] + "… (pendiente)"
+            else:
+                cid_display = cid_raw[:16] + "…" if len(cid_raw) > 16 else cid_raw
+
             response_text = t(
                 message_key,
                 lang,
-                cid=result.get("cid", ""),
+                cid=cid_display,
                 quality_score=result.get("quality_score", 0),
                 points_gained=result.get("points_gained", 0),
                 new_total_points=result.get("new_total_points", 0),
