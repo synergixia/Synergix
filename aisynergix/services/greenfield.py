@@ -39,6 +39,7 @@ from greenfield_python_sdk.models.object import (
 from greenfield_python_sdk.models.request import ResourceType
 from greenfield_python_sdk.protos.greenfield.storage import (
     MsgSetTag,
+    ObjectStatus,
     ResourceTags,
     ResourceTagsTag,
 )
@@ -972,6 +973,16 @@ async def list_aportes(
                     obj_info = await client.object.get_object_head(
                         BUCKET_NAME, obj.object_name
                     )
+                    # Skip orphan objects (CREATED on-chain but never sealed
+                    # by SP — typically from old failed write_aporte runs).
+                    # get_object via SP returns 50004 "no permission" on them.
+                    status = getattr(obj_info, "object_status", None)
+                    if status is not None and status != ObjectStatus.OBJECT_STATUS_SEALED:
+                        logger.debug(
+                            "Saltando aporte no-SEALED %s (status=%s)",
+                            obj.object_name, status,
+                        )
+                        continue
                     tags = _tags_to_dict(obj_info.tags)
                     resultados.append(
                         {
