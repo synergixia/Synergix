@@ -257,12 +257,16 @@ class AIManager:
                 ts=ts,
             )
         except Exception as gf_err:
-            # Greenfield write failed (SP approval unavailable, network issue, etc.).
-            # Fall back to a local content-addressed ID so the contribution still
-            # enters the RAG index and the user sees success.
+            # Greenfield write failed. Log at ERROR level with traceback so the
+            # root cause is visible in logs (not hidden as WARNING).
+            # Fall back to a local ID so the contribution still enters the RAG
+            # index, but the caller can detect the failure via the "local:" prefix.
             content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
             object_path = f"local:{profile.uid_hash}_{ts}_{content_hash}"
-            logger.warning("Greenfield write failed, using local CID %s: %s", object_path, gf_err)
+            logger.error(
+                "❌ Greenfield write_aporte falló para %s — usando local CID %s",
+                profile.uid_hash, object_path, exc_info=True,
+            )
 
         await self._rag.add_contribution(
             text=content,

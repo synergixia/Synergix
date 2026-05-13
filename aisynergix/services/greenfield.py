@@ -634,15 +634,19 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
     packed_tags = _pack_user_tags(merged_tags)
 
     if not exists:
-        # Usuario nuevo: create_object atómico con tags
+        # Usuario nuevo: create_object atómico con tags + put_object para sellar.
+        # El objeto usa contenido mínimo '{}' (2 bytes) en lugar de 0 bytes.
+        # Los objetos 0-byte pueden no recibir put_object si el SP auto-sella,
+        # pero queremos SEALED explícito para que los futuros MsgSetTag funcionen.
+        minimal_content = b"{}"
         try:
             await client.object.create_object(
                 BUCKET_NAME,
                 path,
-                io.BytesIO(b""),
+                io.BytesIO(minimal_content),
                 CreateObjectOptions(
                     visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-                    content_type="application/octet-stream",
+                    content_type="application/json",
                     tags=_dict_to_tags(packed_tags),
                 ),
             )
@@ -657,6 +661,22 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                 uid_ofuscado, list(packed_tags.keys()), create_exc,
             )
             raise
+
+        # Dar tiempo al SP para indexar el objeto antes de sellarlo
+        await asyncio.sleep(_SP_SYNC_DELAY)
+        try:
+            await client.object.put_object(
+                bucket_name=BUCKET_NAME,
+                object_name=path,
+                object_size=len(minimal_content),
+                reader=io.BytesIO(minimal_content),
+                opts=PutObjectOptions(content_type="application/json"),
+            )
+        except Exception as put_exc:
+            logger.warning(
+                "put_object para usuario %s: %s (puede auto-sellarse, MsgSetTag podría fallar)",
+                uid_ofuscado, put_exc,
+            )
     else:
         # Usuario existente: actualizar tags vía MsgSetTag
         resource = (
