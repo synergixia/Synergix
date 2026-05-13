@@ -210,7 +210,7 @@ services:
       PRIVATE_KEY: ${PRIVATE_KEY:?err}
 
       # ── Synergix App (tu código lee estas manualmente) ────────
-      SYNERGIX_BUCKET_NAME: ${BUCKET_NAME:-synergix-v1}
+      SYNERGIX_BUCKET_NAME: ${BUCKET_NAME:-synergix-v2}
       SYNERGIX_SP_ENDPOINT: ${SP_ENDPOINT:-https://greenfield-sp.bnbchain.org}
       SYNERGIX_DCELLAR_SP_ADDRESS: ${DCELLAR_SP_ADDRESS:-}
       SYNERGIX_BUCKET_ID: ${BUCKET_ID:-}
