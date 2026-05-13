@@ -335,25 +335,40 @@ async def handle_memory_button(message: Message) -> None:
     from aisynergix.bot.identity import _hash_uid
 
     uid_hash = _hash_uid(uid)
-    aportes = await list_aportes(uid_hash, limit=10)
+    aportes = await list_aportes(uid_hash, limit=5)
 
     if not aportes:
         await message.answer(t("memory_empty", lang))
         return
 
-    memory_text = t("memory_header", lang)
+    identity = get_identity_manager()
+    profile = await identity.get_profile(uid)
+    count = len(aportes)
 
-    for aporte in aportes:
+    memory_text = t("memory_header", lang, count=count)
+
+    for i, aporte in enumerate(aportes, 1):
         try:
             texto, tags = await read_aporte(aporte["path"])
-            quality = tags.get("quality_score", "N/A")
+            quality = tags.get("quality_score", "?")
+            cid = tags.get("cid") or aporte["path"]
 
-            preview = texto[:120] + "..." if len(texto) > 120 else texto
-            memory_text += t("memory_entry", lang, text=preview, quality=quality) + "\n"
+            # First sentence of the contribution as summary
+            sentences = [s.strip() for s in texto.replace("\n", " ").split(".") if s.strip()]
+            summary = sentences[0] if sentences else texto[:100]
+            if len(summary) < 20 and len(sentences) > 1:
+                summary = summary + ". " + sentences[1]
+            if len(summary) > 120:
+                summary = summary[:120] + "…"
+
+            memory_text += (
+                t("memory_entry", lang, num=i, cid=cid, quality=quality, summary=summary)
+                + "\n"
+            )
         except Exception:
             continue
 
-    memory_text += t("memory_footer", lang, count=len(aportes))
+    memory_text += t("memory_footer", lang, points=profile.points, total=count)
     await message.answer(memory_text)
 
 
@@ -849,14 +864,10 @@ async def handle_contribution_message(
                 message_key = "contribution_success_elite"
 
             cid_raw = result.get("cid", "")
-            # CIDs reales son 64 hex chars (Greenfield tx hash sin 0x).
-            # Un "local:" prefix indica que la escritura a Greenfield falló;
-            # mostramos solo los primeros 8 chars para no alarmar al usuario
-            # pero el log ERROR detalla la causa real.
             if cid_raw.startswith("local:"):
                 cid_display = cid_raw[6:18] + "… (pendiente)"
             else:
-                cid_display = cid_raw[:16] + "…" if len(cid_raw) > 16 else cid_raw
+                cid_display = cid_raw  # 64-char blockchain tx hash completo
 
             response_text = t(
                 message_key,
