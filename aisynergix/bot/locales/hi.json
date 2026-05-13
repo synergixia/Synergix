@@ -7,7 +7,7 @@
   "btn_language": "🌐 भाषा",
   "status_msg": "📊 <b>Synergix सामूहिक बुद्धिमत्ता</b>\n\n📦 अमर योगदान: {total_aportes}\n🏆 चुनौती: {tema_actual}\n\n── आपका प्रभाव, {name} ──\n📈 स्कोर: {points} पॉइंट्स\n🔗 योगदान: {contribuciones}\n🔁 आपके योगदान के उपयोग: {total_uses_count}\n🏅 रैंक: {rank} (अगले स्तर के लिए {points_next} पॉइंट्स)\n💡 लाभ: {beneficio}\n✖️ गुणक: ×{multiplier} | 📅 दैनिक सीमा: {daily_limit} योगदान",
   "memory_header": "🧠 <b>आपकी अमर स्मृति</b>\n✨ <b>{count}</b> ज्ञान नेटवर्क पर अमर हो गए\n\n",
-  "memory_entry": "🏆 {num}. CID: <code>{cid}</code> ⭐{quality}/10\n📝 {summary}",
+  "memory_entry": "🏆 {num}. {date} [{category}] ⭐{quality}/10\n📝 {summary}",
   "memory_footer": "\n📈 स्कोर: <b>{points}</b> pts | योगदान: <b>{total}</b>",
   "memory_empty": "🧠 आपने अभी तक नेटवर्क पर कोई ज्ञान अमर नहीं किया है।\n\n🔥 <b>योगदान</b> पर टैप करें और अपनी पहली शाश्वत छाप छोड़ें।",
   "contribution_mode": "🎯 <b>योगदान मोड सक्रिय</b>\n\nअपना विचार, चिंतन या ज्ञान लिखें। यह Synergix नेटवर्क पर हमेशा के लिए दर्ज हो जाएगा।\n\n💡 न्यूनतम 20 अक्षर।\n✨ मौलिक बनें, गहन बनें, शाश्वत बनें।",

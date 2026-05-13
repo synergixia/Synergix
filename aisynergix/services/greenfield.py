@@ -174,6 +174,7 @@ _USER_META_COMPACT: Dict[str, str] = {
     "daily_aportes_count": "d",
     "total_uses_count":    "u",
     "last_seen_ts":        "l",
+    "fsm_state":           "s",   # string; idle/awaiting_contribution/etc.
 }
 _USER_META_EXPAND: Dict[str, str] = {v: k for k, v in _USER_META_COMPACT.items()}
 
@@ -204,6 +205,8 @@ def _pack_user_tags(tags: Dict[str, str]) -> Dict[str, str]:
                 meta[short_k] = int(round(float(v) * 100))
             elif long_k == "human_verified":
                 meta[short_k] = 1 if str(v).lower() == "true" else 0
+            elif long_k == "fsm_state":
+                meta[short_k] = str(v)
             else:
                 meta[short_k] = int(float(v))
         except (ValueError, TypeError):
@@ -212,7 +215,8 @@ def _pack_user_tags(tags: Dict[str, str]) -> Dict[str, str]:
     if meta:
         meta_str = json.dumps(meta, separators=(",", ":"))
         # Defensive: drop low-priority fields until value fits in 64 bytes.
-        priority_drop = ["l", "u", "d", "t", "v"]
+        # "s" (fsm_state) drops early — it's ephemeral and reconstructible.
+        priority_drop = ["l", "s", "u", "d", "t", "v"]
         while len(meta_str.encode("utf-8")) > _TAG_VALUE_MAX_BYTES and meta:
             dropped = False
             for k in priority_drop:
@@ -250,6 +254,8 @@ def _unpack_user_tags(tags: Dict[str, str]) -> Dict[str, str]:
                         result[long_k] = f"{int(v) / 100:.2f}"
                     elif long_k == "human_verified":
                         result[long_k] = "true" if int(v) == 1 else "false"
+                    elif long_k == "fsm_state":
+                        result[long_k] = str(v)
                     else:
                         result[long_k] = str(int(v))
                 except (ValueError, TypeError):
@@ -868,36 +874,6 @@ async def write_aporte(
             )
             raise
 
-    # ── Step 4: stamp cid tag on newly-created objects ─────────────────
-    # tx_hash from create_object is the canonical CID for this aporte.
-    # Replace `meta` with `cid` so list_aportes returns the full 64-char
-    # blockchain hash without fetching object content.
-    if not object_exists and tx_hash:
-        cid_tags = {k: v for k, v in packed_tags.items() if k != "meta"}
-        cid_tags["cid"] = tx_hash
-        resource = (
-            f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
-            f"::{BUCKET_NAME}/{path}"
-        )
-        msg_cid = MsgSetTag(
-            operator=_key_manager.address if _key_manager else "",
-            resource=resource,
-            tags=_dict_to_tags(cid_tags),
-        )
-        try:
-            await client.blockchain_client.broadcast_message(
-                messages=[msg_cid],
-                type_url=[MSG_SET_TAG_TYPE_URL],
-            )
-            logger.info(
-                "✅ cid tag grabado para aporte %s → %s", path, tx_hash
-            )
-        except Exception as cid_exc:
-            logger.warning(
-                "cid tag no actualizado para %s: %s (aporte ya sellado)",
-                path, cid_exc,
-            )
-
     logger.info("✅ Aporte escrito en %s (tx: %s)", path, tx_hash or "N/A")
     return tx_hash if tx_hash else path
 
@@ -1279,70 +1255,51 @@ async def rebuild_top10() -> List[Dict[str, Any]]:
         "🏆 Leaderboard reconstruido: %d usuarios en top10 (RAM cache)", len(top10)
     )
 
-    # Best-effort: write top10.json to Greenfield the FIRST TIME only.
-    # We never delete+recreate it (that causes SP error 50004 on SEALED objects).
-    # The RAM cache is the authoritative source; this write is for visibility in DCellar.
-    await _write_top10_if_missing(top10)
+    # Persist top10.json to Greenfield — recreate every cycle per spec.
+    try:
+        await write_json_data("aisynergix/data/top10.json", top10)
+        logger.info("📊 top10.json actualizado en Greenfield")
+    except Exception as exc:
+        logger.warning("No se pudo actualizar top10.json en Greenfield: %s", exc)
 
     return top10
-
-
-async def _write_top10_if_missing(top10: List[Dict[str, Any]]) -> None:
-    """Create aisynergix/data/top10.json only if it doesn't already exist."""
-    data_path = "aisynergix/data/top10.json"
-    try:
-        client = await get_client()
-        try:
-            await client.object.get_object_head(BUCKET_NAME, data_path)
-            return  # Already exists — never overwrite a SEALED object
-        except Exception:
-            pass  # Does not exist yet — create it
-
-        content = json.dumps(top10, ensure_ascii=False, indent=2).encode("utf-8")
-        payload_size = len(content)
-
-        await client.object.create_object(
-            BUCKET_NAME,
-            data_path,
-            io.BytesIO(content),
-            CreateObjectOptions(
-                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-                content_type="application/json",
-            ),
-        )
-        await asyncio.sleep(_SP_SYNC_DELAY)
-        await client.object.put_object(
-            bucket_name=BUCKET_NAME,
-            object_name=data_path,
-            object_size=payload_size,
-            reader=io.BytesIO(content),
-            opts=PutObjectOptions(content_type="application/json"),
-        )
-        logger.info("📊 top10.json creado en Greenfield (primera vez)")
-    except Exception as exc:
-        logger.warning("No se pudo escribir top10.json en Greenfield: %s", exc)
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # CHALLENGES SEMANALES
 # ═══════════════════════════════════════════════════════════════════════
 
-# Same rationale as top10: avoid write_json_data (put_object) on a path
-# the SP has previously seen as SEALED.  Challenges are regenerated weekly;
-# losing the current one on container restart is acceptable.
+_CHALLENGE_PATH = "aisynergix/data/challenges/current.json"
 _challenge_cache: Optional[Dict[str, Any]] = None
 
 
+async def load_current_challenge_from_greenfield() -> Optional[Dict[str, Any]]:
+    """Lee challenges/current.json al startup y restaura el cache RAM."""
+    global _challenge_cache
+    try:
+        data = await read_json_data(_CHALLENGE_PATH)
+        if data:
+            _challenge_cache = data
+            logger.info("🎯 Challenge restaurado desde Greenfield: %s", data.get("id"))
+    except Exception as exc:
+        logger.warning("No se pudo cargar challenge desde Greenfield: %s", exc)
+    return _challenge_cache
+
+
 async def get_current_challenge() -> Optional[Dict[str, Any]]:
-    """Obtiene el challenge semanal actual (RAM cache, sin lectura de Greenfield)."""
+    """Obtiene el challenge semanal (RAM cache)."""
     return _challenge_cache
 
 
 async def save_challenge(challenge: Dict[str, Any]) -> None:
-    """Guarda el challenge semanal en el cache RAM."""
+    """Guarda el challenge semanal en RAM y lo persiste en Greenfield."""
     global _challenge_cache
     _challenge_cache = challenge
-    logger.info("🎯 Challenge guardado en cache RAM: %s", challenge.get("id"))
+    try:
+        await write_json_data(_CHALLENGE_PATH, challenge)
+        logger.info("🎯 Challenge guardado en Greenfield: %s", challenge.get("id"))
+    except Exception as exc:
+        logger.warning("Challenge en RAM pero no persisted a Greenfield: %s", exc)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1426,7 +1383,7 @@ async def load_ai_guard() -> List[str]:
     """Load ai_guard.txt from Greenfield; create with defaults only if truly missing."""
     global _ai_guard_patterns
     client = await get_client()
-    path = "ai_guard.txt"
+    path = "aisynergix/ai_guard.txt"
 
     default_content = (
         "# Synergix AI Guard — anti-jailbreak patterns\n"
@@ -1526,7 +1483,7 @@ async def check_emergency_lock() -> bool:
     global _emergency_lock_active
     client = await get_client()
     try:
-        await client.object.get_object_head(BUCKET_NAME, "emergency_lock")
+        await client.object.get_object_head(BUCKET_NAME, "aisynergix/emergency_lock")
         _emergency_lock_active = True
         return True
     except Exception:
@@ -1543,7 +1500,7 @@ async def create_emergency_lock() -> None:
     """Create emergency_lock ghost object to halt all writes."""
     global _emergency_lock_active
     client = await get_client()
-    path = "emergency_lock"
+    path = "aisynergix/emergency_lock"
     try:
         await client.object.get_object_head(BUCKET_NAME, path)
         _emergency_lock_active = True
@@ -1579,7 +1536,7 @@ async def delete_emergency_lock() -> None:
     global _emergency_lock_active
     client = await get_client()
     try:
-        await client.object.delete_object(BUCKET_NAME, "emergency_lock")
+        await client.object.delete_object(BUCKET_NAME, "aisynergix/emergency_lock")
     except Exception:
         pass
     _emergency_lock_active = False

@@ -7,7 +7,7 @@
   "btn_language": "🌐 Language",
   "status_msg": "📊 <b>Synergix Collective Intelligence</b>\n\n📦 Immortal Contributions: {total_aportes}\n🏆 Challenge: {tema_actual}\n\n── Your Impact, {name} ──\n📈 Score: {points} pts\n🔗 Contributions: {contribuciones}\n🔁 Uses of your contributions: {total_uses_count}\n🏅 Rank: {rank} ({points_next} pts to next level)\n💡 Benefit: {beneficio}\n✖️ Multiplier: ×{multiplier} | 📅 Daily limit: {daily_limit} contributions",
   "memory_header": "🧠 <b>Your Immortal Memory</b>\n✨ <b>{count}</b> wisdoms immortalized on the network\n\n",
-  "memory_entry": "🏆 {num}. CID: <code>{cid}</code> ⭐{quality}/10\n📝 {summary}",
+  "memory_entry": "🏆 {num}. {date} [{category}] ⭐{quality}/10\n📝 {summary}",
   "memory_footer": "\n📈 Score: <b>{points}</b> pts | Contributions: <b>{total}</b>",
   "memory_empty": "🧠 You haven't immortalized any wisdom on the network yet.\n\n🔥 Tap <b>Contribute</b> and leave your first eternal mark.",
   "contribution_mode": "🎯 <b>Contribution mode activated</b>\n\nWrite your idea, reflection or knowledge. It will be recorded forever on the Synergix network.\n\n💡 Minimum 20 characters.\n✨ Be original, be deep, be eternal.",

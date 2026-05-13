@@ -7,7 +7,7 @@
   "btn_language": "🌐 语言",
   "status_msg": "📊 <b>Synergix 集体智能</b>\n\n📦 永恒贡献: {total_aportes}\n🏆 挑战: {tema_actual}\n\n── 你的影响力，{name} ──\n📈 积分: {points} 分\n🔗 贡献数: {contribuciones}\n🔁 你的贡献被使用次数: {total_uses_count}\n🏅 等级: {rank}（还需 {points_next} 分升级）\n💡 权益: {beneficio}\n✖️ 倍增器: ×{multiplier} | 📅 每日上限: {daily_limit} 次",
   "memory_header": "🧠 <b>你的不朽记忆</b>\n✨ <b>{count}</b> 条智慧已在网络上永存\n\n",
-  "memory_entry": "🏆 {num}. CID: <code>{cid}</code> ⭐{quality}/10\n📝 {summary}",
+  "memory_entry": "🏆 {num}. {date} [{category}] ⭐{quality}/10\n📝 {summary}",
   "memory_footer": "\n📈 积分：<b>{points}</b> pts | 贡献次数：<b>{total}</b>",
   "memory_empty": "🧠 你尚未在网络上铭刻任何智慧。\n\n🔥 点击<b>贡献</b>留下你的第一个永恒印记。",
   "contribution_mode": "🎯 <b>贡献模式已激活</b>\n\n写下你的想法、反思或知识。它将永远记录在 Synergix 网络上。\n\n💡 最少 20 个字符。\n✨ 保持原创，保持深度，保持永恒。",

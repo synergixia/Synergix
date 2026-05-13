@@ -7,7 +7,7 @@
   "btn_language": "🌐 Bahasa",
   "status_msg": "📊 <b>Synergix Kecerdasan Kolektif</b>\n\n📦 Kontribusi Abadi: {total_aportes}\n🏆 Tantangan: {tema_actual}\n\n── Dampak Anda, {name} ──\n📈 Skor: {points} poin\n🔗 Kontribusi: {contribuciones}\n🔁 Penggunaan kontribusi Anda: {total_uses_count}\n🏅 Peringkat: {rank} ({points_next} poin untuk level berikutnya)\n💡 Manfaat: {beneficio}\n✖️ Pengali: ×{multiplier} | 📅 Batas harian: {daily_limit} kontribusi",
   "memory_header": "🧠 <b>Memori Abadi Anda</b>\n✨ <b>{count}</b> kebijaksanaan diabadikan di jaringan\n\n",
-  "memory_entry": "🏆 {num}. CID: <code>{cid}</code> ⭐{quality}/10\n📝 {summary}",
+  "memory_entry": "🏆 {num}. {date} [{category}] ⭐{quality}/10\n📝 {summary}",
   "memory_footer": "\n📈 Skor: <b>{points}</b> pts | Kontribusi: <b>{total}</b>",
   "memory_empty": "🧠 Anda belum mengabadikan kebijaksanaan apa pun di jaringan.\n\n🔥 Ketuk <b>Berkontribusi</b> dan tinggalkan jejak abadi pertamamu.",
   "contribution_mode": "🎯 <b>Mode kontribusi diaktifkan</b>\n\nTulis ide, refleksi, atau pengetahuanmu. Akan tercatat selamanya di jaringan Synergix.\n\n💡 Minimal 20 karakter.\n✨ Jadilah orisinal, jadilah mendalam, jadilah abadi.",
