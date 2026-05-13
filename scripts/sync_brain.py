@@ -4,6 +4,7 @@ import asyncio
 import logging
 import signal
 from pathlib import Path
+from typing import Dict, List, Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -12,7 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from aisynergix.bot.locales import load_all_locales, t, LANG_NAMES
-from aisynergix.services.rag_engine import get_rag_engine
+from aisynergix.services.rag_engine import get_rag_engine, BRAIN_CODES, CATEGORY_TO_BRAIN
 from aisynergix.services.greenfield import (
     get_greenfield_client,
     get_all_user_uids,
@@ -24,8 +25,8 @@ from aisynergix.services.greenfield import (
     reset_all_daily_counts,
     upload_log,
     save_challenge,
-    get_brain_pointer,
-    set_brain_pointer,
+    get_all_brain_pointers,
+    update_brain_pointer_tag,
     load_ai_guard,
     load_system_config,
     check_emergency_lock,
@@ -42,10 +43,6 @@ logger = logging.getLogger("synergix.sync_brain")
 
 
 def _log_exc(msg: str, exc: Exception) -> None:
-    """
-    Log an exception with full traceback.  When tenacity wraps the root cause
-    inside RetryError, unwrap it so we see the actual OSError / HTTPError.
-    """
     from tenacity import RetryError
     if isinstance(exc, RetryError) and exc.last_attempt is not None:
         inner = exc.last_attempt.exception()
@@ -66,22 +63,29 @@ async def federated_evolution():
 
     try:
         rag = await get_rag_engine()
+        all_indexed = rag.get_all_indexed_objects()
 
         user_uids = await get_all_user_uids()
         if not user_uids:
             logger.info("📭 Sin usuarios registrados.")
             return
 
-        contributions = []
+        # Collect new aportes not yet indexed, grouped by brain code
+        new_by_code: Dict[str, List[Dict[str, Any]]] = {c: [] for c in BRAIN_CODES}
+
         for uid in user_uids:
             try:
                 aportes = await list_aportes(uid, limit=10)
                 for aporte in aportes:
+                    if aporte["path"] in all_indexed:
+                        continue
                     try:
                         texto, tags = await read_aporte(aporte["path"])
                         if not texto.strip():
                             continue
-                        contributions.append({
+                        category = tags.get("category", "filosofia")
+                        code = CATEGORY_TO_BRAIN.get(category, "know")
+                        new_by_code[code].append({
                             "text": texto,
                             "author_uid": tags.get("author_uid", uid),
                             "language": tags.get("lang", "es"),
@@ -89,20 +93,45 @@ async def federated_evolution():
                             "object_name": aporte["path"],
                         })
                     except Exception as e:
-                        logger.warning(f"Error leyendo {aporte.get('path')}: {e}")
+                        logger.warning("Error leyendo %s: %s", aporte.get("path"), e)
                         continue
             except Exception:
                 continue
 
-        if not contributions:
-            logger.info("📭 Sin nuevos aportes procesables.")
+        total_new = sum(len(v) for v in new_by_code.values())
+        if total_new == 0:
+            logger.info("📭 Sin nuevos aportes — saltando actualización de índices.")
+            await update_leaderboard()
             return
 
-        ids = await rag.add_contributions_batch(contributions)
-        logger.info(f"✅ {len(ids)} nuevos aportes inyectados al índice FAISS.")
+        logger.info("📥 %d nuevos aportes detectados. Actualizando cerebros...", total_new)
+
+        # Read current brain pointer versions before any upload
+        current_pointers = await get_all_brain_pointers()
+
+        for code, contribs in new_by_code.items():
+            if not contribs:
+                continue
+
+            added = await rag.add_contributions_to_brain(code, contribs)
+            logger.info("✅ Brain [%s]: +%d aportes inyectados en RAM.", code, added)
+
+            # Upload new version to Greenfield — only update pointer on success
+            new_version = await rag.save_brain_to_greenfield(code, current_pointers[code])
+            if new_version:
+                try:
+                    await update_brain_pointer_tag(code, new_version)
+                    logger.info("🧠 Brain [%s] → %s", code, new_version)
+                except Exception as e:
+                    logger.error("❌ No se pudo actualizar brain pointer [%s]: %s", code, e)
+            else:
+                logger.error(
+                    "❌ Fallo al subir índice brain [%s] a Greenfield — "
+                    "pointer NO actualizado.",
+                    code,
+                )
 
         await update_leaderboard()
-        await update_brain_version()
 
     except Exception as e:
         _log_exc("❌ Error en evolución federada", e)
@@ -115,7 +144,6 @@ async def update_leaderboard():
         top10 = await rebuild_top10()
         logger.info("🏆 Top 10 actualizado: %d mentes.", len(top10))
 
-        # Hydrate rank promotions using the same data rebuild_top10 collected.
         user_uids = await get_all_user_uids()
         leaderboard = []
         for uid_hash in user_uids:
@@ -172,15 +200,13 @@ async def hydrate_ranks(leaderboard):
 
                 try:
                     from aisynergix.bot.bot import bot
-
                     notification = t(
                         "rank_up",
                         lang,
                         old_rank=old_rank,
                         new_rank=new_rank,
                     )
-
-                    logger.info(f"🎉 {user['uid_hash']}: {old_rank} → {new_rank}")
+                    logger.info("🎉 %s: %s → %s", user["uid_hash"], old_rank, new_rank)
                 except Exception:
                     pass
 
@@ -188,36 +214,7 @@ async def hydrate_ranks(leaderboard):
             continue
 
     if ranks_changed > 0:
-        logger.info(f"🎉 {ranks_changed} ascensos de rango procesados.")
-
-
-async def update_brain_version():
-    try:
-        rag = await get_rag_engine()
-        stats = await rag.get_stats()
-
-        current = await get_brain_pointer()
-
-        version_parts = current.replace("v", "").split(".")
-        major = int(version_parts[0]) if version_parts[0] else 0
-        minor = int(version_parts[1]) if len(version_parts) > 1 and version_parts[1] else 0
-        patch = int(version_parts[2]) if len(version_parts) > 2 and version_parts[2] else 0
-
-        patch += 1
-        if patch >= 100:
-            patch = 0
-            minor += 1
-        if minor >= 100:
-            minor = 0
-            major += 1
-
-        new_version = f"v{major}.{minor}.{patch}"
-
-        await set_brain_pointer(new_version)
-        logger.info(f"🧠 Cerebro versionado: {new_version} (docs: {stats['total_documents']})")
-
-    except Exception as e:
-        _log_exc("❌ Error versionando cerebro", e)
+        logger.info("🎉 %d ascensos de rango procesados.", ranks_changed)
 
 
 async def daily_cleanup():
@@ -242,7 +239,7 @@ async def daily_cleanup():
         logger.info("📦 Logs subidos.")
 
         reset_count = await reset_all_daily_counts()
-        logger.info(f"🔄 Daily counts reseteados: {reset_count} usuarios.")
+        logger.info("🔄 Daily counts reseteados: %d usuarios.", reset_count)
 
     except Exception as e:
         _log_exc("❌ Error en limpieza diaria", e)
@@ -288,23 +285,22 @@ Responde SOLO con el texto del reto, máximo 150 caracteres. Sin comillas ni for
         }
 
         await save_challenge(challenge_data)
-        logger.info(f"🎯 Reto creado: {challenge_text}")
+        logger.info("🎯 Reto creado: %s", challenge_text)
 
         user_uids = await get_all_user_uids()
-
         broadcast_count = 0
         for uid_hash in user_uids:
             try:
                 tags = await read_user_tags(uid_hash)
                 lang = tags.get("language", "es")
-
-                notification = t("challenge_broadcast", lang, challenge_description=challenge_text)
-
+                notification = t(
+                    "challenge_broadcast", lang, challenge_description=challenge_text
+                )
                 broadcast_count += 1
             except Exception:
                 continue
 
-        logger.info(f"📢 Broadcast enviado a {broadcast_count} usuarios.")
+        logger.info("📢 Broadcast enviado a %d usuarios.", broadcast_count)
 
     except Exception as e:
         _log_exc("❌ Error generando reto semanal", e)
@@ -324,10 +320,12 @@ async def health_monitor():
         else:
             logger.debug("💚 Health Check AI: OK")
 
-        # Greenfield connectivity — get_brain_pointer is a lightweight HEAD
         try:
-            version = await get_brain_pointer()
-            logger.debug("💚 Health Check Greenfield: OK (brain=%s)", version)
+            brain_versions = await get_all_brain_pointers()
+            logger.debug(
+                "💚 Health Check Greenfield: OK — brains=%s",
+                {c: v for c, v in brain_versions.items()},
+            )
         except Exception as gf_exc:
             logger.error(
                 "🔴 Health Check Greenfield: FALLO — %s",
@@ -335,7 +333,6 @@ async def health_monitor():
                 exc_info=gf_exc,
             )
 
-        # Keep emergency lock state fresh
         await check_emergency_lock()
 
     except Exception as e:
@@ -398,7 +395,7 @@ async def on_startup():
     logger.info("🚀 Arrancando Nodo Fantasma Synergix...")
 
     await load_all_locales()
-    logger.info(f"🌐 {len(LANG_NAMES)} idiomas cargados en RAM.")
+    logger.info("🌐 %d idiomas cargados en RAM.", len(LANG_NAMES))
 
     await load_system_config()
     logger.info("⚙️ System config cargado.")
@@ -411,15 +408,36 @@ async def on_startup():
         logger.warning("🔒 Emergency lock ACTIVO al inicio")
 
     rag = await get_rag_engine()
-    await rag.rebuild_from_bucket()
-    logger.info("🧠 Motor RAG reconstruido desde el bucket.")
+
+    # Try to load each brain from Greenfield (avoids full bucket rebuild)
+    brain_versions = await get_all_brain_pointers()
+    loaded_any = False
+    for code, version in brain_versions.items():
+        if version == f"{code}_v0":
+            continue  # No real data yet
+        loaded = await rag.load_brain_from_greenfield(code, version)
+        if loaded:
+            loaded_any = True
+            logger.info("🧠 Brain [%s] cargado desde Greenfield: %s", code, version)
+        else:
+            logger.warning(
+                "⚠️ Brain [%s] no pudo cargarse desde Greenfield (%s) — "
+                "se usará caché local o rebuild.",
+                code, version,
+            )
+
+    if not loaded_any:
+        await rag.rebuild_from_bucket()
+        logger.info("🧠 Motor RAG reconstruido desde el bucket.")
+    else:
+        logger.info("🧠 Motor RAG inicializado desde Greenfield.")
 
     ai = get_ai_manager()
     health = await ai.health_check()
-    logger.info(f"🤖 IA: Thinker={health['thinker']}, Judge={health['judge']}")
+    logger.info("🤖 IA: Thinker=%s, Judge=%s", health["thinker"], health["judge"])
 
-    brain_version = await get_brain_pointer()
-    logger.info(f"🔗 Conectado a Greenfield. Cerebro: {brain_version}")
+    brain_versions = await get_all_brain_pointers()
+    logger.info("🔗 Conectado a Greenfield. Cerebros: %s", brain_versions)
 
     setup_schedulers()
     scheduler.start()
@@ -450,7 +468,7 @@ async def on_shutdown():
 
 
 def handle_signal(signum, frame):
-    logger.info(f"Señal {signum} recibida. Iniciando apagado...")
+    logger.info("Señal %s recibida. Iniciando apagado...", signum)
     shutdown_event.set()
 
 
