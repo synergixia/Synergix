@@ -867,6 +867,36 @@ async def write_aporte(
             )
             raise
 
+    # ── Step 4: stamp cid tag on newly-created objects ─────────────────
+    # tx_hash from create_object is the canonical CID for this aporte.
+    # Replace `meta` with `cid` so list_aportes returns the full 64-char
+    # blockchain hash without fetching object content.
+    if not object_exists and tx_hash:
+        cid_tags = {k: v for k, v in packed_tags.items() if k != "meta"}
+        cid_tags["cid"] = tx_hash
+        resource = (
+            f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
+            f"::{BUCKET_NAME}/{path}"
+        )
+        msg_cid = MsgSetTag(
+            operator=_key_manager.address if _key_manager else "",
+            resource=resource,
+            tags=_dict_to_tags(cid_tags),
+        )
+        try:
+            await client.blockchain_client.broadcast_message(
+                messages=[msg_cid],
+                type_url=[MSG_SET_TAG_TYPE_URL],
+            )
+            logger.info(
+                "✅ cid tag grabado para aporte %s → %s", path, tx_hash
+            )
+        except Exception as cid_exc:
+            logger.warning(
+                "cid tag no actualizado para %s: %s (aporte ya sellado)",
+                path, cid_exc,
+            )
+
     logger.info("✅ Aporte escrito en %s (tx: %s)", path, tx_hash or "N/A")
     return tx_hash if tx_hash else path
 
