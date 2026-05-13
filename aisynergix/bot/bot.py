@@ -349,9 +349,18 @@ async def handle_memory_button(message: Message) -> None:
 
     for i, aporte in enumerate(aportes, 1):
         try:
+            from datetime import datetime, timezone as _tz
             texto, tags = await read_aporte(aporte["path"])
             quality = tags.get("quality_score", "?")
-            cid = tags.get("cid") or aporte["path"]
+            category = tags.get("category", "—")
+
+            # Date from filename timestamp (aisynergix/aportes/YYYY-MM/uid_TS.txt)
+            try:
+                ts_str = aporte["path"].rsplit("/", 1)[-1].split("_", 1)[-1].replace(".txt", "")
+                dt = datetime.fromtimestamp(int(ts_str), tz=_tz.utc)
+                date_str = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                date_str = aporte["path"].rsplit("/", 1)[-1]
 
             # First sentence of the contribution as summary
             sentences = [s.strip() for s in texto.replace("\n", " ").split(".") if s.strip()]
@@ -362,7 +371,8 @@ async def handle_memory_button(message: Message) -> None:
                 summary = summary[:120] + "…"
 
             memory_text += (
-                t("memory_entry", lang, num=i, cid=cid, quality=quality, summary=summary)
+                t("memory_entry", lang, num=i, date=date_str, category=category,
+                  quality=quality, summary=summary)
                 + "\n"
             )
         except Exception:
@@ -1120,7 +1130,10 @@ async def on_startup():
 
     await set_bot_commands()
 
-    from aisynergix.services.greenfield import load_ai_guard, load_system_config, check_emergency_lock
+    from aisynergix.services.greenfield import (
+        load_ai_guard, load_system_config, check_emergency_lock,
+        load_current_challenge_from_greenfield,
+    )
     await load_system_config()
     logger.info("⚙️ System config cargado")
     await load_ai_guard()
@@ -1128,6 +1141,8 @@ async def on_startup():
     locked = await check_emergency_lock()
     if locked:
         logger.warning("🔒 Emergency lock ACTIVO al inicio")
+    await load_current_challenge_from_greenfield()
+    logger.info("🎯 Challenge restaurado")
 
     from aisynergix.services.rag_engine import get_rag_engine
     rag = await get_rag_engine()

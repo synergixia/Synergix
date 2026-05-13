@@ -244,7 +244,7 @@ class AIManager:
             "author_uid": profile.uid_hash,
             "lang": profile.language,
             "category": evaluation.get("category", "filosofia"),
-            "impact_index": str(evaluation.get("impact_index", 0.5)),
+            "impact": str(evaluation.get("impact_index", 0.5)),
         }
         if profile.human_verified and profile.wallet_address:
             aporte_tags["signature"] = profile.wallet_address.lower()

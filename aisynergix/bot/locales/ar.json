@@ -7,7 +7,7 @@
   "btn_language": "🌐 اللغة",
   "status_msg": "📊 <b>Synergix الذكاء الجماعي</b>\n\n📦 المساهمات الخالدة: {total_aportes}\n🏆 التحدي: {tema_actual}\n\n── تأثيرك، {name} ──\n📈 النقاط: {points}\n🔗 المساهمات: {contribuciones}\n🔁 استخدامات مساهماتك: {total_uses_count}\n🏅 الرتبة: {rank} (يتبقى {points_next} نقطة للمستوى التالي)\n💡 الفائدة: {beneficio}\n✖️ المضاعف: ×{multiplier} | 📅 الحد اليومي: {daily_limit} مساهمة",
   "memory_header": "🧠 <b>ذاكرتك الخالدة</b>\n✨ <b>{count}</b> حكمة مخلدة على الشبكة\n\n",
-  "memory_entry": "🏆 {num}. CID: <code>{cid}</code> ⭐{quality}/10\n📝 {summary}",
+  "memory_entry": "🏆 {num}. {date} [{category}] ⭐{quality}/10\n📝 {summary}",
   "memory_footer": "\n📈 النقاط: <b>{points}</b> pts | المساهمات: <b>{total}</b>",
   "memory_empty": "🧠 لم تخلد أي حكمة على الشبكة بعد.\n\n🔥 اضغط على <b>ساهم</b> واترك بصمتك الأبدية الأولى.",
   "contribution_mode": "🎯 <b>تم تفعيل وضع المساهمة</b>\n\nاكتب فكرتك أو تأملك أو معرفتك. ستُسجل إلى الأبد على شبكة Synergix.\n\n💡 الحد الأدنى 20 حرفاً.\n✨ كن أصيلاً، كن عميقاً، كن خالداً.",
