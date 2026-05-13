@@ -67,7 +67,7 @@ def _getenv(key: str, default: str = "") -> str:
 # porque el SDK las espera exactamente así.
 
 # Variables propias de Synergix (con prefijo para evitar extra_forbidden)
-BUCKET_NAME: str = _getenv("BUCKET_NAME", "synergix-v1")
+BUCKET_NAME: str = _getenv("BUCKET_NAME", "synergix-v2")
 SP_ENDPOINT: str = _getenv(
     "SP_ENDPOINT",
     "https://greenfield-sp.bnbchain.org",
@@ -323,7 +323,7 @@ async def get_client() -> BaseGreenfieldClient:
 )
 async def ensure_bucket_exists() -> None:
     """
-    Verifica que el bucket 'synergix-v1' existe en Greenfield mainnet.
+    Verifica que el bucket 'synergix-v2' existe en Greenfield mainnet.
     Si no existe, lo crea con visibilidad privada y 10 GiB/mes de cuota.
     """
     client = await get_client()
