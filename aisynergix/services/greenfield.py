@@ -1132,6 +1132,185 @@ async def set_brain_pointer(version: str) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# MULTI-BRAIN POINTER (4 códigos: prog, tech, cien, know)
+# ═══════════════════════════════════════════════════════════════════════
+
+BRAIN_CODES: List[str] = ["prog", "tech", "cien", "know"]
+_BRAIN_POINTER_PATH = "aisynergix/data/brain_pointer"
+
+
+async def get_all_brain_pointers() -> Dict[str, str]:
+    """
+    Lee el objeto brain_pointer y retorna las versiones de los 4 cerebros.
+    Tags: prog=prog_v3, tech=tech_v1, cien=cien_v2, know=know_v5
+    Retorna {code: version_name}. Fallback: {code: "{code}_v0"}.
+    """
+    client = await get_client()
+    try:
+        obj_info = await client.object.get_object_head(BUCKET_NAME, _BRAIN_POINTER_PATH)
+        tags = _tags_to_dict(obj_info.tags)
+        return {code: tags.get(code, f"{code}_v0") for code in BRAIN_CODES}
+    except Exception:
+        return {code: f"{code}_v0" for code in BRAIN_CODES}
+
+
+async def update_brain_pointer_tag(code: str, version_name: str) -> None:
+    """
+    Actualiza el tag de un solo cerebro en el objeto brain_pointer.
+    Lee los 4 tags actuales, actualiza el indicado, y hace MsgSetTag con
+    todos los 4 — porque MsgSetTag reemplaza TODOS los tags del objeto.
+    """
+    client = await get_client()
+    data_path = _BRAIN_POINTER_PATH
+
+    exists = False
+    current_tags: Dict[str, str] = {}
+    try:
+        obj_info = await client.object.get_object_head(BUCKET_NAME, data_path)
+        exists = True
+        current_tags = _tags_to_dict(obj_info.tags)
+    except Exception:
+        exists = False
+
+    if not exists:
+        await client.object.create_object(
+            BUCKET_NAME,
+            data_path,
+            io.BytesIO(b""),
+            CreateObjectOptions(
+                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+                content_type="application/octet-stream",
+            ),
+        )
+        await asyncio.sleep(_SP_SYNC_DELAY)
+        await client.object.put_object(
+            bucket_name=BUCKET_NAME,
+            object_name=data_path,
+            object_size=0,
+            reader=io.BytesIO(b""),
+            opts=PutObjectOptions(content_type="application/octet-stream"),
+        )
+
+    # Preserve all 4 tags, overwrite only the specified code
+    new_tags = {c: current_tags.get(c, f"{c}_v0") for c in BRAIN_CODES}
+    new_tags[code] = version_name
+
+    resource = (
+        f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
+        f"::{BUCKET_NAME}/{data_path}"
+    )
+    msg_set = MsgSetTag(
+        operator=_key_manager.address if _key_manager else "",
+        resource=resource,
+        tags=_dict_to_tags(new_tags),
+    )
+    await client.blockchain_client.broadcast_message(
+        messages=[msg_set],
+        type_url=[MSG_SET_TAG_TYPE_URL],
+    )
+    logger.info("🧠 Brain pointer [%s] → %s", code, version_name)
+
+
+async def upload_brain_index(code: str, version_name: str, binary: bytes) -> None:
+    """
+    Sube un binario FAISS a aisynergix/data/brains/{code}/{version_name}.index
+    Idempotente: si ya existe esa versión exacta, no hace nada (nunca sobreescribir).
+    """
+    data_path = f"aisynergix/data/brains/{code}/{version_name}.index"
+    client = await get_client()
+    try:
+        await client.object.get_object_head(BUCKET_NAME, data_path)
+        logger.debug("Brain index %s ya existe — saltando subida", data_path)
+        return
+    except Exception:
+        pass
+
+    payload_size = len(binary)
+    await client.object.create_object(
+        BUCKET_NAME,
+        data_path,
+        io.BytesIO(binary),
+        CreateObjectOptions(
+            visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+            content_type="application/octet-stream",
+        ),
+    )
+    await asyncio.sleep(_SP_SYNC_DELAY)
+    await client.object.put_object(
+        bucket_name=BUCKET_NAME,
+        object_name=data_path,
+        object_size=payload_size,
+        reader=io.BytesIO(binary),
+        opts=PutObjectOptions(content_type="application/octet-stream"),
+    )
+    logger.info("📤 Brain index subido: %s (%d bytes)", data_path, payload_size)
+
+
+async def download_brain_index(code: str, version_name: str) -> Optional[bytes]:
+    """
+    Descarga el binario FAISS de Greenfield. Retorna None si no existe.
+    """
+    data_path = f"aisynergix/data/brains/{code}/{version_name}.index"
+    client = await get_client()
+    try:
+        _, raw = await client.object.get_object(BUCKET_NAME, data_path, GetObjectOption())
+        return raw if isinstance(raw, bytes) else None
+    except Exception:
+        return None
+
+
+async def upload_brain_meta(code: str, version_name: str, meta: Dict[str, Any]) -> None:
+    """
+    Sube el JSON de metadatos junto al índice FAISS.
+    Ruta: aisynergix/data/brains/{code}/{version_name}.meta.json
+    Idempotente: si ya existe, no hace nada.
+    """
+    data_path = f"aisynergix/data/brains/{code}/{version_name}.meta.json"
+    client = await get_client()
+    try:
+        await client.object.get_object_head(BUCKET_NAME, data_path)
+        logger.debug("Brain meta %s ya existe — saltando subida", data_path)
+        return
+    except Exception:
+        pass
+
+    content = json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8")
+    payload_size = len(content)
+    await client.object.create_object(
+        BUCKET_NAME,
+        data_path,
+        io.BytesIO(content),
+        CreateObjectOptions(
+            visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+            content_type="application/json",
+        ),
+    )
+    await asyncio.sleep(_SP_SYNC_DELAY)
+    await client.object.put_object(
+        bucket_name=BUCKET_NAME,
+        object_name=data_path,
+        object_size=payload_size,
+        reader=io.BytesIO(content),
+        opts=PutObjectOptions(content_type="application/json"),
+    )
+    logger.debug("📤 Brain meta subido: %s", data_path)
+
+
+async def download_brain_meta(code: str, version_name: str) -> Dict[str, Any]:
+    """
+    Descarga el JSON de metadatos de un cerebro. Retorna dict vacío si no existe.
+    """
+    data_path = f"aisynergix/data/brains/{code}/{version_name}.meta.json"
+    client = await get_client()
+    try:
+        _, raw = await client.object.get_object(BUCKET_NAME, data_path, GetObjectOption())
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        return json.loads(text)
+    except Exception:
+        return {}
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # RESET MASIVO DE daily_aportes_count (CRON DIARIO)
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1630,6 +1809,13 @@ __all__ = [
     "write_json_data",
     "get_brain_pointer",
     "set_brain_pointer",
+    "BRAIN_CODES",
+    "get_all_brain_pointers",
+    "update_brain_pointer_tag",
+    "upload_brain_index",
+    "download_brain_index",
+    "upload_brain_meta",
+    "download_brain_meta",
     "reset_all_daily_counts",
     "rebuild_top10",
     "get_top10_cached",

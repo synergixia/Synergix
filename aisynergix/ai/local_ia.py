@@ -105,7 +105,7 @@ JUDGE_SYSTEM_PROMPT = (
     '  "reason": "<breve explicacion en el idioma del aporte>",\n'
     '  "is_duplicate": <boolean>,\n'
     '  "category": "<una de: filosofia, tecnologia, ciencia, arte, vida, '
-    'espiritualidad, economia, naturaleza, sociedad, innovacion>",\n'
+    'espiritualidad, economia, naturaleza, sociedad, innovacion, programacion>",\n'
     '  "impact_index": <float entre 0.0 y 1.0>,\n'
     '  "related_to_challenge": <boolean>,\n'
     '  "constructive_feedback": "<si fue rechazado, feedback constructivo; '
@@ -144,6 +144,7 @@ JUDGE_JSON_SCHEMA = {
             "enum": [
                 "filosofia", "tecnologia", "ciencia", "arte", "vida",
                 "espiritualidad", "economia", "naturaleza", "sociedad", "innovacion",
+                "programacion",
             ],
             "description": "Categoría del aporte",
         },
