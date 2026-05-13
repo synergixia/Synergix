@@ -234,13 +234,12 @@ class LocalLLMConnector:
         }
 
         if json_mode:
+            # llama.cpp server: native json_object + schema format.
+            # The OpenAI-style {"type":"json_schema","json_schema":{...,"strict":true}}
+            # is rejected with HTTP 400 by recent llama.cpp builds.
             payload["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "judge_evaluation",
-                    "strict": True,
-                    "schema": JUDGE_JSON_SCHEMA,
-                },
+                "type": "json_object",
+                "schema": JUDGE_JSON_SCHEMA,
             }
 
         response = await client.post(
