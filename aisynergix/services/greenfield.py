@@ -156,26 +156,138 @@ def _normalize_path(*segments: str) -> str:
     return p[1:] if p.startswith("/") else p
 
 
-# Keys stored as visible Greenfield tags (max 3 explicit + 1 "meta" JSON = 4 total).
-# All remaining fields are packed into the "meta" tag as compact JSON.
+# ── Constraints de Greenfield para tags ──────────────────────────────────
+# Cada tag tiene 4 max por objeto, valor máximo 64 bytes UTF-8.
+# Empacamos campos con claves de 1 letra en JSON compacto para caber.
+_TAG_VALUE_MAX_BYTES: int = 64
+
+# Tags visibles en DCellar (un valor por tag).
 _EXPLICIT_USER_KEYS: frozenset = frozenset({"points", "rank", "language"})
 _EXPLICIT_APORTE_KEYS: frozenset = frozenset({"author_uid", "quality_score", "category"})
 
+# Campos persistentes empacados en el tag `meta` con claves de 1 letra.
+# wallet_address NO va aquí — se almacena en objeto separado (ver _wallet_path).
+_USER_META_COMPACT: Dict[str, str] = {
+    "trust_score":         "t",   # encoded as int(×100)
+    "human_verified":      "v",   # 0/1
+    "daily_aportes_count": "d",
+    "total_uses_count":    "u",
+    "last_seen_ts":        "l",
+}
+_USER_META_EXPAND: Dict[str, str] = {v: k for k, v in _USER_META_COMPACT.items()}
 
-def _pack_tags(tags: Dict[str, str], explicit_keys: frozenset) -> Dict[str, str]:
+
+def _pack_user_tags(tags: Dict[str, str]) -> Dict[str, str]:
     """
-    Reduce an arbitrary tag dict to at most 4 Greenfield tags.
-    3 explicit (visible in DCellar) + 1 'meta' tag with the rest as compact JSON.
+    Pack user fields → ≤4 Greenfield tags. Cada valor ≤64 bytes UTF-8.
+    3 tags explícitos (points, rank, language) + 1 tag `meta` JSON compacto.
+    wallet_address se persiste por separado y NO entra en tags.
     """
-    packed = {k: v for k, v in tags.items() if k in explicit_keys}
-    meta = {k: v for k, v in tags.items() if k not in explicit_keys}
+    packed: Dict[str, str] = {}
+
+    for k in _EXPLICIT_USER_KEYS:
+        v = tags.get(k)
+        if v is None:
+            continue
+        s = str(v)
+        if len(s.encode("utf-8")) <= _TAG_VALUE_MAX_BYTES:
+            packed[k] = s
+
+    meta: Dict[str, Any] = {}
+    for long_k, short_k in _USER_META_COMPACT.items():
+        v = tags.get(long_k)
+        if v is None or v == "":
+            continue
+        try:
+            if long_k == "trust_score":
+                meta[short_k] = int(round(float(v) * 100))
+            elif long_k == "human_verified":
+                meta[short_k] = 1 if str(v).lower() == "true" else 0
+            else:
+                meta[short_k] = int(float(v))
+        except (ValueError, TypeError):
+            continue
+
     if meta:
-        packed["meta"] = json.dumps(meta, separators=(",", ":"), ensure_ascii=False)
+        meta_str = json.dumps(meta, separators=(",", ":"))
+        # Defensive: drop low-priority fields until value fits in 64 bytes.
+        priority_drop = ["l", "u", "d", "t", "v"]
+        while len(meta_str.encode("utf-8")) > _TAG_VALUE_MAX_BYTES and meta:
+            dropped = False
+            for k in priority_drop:
+                if k in meta:
+                    meta.pop(k)
+                    dropped = True
+                    break
+            if not dropped:
+                meta.clear()
+                break
+            meta_str = json.dumps(meta, separators=(",", ":"))
+        if meta:
+            packed["meta"] = meta_str
+
     return packed
 
 
-def _unpack_tags(tags: Dict[str, str]) -> Dict[str, str]:
-    """Inverse of _pack_tags: expand the 'meta' JSON tag back into the flat dict."""
+def _unpack_user_tags(tags: Dict[str, str]) -> Dict[str, str]:
+    """Reverse of _pack_user_tags. Wallet NO viene de tags (objeto separado)."""
+    result: Dict[str, str] = {}
+    for k in _EXPLICIT_USER_KEYS:
+        if k in tags:
+            result[k] = tags[k]
+
+    meta_str = tags.get("meta")
+    if meta_str:
+        try:
+            meta = json.loads(meta_str)
+            for short_k, v in meta.items():
+                long_k = _USER_META_EXPAND.get(short_k)
+                if not long_k:
+                    continue
+                try:
+                    if long_k == "trust_score":
+                        result[long_k] = f"{int(v) / 100:.2f}"
+                    elif long_k == "human_verified":
+                        result[long_k] = "true" if int(v) == 1 else "false"
+                    else:
+                        result[long_k] = str(int(v))
+                except (ValueError, TypeError):
+                    continue
+        except Exception:
+            pass
+    return result
+
+
+def _pack_aporte_tags(tags: Dict[str, str]) -> Dict[str, str]:
+    """
+    Pack aporte fields → ≤4 Greenfield tags. Cada valor ≤64 bytes UTF-8.
+    3 explícitos (author_uid, quality_score, category) + 1 `meta` JSON con el resto.
+    """
+    packed: Dict[str, str] = {}
+    for k in _EXPLICIT_APORTE_KEYS:
+        v = tags.get(k)
+        if v is None:
+            continue
+        s = str(v)
+        if len(s.encode("utf-8")) <= _TAG_VALUE_MAX_BYTES:
+            packed[k] = s
+
+    extras = {k: str(v) for k, v in tags.items() if k not in _EXPLICIT_APORTE_KEYS and v not in (None, "")}
+    if extras:
+        meta_str = json.dumps(extras, separators=(",", ":"), ensure_ascii=False)
+        # Drop longest values until under limit
+        while len(meta_str.encode("utf-8")) > _TAG_VALUE_MAX_BYTES and extras:
+            longest_k = max(extras, key=lambda k: len(extras[k]))
+            extras.pop(longest_k)
+            meta_str = json.dumps(extras, separators=(",", ":"), ensure_ascii=False)
+        if extras:
+            packed["meta"] = meta_str
+
+    return packed
+
+
+def _unpack_aporte_tags(tags: Dict[str, str]) -> Dict[str, str]:
+    """Inverse of _pack_aporte_tags."""
     result = {k: v for k, v in tags.items() if k != "meta"}
     meta_str = tags.get("meta")
     if meta_str:
@@ -358,6 +470,68 @@ def _user_path(uid_ofuscado: str) -> str:
     return _normalize_path("aisynergix", "users", uid_ofuscado)
 
 
+def _wallet_path(uid_ofuscado: str) -> str:
+    """Path del objeto donde se persiste la wallet verificada del usuario."""
+    return _normalize_path("aisynergix", "wallets", uid_ofuscado)
+
+
+async def _read_user_wallet_object(uid_ofuscado: str) -> Optional[str]:
+    """
+    Lee la wallet verificada desde su objeto dedicado. Retorna None si no existe.
+    La wallet vive en un objeto separado porque no cabe en los 4 tags (64 bytes).
+    """
+    try:
+        client = await get_client()
+        path = _wallet_path(uid_ofuscado)
+        _, raw = await client.object.get_object(BUCKET_NAME, path, GetObjectOption())
+        text = raw.decode("utf-8").strip() if isinstance(raw, bytes) else str(raw).strip()
+        if text.startswith("0x") and len(text) == 42:
+            return text.lower()
+        return None
+    except Exception:
+        return None
+
+
+async def _write_user_wallet_object(uid_ofuscado: str, address: str) -> None:
+    """
+    Persiste la wallet verificada en un objeto dedicado.
+    Idempotente: si ya existe con la misma dirección, no hace nada.
+    """
+    client = await get_client()
+    path = _wallet_path(uid_ofuscado)
+    address_norm = address.lower()
+
+    existing = await _read_user_wallet_object(uid_ofuscado)
+    if existing == address_norm:
+        return
+
+    content = address_norm.encode("utf-8")
+    try:
+        await client.object.create_object(
+            BUCKET_NAME,
+            path,
+            io.BytesIO(content),
+            CreateObjectOptions(
+                visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
+                content_type="text/plain; charset=utf-8",
+            ),
+        )
+        logger.info("💎 Wallet object creado para %s", uid_ofuscado)
+        await asyncio.sleep(_SP_SYNC_DELAY)
+        try:
+            await client.object.put_object(
+                bucket_name=BUCKET_NAME,
+                object_name=path,
+                object_size=len(content),
+                reader=io.BytesIO(content),
+                opts=PutObjectOptions(content_type="text/plain; charset=utf-8"),
+            )
+        except Exception as put_exc:
+            logger.warning("put_object para wallet %s: %s", uid_ofuscado, put_exc)
+    except Exception as exc:
+        logger.warning("No se pudo persistir wallet de %s: %s", uid_ofuscado, exc)
+
+
 _USER_TAG_DEFAULTS: Dict[str, str] = {
     "fsm_state": "idle",
     "points": "0",
@@ -380,42 +554,41 @@ async def read_user_tags(uid_ofuscado: str) -> Dict[str, str]:
     """
     Lee el perfil completo de un usuario desde Greenfield.
 
-    Soporta dos formatos:
-    - Opción B (usuarios nuevos): contenido JSON completo en el objeto +
-      4 tags visibles. Se intenta leer el JSON del contenido primero.
-    - Opción A / formato antiguo: perfil en tags (empaquetado con meta JSON
-      o tags directos del formato anterior). Se desempaqueta con _unpack_tags.
-
-    Si el objeto no existe, retorna valores por defecto.
+    Estrategia:
+    1. get_object_head → tags (points, rank, language, meta compacto)
+    2. _unpack_user_tags expande `meta` a campos largos (trust_score, etc.)
+    3. Lee wallet desde objeto separado aisynergix/wallets/{uid_hash}
+       (no cabe en tags por límite de 64 bytes)
     """
     client = await get_client()
     path = _user_path(uid_ofuscado)
 
-    # ── Intento 1: get_object (lee contenido + tags) ──────────────────
-    # SDK retorna (ObjectInfo, data) — orden crítico, ver examples/basic_storage.py
+    result: Dict[str, str] = {}
     try:
-        obj_info, raw = await client.object.get_object(
-            BUCKET_NAME, path, GetObjectOption()
-        )
-        content = raw if isinstance(raw, bytes) else (raw.encode("utf-8") if raw else b"")
-        if content and len(content) > 2:
-            try:
-                return json.loads(content.decode("utf-8"))
-            except Exception:
-                pass
-        # Contenido vacío o no JSON (objeto fantasma 0 bytes) — leer desde tags
-        result = _unpack_tags(_tags_to_dict(obj_info.tags))
-        return result if result else dict(_USER_TAG_DEFAULTS)
+        obj_info = await client.object.get_object_head(BUCKET_NAME, path)
+        result = _unpack_user_tags(_tags_to_dict(obj_info.tags))
+    except Exception:
+        # Objeto no existe — usuario nuevo
+        result = {}
+
+    # Wallet en objeto separado (best-effort, fallback silencioso)
+    try:
+        wallet = await _read_user_wallet_object(uid_ofuscado)
+        if wallet:
+            result["wallet_address"] = wallet
+            # Wallet verificada implica human_verified
+            result.setdefault("human_verified", "true")
     except Exception:
         pass
 
-    # ── Intento 2: get_object_head (solo tags, sin contenido) ─────────
-    try:
-        obj_info = await client.object.get_object_head(BUCKET_NAME, path)
-        result = _unpack_tags(_tags_to_dict(obj_info.tags))
-        return result if result else dict(_USER_TAG_DEFAULTS)
-    except Exception:
+    if not result:
         return dict(_USER_TAG_DEFAULTS)
+
+    # Garantizar campos por defecto presentes (UserProfile.from_tags los espera)
+    for k, default in _USER_TAG_DEFAULTS.items():
+        result.setdefault(k, default)
+
+    return result
 
 
 @retry(
@@ -427,54 +600,56 @@ async def read_user_tags(uid_ofuscado: str) -> Dict[str, str]:
 )
 async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
     """
-    Crea o actualiza el archivo fantasma (0 bytes) de un usuario.
+    Crea o actualiza el perfil del usuario en Greenfield.
 
-    REGLA DE MERGE: cuando el objeto ya existe, leemos los tags actuales y
-    aplicamos los nuevos encima. Esto garantiza que campos como
-    wallet_address, guardados por rutas independientes (wallet_verify.py),
-    NO sean borrados por MsgSetTag cuando UserProfile.to_tags() los omite.
-    MsgSetTag reemplaza TODOS los tags del objeto; sin el merge perderíamos
-    wallet_address en la siguiente contribución.
+    LAYOUT (debido al límite chain-side: 4 tags max, 64 bytes/valor max):
+    - Objeto principal aisynergix/users/{uid}: 4 tags
+        · points, rank, language (explícitos)
+        · meta JSON compacto: {"t":int,"v":0|1,"d":int,"u":int,"l":int}
+    - Objeto wallet aisynergix/wallets/{uid}: contenido = address (creado
+      una sola vez en wallet_verify; no cabe en tags por tamaño)
+
+    Campos efímeros (fsm_state) no se persisten — viven en cache RAM.
     """
     client = await get_client()
     path = _user_path(uid_ofuscado)
+
+    # Wallet se persiste por separado (objeto dedicado). La extraemos
+    # antes de empacar tags para no incluirla en meta.
+    wallet_address = tags.get("wallet_address") or None
 
     exists = False
     existing_tags: Dict[str, str] = {}
     try:
         obj_info = await client.object.get_object_head(BUCKET_NAME, path)
         exists = True
-        # Unpack meta JSON so existing fields merge cleanly (not as raw JSON string)
-        existing_tags = _unpack_tags(_tags_to_dict(obj_info.tags))
+        existing_tags = _unpack_user_tags(_tags_to_dict(obj_info.tags))
     except Exception:
         exists = False
 
-    # Merge: existing tags act as base, incoming tags take priority.
-    # Preserves wallet_address and any future out-of-profile fields.
-    merged_tags = {**existing_tags, **tags}
+    # Merge: tags entrantes tienen prioridad sobre los existentes
+    merged_tags = {**existing_tags, **{k: v for k, v in tags.items() if k != "wallet_address"}}
 
-    # Pack tags to ≤4: 3 explicit (points, rank, language) + 1 "meta" JSON
-    packed_tags = _pack_tags(merged_tags, _EXPLICIT_USER_KEYS)
+    # Empacar a ≤4 tags con valor ≤64 bytes cada uno
+    packed_tags = _pack_user_tags(merged_tags)
 
     if not exists:
-        # ── Opción B: nuevo usuario ────────────────────────────────────
-        # Contenido del objeto = JSON completo (todos los campos del perfil).
-        # 4 tags Greenfield = campos más visibles en DCellar + meta con el resto.
-        content_json = json.dumps(merged_tags, ensure_ascii=False).encode("utf-8")
+        # Usuario nuevo: create_object atómico con tags
         try:
             await client.object.create_object(
                 BUCKET_NAME,
                 path,
-                io.BytesIO(content_json),
+                io.BytesIO(b""),
                 CreateObjectOptions(
                     visibility=VisibilityType.VISIBILITY_TYPE_PRIVATE,
-                    content_type="application/json",
+                    content_type="application/octet-stream",
                     tags=_dict_to_tags(packed_tags),
                 ),
             )
+            meta_size = len(packed_tags.get("meta", "").encode("utf-8"))
             logger.info(
-                "✅ create_object atómico OK para usuario %s — tags=%s",
-                uid_ofuscado, list(packed_tags.keys()),
+                "✅ create_object atómico OK para usuario %s — tags=%s meta_bytes=%d",
+                uid_ofuscado, list(packed_tags.keys()), meta_size,
             )
         except Exception as create_exc:
             logger.exception(
@@ -482,28 +657,8 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                 uid_ofuscado, list(packed_tags.keys()), create_exc,
             )
             raise
-
-        # Subir el contenido JSON al SP (best-effort; el SP podría auto-sellar).
-        await asyncio.sleep(_SP_SYNC_DELAY)
-        try:
-            await client.object.put_object(
-                bucket_name=BUCKET_NAME,
-                object_name=path,
-                object_size=len(content_json),
-                reader=io.BytesIO(content_json),
-                opts=PutObjectOptions(content_type="application/json"),
-            )
-        except Exception as put_exc:
-            logger.warning(
-                "put_object para usuario %s: %s (el contenido JSON puede no estar en el SP aún)",
-                uid_ofuscado,
-                put_exc,
-            )
     else:
-        # ── Opción A: usuario existente (objeto SEALED) ────────────────
-        # No se puede actualizar el contenido de un objeto SEALED sin
-        # delete+recreate (arriesga error 50004 del SP). Actualizamos solo
-        # los 4 tags vía MsgSetTag: 3 explícitos + meta JSON con el resto.
+        # Usuario existente: actualizar tags vía MsgSetTag
         resource = (
             f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
             f"::{BUCKET_NAME}/{path}"
@@ -518,9 +673,10 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                 messages=[msg_set],
                 type_url=[MSG_SET_TAG_TYPE_URL],
             )
+            meta_size = len(packed_tags.get("meta", "").encode("utf-8"))
             logger.info(
-                "✅ MsgSetTag OK para usuario %s — tags=%s",
-                uid_ofuscado, list(packed_tags.keys()),
+                "✅ MsgSetTag OK para usuario %s — tags=%s meta_bytes=%d",
+                uid_ofuscado, list(packed_tags.keys()), meta_size,
             )
         except Exception as set_exc:
             logger.exception(
@@ -528,6 +684,15 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
                 uid_ofuscado, list(packed_tags.keys()), set_exc,
             )
             raise
+
+    # Persistir wallet en objeto dedicado (best-effort)
+    if wallet_address:
+        try:
+            await _write_user_wallet_object(uid_ofuscado, wallet_address)
+        except Exception as wallet_exc:
+            logger.warning(
+                "No se pudo persistir wallet de %s: %s", uid_ofuscado, wallet_exc
+            )
 
     logger.info("✅ Usuario %s actualizado en Greenfield", uid_ofuscado)
 
@@ -601,10 +766,9 @@ async def write_aporte(
     except Exception:
         object_exists = False
 
-    # ── Opción A: empaquetar en ≤4 tags ──────────────────────────────────
-    # 3 explícitos (author_uid, quality_score, category) visibles en DCellar
-    # + 1 tag "meta" con el resto como JSON compacto (lang, impact_index, etc.)
-    packed_tags = _pack_tags(full_tags, _EXPLICIT_APORTE_KEYS)
+    # Empaquetar en ≤4 tags con valor ≤64 bytes cada uno
+    # 3 explícitos (author_uid, quality_score, category) + 1 meta JSON
+    packed_tags = _pack_aporte_tags(full_tags)
 
     tx_hash = ""
 
@@ -709,7 +873,7 @@ async def read_aporte(path: str) -> Tuple[str, Dict[str, str]]:
         if isinstance(raw_data, bytes)
         else str(raw_data)
     )
-    tags = _unpack_tags(_tags_to_dict(obj_info.tags))
+    tags = _unpack_aporte_tags(_tags_to_dict(obj_info.tags))
     return texto, tags
 
 
@@ -959,10 +1123,10 @@ async def reset_all_daily_counts() -> int:
                 obj_info = await client.object.get_object_head(
                     BUCKET_NAME, obj.object_name
                 )
-                # Unpack meta JSON → full dict, update field, re-pack to ≤4 tags
-                current = _unpack_tags(_tags_to_dict(obj_info.tags))
+                # Unpack meta compacto → full dict, update field, re-pack a ≤4 tags
+                current = _unpack_user_tags(_tags_to_dict(obj_info.tags))
                 current["daily_aportes_count"] = "0"
-                packed = _pack_tags(current, _EXPLICIT_USER_KEYS)
+                packed = _pack_user_tags(current)
 
                 resource = (
                     f"grn:{ResourceType.RESOURCE_TYPE_OBJECT.value}"
