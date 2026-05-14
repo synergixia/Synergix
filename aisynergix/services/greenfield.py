@@ -103,6 +103,93 @@ _SP_SYNC_DELAY: int = 12
 _PUT_RETRY_DELAYS: List[int] = [5, 10, 20, 40]
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# MONKEY-PATCH SDK: Corrige put_object que nunca envía X-Gnfd-Txn-Hash
+#
+# El SP de Greenfield requiere el header X-Gnfd-Txn-Hash para asociar
+# el PUT con el objeto creado on-chain. Sin este header el SP retorna
+# 50004 "no permission" en TODOS los uploads, aunque el stream de pago
+# esté activo y el objeto exista on-chain.
+#
+# El SDK tiene el campo `txn_hash` en RequestMeta y X-Gnfd-Txn-Hash en
+# SUPPORT_HEADERS, pero generate_headers nunca lo emite y put_object
+# nunca lo incluye en request_metadata.
+# ═══════════════════════════════════════════════════════════════════════
+
+def _apply_sdk_patches() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    import greenfield_python_sdk.storage_provider.request as _sp_request
+    import greenfield_python_sdk.storage_provider.object as _sp_obj_module
+    from greenfield_python_sdk.storage_provider.utils import (
+        generate_authorization_header,
+        check_valid_bucket_name,
+        check_valid_object_name,
+    )
+    from greenfield_python_sdk.models.request import RequestMeta as _RequestMeta
+
+    async def _patched_generate_headers(metadata, key_manager):
+        headers = {}
+        if metadata.get("txn_msg"):
+            v = metadata["txn_msg"]
+            headers["X-Gnfd-Unsigned-Msg"] = v.decode() if isinstance(v, bytes) else v
+        if metadata.get("user_address"):
+            headers["X-Gnfd-User-Address"] = metadata["user_address"]
+        if metadata.get("content_length"):
+            headers["Content-Length"] = str(metadata["content_length"])
+        if metadata.get("content_type"):
+            headers["Content-Type"] = metadata["content_type"]
+        if metadata.get("expiry_timestamp"):
+            headers["X-Gnfd-Expiry-Timestamp"] = metadata["expiry_timestamp"]
+        if metadata.get("txn_hash"):
+            headers["X-Gnfd-Txn-Hash"] = metadata["txn_hash"]
+        headers["Authorization"] = await generate_authorization_header(metadata, key_manager, headers)
+        return headers
+
+    _sp_request.generate_headers = _patched_generate_headers
+
+    async def _patched_sp_put_object(
+        self, bucket_name, object_name, object_size, primary_sp_address, reader, opts
+    ):
+        if object_size < 0:
+            raise ValueError("object_size must be greater than 0")
+        check_valid_bucket_name(bucket_name)
+        check_valid_object_name(object_name)
+
+        content_type = opts.content_type or "application/octet-stream"
+        txn_hash = opts.txn_hash or ""
+
+        base_url = await self.client._get_sp_url_by_addr(primary_sp_address, bucket_name)
+        expiry = (
+            datetime.now(timezone.utc) + timedelta(seconds=1000)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        request_metadata = _RequestMeta(
+            method="PUT",
+            bucket_name=bucket_name,
+            object_name=object_name,
+            content_type=content_type,
+            content_length=object_size,
+            txn_hash=txn_hash,
+            base_url=base_url,
+            expiry_timestamp=expiry,
+        ).model_dump()
+
+        response = await self.client.prepare_request(
+            base_url,
+            request_metadata,
+            body=reader,
+        )
+        if response.status != 200:
+            raise ValueError("put object failed")
+        return "Object added successfully"
+
+    _sp_obj_module.Object.put_object = _patched_sp_put_object
+    logger.info("✅ SDK patch aplicado: put_object enviará X-Gnfd-Txn-Hash al SP")
+
+
+_apply_sdk_patches()
+
+
 async def _put_object_with_retry(
     bucket_name: str,
     object_name: str,
