@@ -97,6 +97,95 @@ PRIVATE_KEY: str = os.getenv("PRIVATE_KEY", "")
 # put_object for the new object (error 20008 otherwise).
 _SP_SYNC_DELAY: int = 12
 
+# Reintentos de put_object: 50004 "no permission" suele significar
+# que el SP no ha procesado aún el evento on-chain.  Probamos delays
+# crecientes hasta que acepte o nos rendimos.
+_PUT_RETRY_DELAYS: List[int] = [5, 10, 20, 40]
+
+
+async def _put_object_with_retry(
+    bucket_name: str,
+    object_name: str,
+    object_size: int,
+    content: bytes,
+    content_type: str,
+    tx_hash: str = "",
+) -> bool:
+    """
+    Sube contenido al SP con reintentos progresivos.  Verifica SEALED
+    después.  Retorna True si el objeto quedó sellado (legible), False
+    si quedó en CREATED state (orphan, ilegible para get_object).
+    """
+    import io as _io
+    client = await get_client()
+
+    # Resolución del SP para logging diagnóstico
+    sp_endpoint_info = "unknown-sp"
+    try:
+        sp_addr = await client.bucket.storage_provider_by_bucket(bucket_name)
+        sp_endpoint_info = sp_addr or "no-sp-addr"
+    except Exception:
+        pass
+
+    last_exc: Optional[Exception] = None
+    for attempt, delay in enumerate([0] + _PUT_RETRY_DELAYS):
+        if delay > 0:
+            await asyncio.sleep(delay)
+        try:
+            opts = PutObjectOptions(content_type=content_type)
+            if tx_hash:
+                opts.txn_hash = tx_hash
+            await client.object.put_object(
+                bucket_name=bucket_name,
+                object_name=object_name,
+                object_size=object_size,
+                reader=_io.BytesIO(content),
+                opts=opts,
+            )
+            last_exc = None
+            break  # éxito
+        except Exception as exc:
+            last_exc = exc
+            err_str = str(exc).lower()
+            # Si el SP ya selló (objeto ya tiene contenido), no es error
+            if "already" in err_str or "sealed" in err_str:
+                logger.info(
+                    "put_object %s: objeto ya sellado en intento %d",
+                    object_name, attempt,
+                )
+                last_exc = None
+                break
+            logger.warning(
+                "put_object %s — SP=%s — intento %d/%d FALLÓ: %s",
+                object_name, sp_endpoint_info,
+                attempt + 1, len(_PUT_RETRY_DELAYS) + 1, exc,
+            )
+
+    # Verificar estado SEALED
+    try:
+        await asyncio.sleep(3)  # SP necesita un momento para sellar
+        obj_info = await client.object.get_object_head(bucket_name, object_name)
+        status = getattr(obj_info, "object_status", None)
+        sealed = (status == ObjectStatus.OBJECT_STATUS_SEALED)
+        if sealed:
+            logger.info(
+                "✅ %s SEALED (%d bytes)", object_name, object_size,
+            )
+            return True
+        else:
+            logger.error(
+                "❌ %s quedó en %s (SP=%s) — contenido NO legible.  "
+                "Último put_object error: %s",
+                object_name, status, sp_endpoint_info, last_exc,
+            )
+            return False
+    except Exception as head_exc:
+        logger.error(
+            "❌ %s: no se pudo verificar SEALED status: %s",
+            object_name, head_exc,
+        )
+        return False
+
 # ── AI Guard (anti-jailbreak) ─────────────────────────────────────────
 _ai_guard_patterns: List[str] = []
 
@@ -857,22 +946,23 @@ async def write_aporte(
         # Give the SP time to index the new object before put_object
         await asyncio.sleep(_SP_SYNC_DELAY)
 
-    # ── Step 2: upload content to SP (best-effort) ────────────────────
-    # Small objects are often auto-sealed by the SP immediately after
-    # create_object, making put_object fail with error 50004 / 50002.
-    # Content is already on-chain in that case.
-    try:
-        await client.object.put_object(
-            bucket_name=BUCKET_NAME,
-            object_name=path,
-            object_size=payload_size,
-            reader=io.BytesIO(encoded),
-            opts=PutObjectOptions(content_type="text/plain; charset=utf-8"),
-        )
-    except Exception as put_exc:
-        logger.warning(
-            "put_object para aporte %s: %s (esperado si el SP auto-selló)",
-            path, put_exc,
+    # ── Step 2: upload content with retries until SEALED ──────────────
+    # put_object con reintentos: el SP puede tardar más de 12s en
+    # aceptar uploads.  Sin esto, los aportes quedaban en CREATED
+    # state (ilegibles) y federated_evolution los ignoraba.
+    sealed = await _put_object_with_retry(
+        bucket_name=BUCKET_NAME,
+        object_name=path,
+        object_size=payload_size,
+        content=encoded,
+        content_type="text/plain; charset=utf-8",
+        tx_hash=tx_hash,
+    )
+    if not sealed:
+        logger.error(
+            "❌ Aporte %s no quedó SEALED — el sync_brain no podrá "
+            "indexarlo en la memoria inmortal hasta que el SP lo selle.",
+            path,
         )
 
     # ── Step 3: update tags only for existing objects ─────────────────
@@ -1265,7 +1355,7 @@ async def upload_brain_index(code: str, version_name: str, binary: bytes) -> Non
         pass
 
     payload_size = len(binary)
-    await client.object.create_object(
+    create_res = await client.object.create_object(
         BUCKET_NAME,
         data_path,
         io.BytesIO(binary),
@@ -1274,44 +1364,20 @@ async def upload_brain_index(code: str, version_name: str, binary: bytes) -> Non
             content_type="application/octet-stream",
         ),
     )
+    idx_tx_hash = _extract_txhash(create_res)
     await asyncio.sleep(_SP_SYNC_DELAY)
-    put_succeeded = False
-    try:
-        await client.object.put_object(
-            bucket_name=BUCKET_NAME,
-            object_name=data_path,
-            object_size=payload_size,
-            reader=io.BytesIO(binary),
-            opts=PutObjectOptions(content_type="application/octet-stream"),
-        )
-        put_succeeded = True
-    except Exception as put_exc:
-        logger.warning(
-            "put_object para brain index %s: %s (esperado si el SP auto-selló)",
-            data_path, put_exc,
-        )
-
-    # Verificar estado final: si el objeto queda en CREATED, será
-    # ilegible (50004 "no permission" en get_object).  Eso significa
-    # que el SP nunca recibió el contenido — la versión está rota.
-    try:
-        obj_info = await client.object.get_object_head(BUCKET_NAME, data_path)
-        status = getattr(obj_info, "object_status", None)
-        sealed = (status == ObjectStatus.OBJECT_STATUS_SEALED) if status is not None else None
-        logger.info(
-            "📤 Brain index %s subido: %d bytes | put_ok=%s | status=%s sealed=%s",
-            data_path, payload_size, put_succeeded, status, sealed,
-        )
-        if sealed is False:
-            logger.error(
-                "❌ Brain index %s quedó en CREATED — el SP no aceptó el contenido. "
-                "Esta versión NO podrá leerse en el próximo restart.",
-                data_path,
-            )
-    except Exception as head_exc:
-        logger.warning(
-            "📤 Brain index %s subido pero no se pudo verificar status: %s",
-            data_path, head_exc,
+    sealed = await _put_object_with_retry(
+        bucket_name=BUCKET_NAME,
+        object_name=data_path,
+        object_size=payload_size,
+        content=binary,
+        content_type="application/octet-stream",
+        tx_hash=idx_tx_hash,
+    )
+    if not sealed:
+        logger.error(
+            "❌ Brain index %s NO quedó SEALED — el próximo restart no podrá cargarlo.",
+            data_path,
         )
 
 
@@ -1349,7 +1415,7 @@ async def upload_brain_meta(code: str, version_name: str, meta: Dict[str, Any]) 
 
     content = json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8")
     payload_size = len(content)
-    await client.object.create_object(
+    meta_create_res = await client.object.create_object(
         BUCKET_NAME,
         data_path,
         io.BytesIO(content),
@@ -1358,22 +1424,21 @@ async def upload_brain_meta(code: str, version_name: str, meta: Dict[str, Any]) 
             content_type="application/json",
         ),
     )
+    meta_tx_hash = _extract_txhash(meta_create_res)
     await asyncio.sleep(_SP_SYNC_DELAY)
-    # put_object best-effort: el contenido ya va en create_object.
-    try:
-        await client.object.put_object(
-            bucket_name=BUCKET_NAME,
-            object_name=data_path,
-            object_size=payload_size,
-            reader=io.BytesIO(content),
-            opts=PutObjectOptions(content_type="application/json"),
+    sealed = await _put_object_with_retry(
+        bucket_name=BUCKET_NAME,
+        object_name=data_path,
+        object_size=payload_size,
+        content=content,
+        content_type="application/json",
+        tx_hash=meta_tx_hash,
+    )
+    if not sealed:
+        logger.error(
+            "❌ Brain meta %s NO quedó SEALED — el índice tampoco será legible.",
+            data_path,
         )
-    except Exception as put_exc:
-        logger.warning(
-            "put_object para brain meta %s: %s (esperado si el SP auto-selló)",
-            data_path, put_exc,
-        )
-    logger.debug("📤 Brain meta subido: %s", data_path)
 
 
 async def download_brain_meta(code: str, version_name: str) -> Dict[str, Any]:
