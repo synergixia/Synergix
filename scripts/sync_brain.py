@@ -67,22 +67,33 @@ async def federated_evolution():
         all_indexed = rag.get_all_indexed_objects()
 
         user_uids = await get_all_user_uids()
+        logger.info(
+            "🔍 Scan: %d usuarios en bucket, %d aportes ya indexados en RAM.",
+            len(user_uids), len(all_indexed),
+        )
         if not user_uids:
             logger.info("📭 Sin usuarios registrados.")
             return
 
         # Collect new aportes not yet indexed, grouped by brain code
         new_by_code: Dict[str, List[Dict[str, Any]]] = {c: [] for c in BRAIN_CODES}
+        total_scanned = 0
+        total_skipped_indexed = 0
+        total_skipped_empty = 0
+        total_read_errors = 0
 
         for uid in user_uids:
             try:
                 aportes = await list_aportes(uid, limit=10)
+                total_scanned += len(aportes)
                 for aporte in aportes:
                     if aporte["path"] in all_indexed:
+                        total_skipped_indexed += 1
                         continue
                     try:
                         texto, tags = await read_aporte(aporte["path"])
                         if not texto.strip():
+                            total_skipped_empty += 1
                             continue
                         category = tags.get("category", "filosofia")
                         code = CATEGORY_TO_BRAIN.get(category, "know")
@@ -94,10 +105,21 @@ async def federated_evolution():
                             "object_name": aporte["path"],
                         })
                     except Exception as e:
+                        total_read_errors += 1
                         logger.warning("Error leyendo %s: %s", aporte.get("path"), e)
                         continue
             except Exception:
                 continue
+
+        logger.info(
+            "📊 Scan resultado: %d aportes SEALED encontrados | "
+            "%d ya indexados | %d vacíos | %d errores lectura | "
+            "nuevos por cerebro: prog=%d tech=%d cien=%d know=%d",
+            total_scanned, total_skipped_indexed, total_skipped_empty,
+            total_read_errors,
+            len(new_by_code["prog"]), len(new_by_code["tech"]),
+            len(new_by_code["cien"]), len(new_by_code["know"]),
+        )
 
         total_new = sum(len(v) for v in new_by_code.values())
         if total_new == 0:

@@ -274,6 +274,7 @@ class AIManager:
             language=profile.language,
             quality_score=quality_score,
             object_name=object_path,
+            category=evaluation.get("category", "filosofia"),
         )
 
         new_rank = await self._identity.check_and_update_rank(uid, profile)
