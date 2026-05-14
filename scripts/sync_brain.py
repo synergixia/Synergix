@@ -31,6 +31,7 @@ from aisynergix.services.greenfield import (
     load_system_config,
     check_emergency_lock,
     is_emergency_locked,
+    load_current_challenge_from_greenfield,
 )
 from aisynergix.ai.manager import get_ai_manager
 from aisynergix.ai.local_ia import get_thinker, get_judge
@@ -432,14 +433,19 @@ async def on_startup():
         await rag.rebuild_from_bucket()
         logger.info("🧠 Motor RAG reconstruido desde el bucket.")
 
-        # Bootstrap inicial: si rebuild_from_bucket cargó aportes en RAM,
-        # necesitamos persistir cada cerebro a Greenfield como su primera
-        # versión.  Si no, federated_evolution los verá como "ya indexados"
-        # en RAM y nunca los subirá (indexed_objects bloquea re-procesamiento).
+        # Bootstrap inicial SIEMPRE: cada cerebro recibe su primera versión
+        # (v1) aunque esté vacío.  Esto garantiza que las rutas del bucket
+        # existan desde el primer arranque:
+        #   aisynergix/data/brain_pointer (con 4 tags)
+        #   aisynergix/data/brains/{prog,tech,cien,know}/{code}_v1.index
+        #   aisynergix/data/brains/{prog,tech,cien,know}/{code}_v1.meta.json
+        # Sin esto, en una instalación virgen (sin aportes aún) los objetos
+        # nunca se crearían hasta que algún usuario aportara contenido.
         for code in BRAIN_CODES:
             engine = rag._brains.get(code)
-            if engine is None or engine.total_documents == 0:
+            if engine is None:
                 continue
+            await engine._ensure_index()  # entrena el índice (vacío o no)
             new_version = await rag.save_brain_to_greenfield(
                 code, brain_versions.get(code, f"{code}_v0")
             )
@@ -456,6 +462,21 @@ async def on_startup():
                 logger.error("❌ Bootstrap save brain [%s] falló", code)
     else:
         logger.info("🧠 Motor RAG inicializado desde Greenfield.")
+
+    # Bootstrap del reto semanal: si no existe challenges/current.json en
+    # Greenfield, lo generamos ahora.  El cron del lunes 00:05 UTC seguirá
+    # rotándolo cada semana, pero así nunca arrancamos sin un reto activo.
+    existing_challenge = await load_current_challenge_from_greenfield()
+    if existing_challenge is None:
+        logger.info("🎯 No hay reto activo — generando reto inicial...")
+        try:
+            await weekly_challenge()
+        except Exception as ch_exc:
+            logger.error("❌ Bootstrap challenge falló: %s", ch_exc)
+    else:
+        logger.info(
+            "🎯 Reto activo en Greenfield: %s", existing_challenge.get("id")
+        )
 
     ai = get_ai_manager()
     health = await ai.health_check()
