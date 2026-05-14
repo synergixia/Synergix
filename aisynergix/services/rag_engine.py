@@ -455,18 +455,28 @@ class CrossLingualRAG:
             "embedding_dim": EMBEDDING_DIM,
         }
 
-    async def rebuild_from_bucket(self):
-        """Reconstruye los 4 cerebros leyendo todos los aportes del bucket."""
+    async def rebuild_from_bucket(self, only_codes: Optional[List[str]] = None) -> Dict[str, int]:
+        """
+        Reconstruye los cerebros leyendo aportes del bucket.
+
+        only_codes: si se especifica, solo vectoriza los cerebros de esa lista.
+                    Los otros cerebros son ignorados (sus indexed_objects quedan
+                    intactos).  Útil para rellenar cerebros vacíos sin rehacer
+                    los que ya tienen vectores correctos.
+
+        Retorna dict {code: docs_added}.
+        """
         from aisynergix.services.greenfield import (
             get_all_user_uids,
             list_aportes,
             read_aporte,
         )
+        target = set(only_codes) if only_codes else set(BRAIN_CODES)
         user_uids = await get_all_user_uids()
         if not user_uids:
-            return
+            return {c: 0 for c in target}
 
-        by_code: Dict[str, List[Dict[str, Any]]] = {c: [] for c in BRAIN_CODES}
+        by_code: Dict[str, List[Dict[str, Any]]] = {c: [] for c in target}
         for uid in user_uids:
             try:
                 aportes = await list_aportes(uid, limit=50)
@@ -477,6 +487,8 @@ class CrossLingualRAG:
                             continue
                         category = tags.get("category", "filosofia")
                         code = self._brain_for_category(category)
+                        if code not in target:
+                            continue
                         by_code[code].append({
                             "text": texto,
                             "author_uid": tags.get("author_uid", uid),
@@ -489,9 +501,14 @@ class CrossLingualRAG:
             except Exception:
                 continue
 
+        added: Dict[str, int] = {}
         for code, contribs in by_code.items():
             if contribs:
-                await self.add_contributions_to_brain(code, contribs)
+                n = await self.add_contributions_to_brain(code, contribs)
+                added[code] = n
+            else:
+                added[code] = 0
+        return added
 
 
 _rag_instance: Optional[CrossLingualRAG] = None
