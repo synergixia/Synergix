@@ -1275,9 +1275,7 @@ async def upload_brain_index(code: str, version_name: str, binary: bytes) -> Non
         ),
     )
     await asyncio.sleep(_SP_SYNC_DELAY)
-    # put_object best-effort: el contenido ya va en create_object (línea
-    # superior).  Si el SP auto-selló o aún no propagó el create on-chain,
-    # devuelve 50004 "no permission" — se loguea como warning y se sigue.
+    put_succeeded = False
     try:
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
@@ -1286,12 +1284,35 @@ async def upload_brain_index(code: str, version_name: str, binary: bytes) -> Non
             reader=io.BytesIO(binary),
             opts=PutObjectOptions(content_type="application/octet-stream"),
         )
+        put_succeeded = True
     except Exception as put_exc:
         logger.warning(
             "put_object para brain index %s: %s (esperado si el SP auto-selló)",
             data_path, put_exc,
         )
-    logger.info("📤 Brain index subido: %s (%d bytes)", data_path, payload_size)
+
+    # Verificar estado final: si el objeto queda en CREATED, será
+    # ilegible (50004 "no permission" en get_object).  Eso significa
+    # que el SP nunca recibió el contenido — la versión está rota.
+    try:
+        obj_info = await client.object.get_object_head(BUCKET_NAME, data_path)
+        status = getattr(obj_info, "object_status", None)
+        sealed = (status == ObjectStatus.OBJECT_STATUS_SEALED) if status is not None else None
+        logger.info(
+            "📤 Brain index %s subido: %d bytes | put_ok=%s | status=%s sealed=%s",
+            data_path, payload_size, put_succeeded, status, sealed,
+        )
+        if sealed is False:
+            logger.error(
+                "❌ Brain index %s quedó en CREATED — el SP no aceptó el contenido. "
+                "Esta versión NO podrá leerse en el próximo restart.",
+                data_path,
+            )
+    except Exception as head_exc:
+        logger.warning(
+            "📤 Brain index %s subido pero no se pudo verificar status: %s",
+            data_path, head_exc,
+        )
 
 
 async def download_brain_index(code: str, version_name: str) -> Optional[bytes]:
@@ -1303,7 +1324,11 @@ async def download_brain_index(code: str, version_name: str) -> Optional[bytes]:
     try:
         _, raw = await client.object.get_object(BUCKET_NAME, data_path, GetObjectOption())
         return raw if isinstance(raw, bytes) else None
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "download_brain_index [%s] falló para %s: %s",
+            code, data_path, exc,
+        )
         return None
 
 
