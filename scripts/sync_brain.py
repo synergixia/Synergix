@@ -431,6 +431,29 @@ async def on_startup():
     if not loaded_any:
         await rag.rebuild_from_bucket()
         logger.info("🧠 Motor RAG reconstruido desde el bucket.")
+
+        # Bootstrap inicial: si rebuild_from_bucket cargó aportes en RAM,
+        # necesitamos persistir cada cerebro a Greenfield como su primera
+        # versión.  Si no, federated_evolution los verá como "ya indexados"
+        # en RAM y nunca los subirá (indexed_objects bloquea re-procesamiento).
+        for code in BRAIN_CODES:
+            engine = rag._brains.get(code)
+            if engine is None or engine.total_documents == 0:
+                continue
+            new_version = await rag.save_brain_to_greenfield(
+                code, brain_versions.get(code, f"{code}_v0")
+            )
+            if new_version:
+                try:
+                    await update_brain_pointer_tag(code, new_version)
+                    logger.info(
+                        "🧠 Bootstrap brain [%s] → %s (%d docs)",
+                        code, new_version, engine.total_documents,
+                    )
+                except Exception as e:
+                    logger.error("❌ Bootstrap pointer [%s] falló: %s", code, e)
+            else:
+                logger.error("❌ Bootstrap save brain [%s] falló", code)
     else:
         logger.info("🧠 Motor RAG inicializado desde Greenfield.")
 
