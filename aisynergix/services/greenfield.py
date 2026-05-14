@@ -412,6 +412,37 @@ async def get_client() -> BaseGreenfieldClient:
         # Paso 2: async_init sincroniza la cuenta on-chain
         await _client.async_init()
 
+        # ─────────────────────────────────────────────────────────────
+        # Auto-retry sobre nonce desincronizado:
+        # bot y sync_brain comparten wallet, así que el contador local
+        # de cuenta del SDK se desincroniza cuando el otro proceso
+        # broadcastea una tx.  En vez de fallar la operación, capturamos
+        # "account sequence mismatch", llamamos async_init() para
+        # resincronizar el nonce con la cadena, y reintentamos UNA vez.
+        # ─────────────────────────────────────────────────────────────
+        _original_broadcast = _client.blockchain_client.broadcast_message
+
+        async def _broadcast_with_seq_retry(*args, **kwargs):
+            try:
+                return await _original_broadcast(*args, **kwargs)
+            except Exception as exc:
+                if "account sequence mismatch" not in str(exc).lower():
+                    raise
+                logger.warning(
+                    "⚠️ Nonce desincronizado — refrescando vía async_init() y reintentando"
+                )
+                try:
+                    await _client.async_init()
+                except Exception as refresh_exc:
+                    logger.error(
+                        "❌ async_init refresh falló: %s — propagando error original",
+                        refresh_exc,
+                    )
+                    raise exc
+                return await _original_broadcast(*args, **kwargs)
+
+        _client.blockchain_client.broadcast_message = _broadcast_with_seq_retry
+
         logger.info(
             "✅ GreenfieldClient inicializado — address=%s chain=%s",
             _key_manager.address,
@@ -1434,12 +1465,31 @@ async def rebuild_top10() -> List[Dict[str, Any]]:
         "🏆 Leaderboard reconstruido: %d usuarios en top10 (RAM cache)", len(top10)
     )
 
-    # Persist top10.json to Greenfield — recreate every cycle per spec.
+    # Persist top10.json a Greenfield SOLO si no existe aún.
+    # El SP de Greenfield rechaza put_object con 50004 cuando se intenta
+    # sobreescribir un path previamente SEALED (limitación conocida).
+    # Después de la primera creación, mantenemos top10 sólo en RAM —
+    # se reconstruye cada 10 min desde los tags de usuarios.
     try:
-        await write_json_data("aisynergix/data/top10.json", top10)
-        logger.info("📊 top10.json actualizado en Greenfield")
+        already_exists = False
+        try:
+            await client.object.get_object_head(
+                BUCKET_NAME, "aisynergix/data/top10.json"
+            )
+            already_exists = True
+        except Exception:
+            already_exists = False
+
+        if not already_exists:
+            await write_json_data("aisynergix/data/top10.json", top10)
+            logger.info("📊 top10.json creado en Greenfield (primer write)")
+        else:
+            logger.debug(
+                "top10.json ya existe en Greenfield — saltando write "
+                "(SP no soporta overwrite, se mantiene RAM cache)"
+            )
     except Exception as exc:
-        logger.warning("No se pudo actualizar top10.json en Greenfield: %s", exc)
+        logger.debug("top10.json no persistido a Greenfield: %s", exc)
 
     return top10
 
