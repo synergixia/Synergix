@@ -32,6 +32,7 @@ from aisynergix.services.greenfield import (
     check_emergency_lock,
     is_emergency_locked,
     load_current_challenge_from_greenfield,
+    diagnose_payment_stream,
 )
 from aisynergix.ai.manager import get_ai_manager
 from aisynergix.ai.local_ia import get_thinker, get_judge
@@ -419,6 +420,9 @@ async def on_startup():
 
     await load_all_locales()
     logger.info("🌐 %d idiomas cargados en RAM.", len(LANG_NAMES))
+
+    # Diagnóstico temprano: verificar stream de pago antes de cualquier put_object
+    await diagnose_payment_stream()
 
     # sync_brain es el único proceso autorizado a CREAR archivos singleton
     # (system_config.json, ai_guard.txt) — evita race condition de nonce con bot

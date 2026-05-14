@@ -550,6 +550,50 @@ async def get_client() -> BaseGreenfieldClient:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# DIAGNÓSTICO DE PAGO
+# ═══════════════════════════════════════════════════════════════════════
+
+async def diagnose_payment_stream() -> None:
+    """
+    Consulta el stream de pago del wallet y loguea su estado.
+    Un stream FROZEN explica el error 50004 de put_object.
+    """
+    from greenfield_python_sdk.protos.greenfield.payment import StreamAccountStatus
+    client = await get_client()
+    if not _key_manager:
+        return
+    address = _key_manager.address
+    try:
+        record = await client.payment.get_stream_record(address)
+        stream = getattr(record, "stream_record", record)
+        status = getattr(stream, "status", None)
+        static_balance = getattr(stream, "static_balance", "?")
+        buffer_balance = getattr(stream, "buffer_balance", "?")
+        lock_balance = getattr(stream, "lock_balance", "?")
+        netflow_rate = getattr(stream, "netflow_rate", "?")
+        settle_ts = getattr(stream, "settle_timestamp", 0)
+
+        if status == StreamAccountStatus.STREAM_ACCOUNT_STATUS_FROZEN:
+            logger.error(
+                "🚨 PAYMENT STREAM FROZEN — wallet=%s "
+                "static_balance=%s buffer_balance=%s lock_balance=%s netflow_rate=%s "
+                "settle_ts=%s  "
+                "➜ Deposita BNB en la cuenta de pago de Greenfield para reactivar el stream. "
+                "Mientras esté FROZEN, put_object fallará con 50004 para todos los objetos.",
+                address, static_balance, buffer_balance, lock_balance, netflow_rate, settle_ts,
+            )
+        else:
+            logger.info(
+                "✅ Payment stream ACTIVE — wallet=%s "
+                "static_balance=%s buffer_balance=%s lock_balance=%s netflow_rate=%s/s "
+                "settle_ts=%s",
+                address, static_balance, buffer_balance, lock_balance, netflow_rate, settle_ts,
+            )
+    except Exception as exc:
+        logger.warning("diagnose_payment_stream falló: %s", exc)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # ASEGURAMIENTO DEL BUCKET
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1991,6 +2035,7 @@ get_greenfield_client = get_client
 __all__ = [
     "get_client",
     "get_greenfield_client",
+    "diagnose_payment_stream",
     "ensure_bucket_exists",
     "_hash_uid",
     "read_user_tags",
