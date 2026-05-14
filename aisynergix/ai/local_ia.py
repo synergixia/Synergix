@@ -235,19 +235,38 @@ class LocalLLMConnector:
         }
 
         if json_mode:
-            # llama.cpp server: native json_object + schema format.
-            # The OpenAI-style {"type":"json_schema","json_schema":{...,"strict":true}}
-            # is rejected with HTTP 400 by recent llama.cpp builds.
-            payload["response_format"] = {
-                "type": "json_object",
-                "schema": JUDGE_JSON_SCHEMA,
-            }
+            # Use the most portable JSON-mode signal: just {"type":"json_object"}.
+            # The system prompt already specifies the exact JSON structure, and
+            # _parse_judge_response handles malformed/missing fields with safe
+            # defaults — so we don't need schema enforcement.  Different
+            # llama.cpp versions disagree on the schema-field shape
+            # ({"type":"json_schema","json_schema":...} vs
+            #  {"type":"json_object","schema":...}); avoiding it entirely
+            # makes us robust across image versions.
+            payload["response_format"] = {"type": "json_object"}
 
         response = await client.post(
             f"{self._base_url}/v1/chat/completions",
             json=payload,
             headers={"Content-Type": "application/json"},
         )
+        if response.status_code >= 400:
+            # llama.cpp returns the rejection reason in the body; surface it
+            # so we can diagnose schema/format mismatches instead of a bare
+            # "400 Bad Request" with no context.
+            try:
+                body = response.text
+            except Exception:
+                body = "<unreadable>"
+            import logging
+            logging.getLogger(__name__).error(
+                "LLM %s returned %d. Payload keys=%s response_format=%s body=%s",
+                self._base_url,
+                response.status_code,
+                list(payload.keys()),
+                payload.get("response_format"),
+                body[:1000],
+            )
         response.raise_for_status()
 
         result = response.json()
