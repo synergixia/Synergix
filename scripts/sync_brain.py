@@ -455,33 +455,44 @@ async def on_startup():
         await rag.rebuild_from_bucket()
         logger.info("🧠 Motor RAG reconstruido desde el bucket.")
 
-        # Bootstrap inicial SIEMPRE: cada cerebro recibe su primera versión
-        # (v1) aunque esté vacío.  Esto garantiza que las rutas del bucket
-        # existan desde el primer arranque:
-        #   aisynergix/data/brain_pointer (con 4 tags)
-        #   aisynergix/data/brains/{prog,tech,cien,know}/{code}_v1.index
-        #   aisynergix/data/brains/{prog,tech,cien,know}/{code}_v1.meta.json
-        # Sin esto, en una instalación virgen (sin aportes aún) los objetos
-        # nunca se crearían hasta que algún usuario aportara contenido.
-        for code in BRAIN_CODES:
-            engine = rag._brains.get(code)
-            if engine is None:
-                continue
-            await engine._ensure_index()  # entrena el índice (vacío o no)
-            new_version = await rag.save_brain_to_greenfield(
-                code, brain_versions.get(code, f"{code}_v0")
+        # Solo creamos versiones nuevas en INSTALACIÓN VIRGEN (sin
+        # brain_pointer existente).  Si el pointer ya existe pero las
+        # cargas fallaron (v1 en CREATED state porque el SP nunca selló),
+        # NO subimos v2 — sería otro orphan más.  En su lugar, dejamos
+        # los cerebros reconstruidos en RAM y dejamos que
+        # federated_evolution suba una nueva versión solo cuando haya
+        # aportes nuevos que justifiquen el gas.
+        pointer_exists = any(
+            v != f"{c}_v0" for c, v in brain_versions.items()
+        )
+        if pointer_exists:
+            logger.warning(
+                "⚠️ brain_pointer existe (%s) pero los índices no se "
+                "pudieron descargar.  Reconstruido en RAM — NO se subirá "
+                "una nueva versión hasta que haya aportes nuevos.",
+                {c: v for c, v in brain_versions.items()},
             )
-            if new_version:
-                try:
-                    await update_brain_pointer_tag(code, new_version)
-                    logger.info(
-                        "🧠 Bootstrap brain [%s] → %s (%d docs)",
-                        code, new_version, engine.total_documents,
-                    )
-                except Exception as e:
-                    logger.error("❌ Bootstrap pointer [%s] falló: %s", code, e)
-            else:
-                logger.error("❌ Bootstrap save brain [%s] falló", code)
+        else:
+            # Instalación virgen — bootstrap v1
+            for code in BRAIN_CODES:
+                engine = rag._brains.get(code)
+                if engine is None:
+                    continue
+                await engine._ensure_index()
+                new_version = await rag.save_brain_to_greenfield(
+                    code, brain_versions.get(code, f"{code}_v0")
+                )
+                if new_version:
+                    try:
+                        await update_brain_pointer_tag(code, new_version)
+                        logger.info(
+                            "🧠 Bootstrap brain [%s] → %s (%d docs)",
+                            code, new_version, engine.total_documents,
+                        )
+                    except Exception as e:
+                        logger.error("❌ Bootstrap pointer [%s] falló: %s", code, e)
+                else:
+                    logger.error("❌ Bootstrap save brain [%s] falló", code)
     else:
         logger.info("🧠 Motor RAG inicializado desde Greenfield.")
 
