@@ -700,21 +700,21 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
             )
             raise
 
-        # Dar tiempo al SP para indexar el objeto antes de sellarlo
-        await asyncio.sleep(_SP_SYNC_DELAY)
-        try:
-            await client.object.put_object(
-                bucket_name=BUCKET_NAME,
-                object_name=path,
-                object_size=len(minimal_content),
-                reader=io.BytesIO(minimal_content),
-                opts=PutObjectOptions(content_type="application/json"),
-            )
-        except Exception as put_exc:
-            logger.warning(
-                "put_object para usuario %s: %s (puede auto-sellarse, MsgSetTag podría fallar)",
-                uid_ofuscado, put_exc,
-            )
+        # ─────────────────────────────────────────────────────────────
+        # NO llamamos put_object para objetos de usuario.
+        # Razones:
+        # 1. El contenido es trivial ({}) — los usuarios solo necesitan
+        #    sus TAGS legibles (vía get_object_head, que lee de la cadena).
+        # 2. MsgSetTag es una operación de cadena que funciona sobre
+        #    objetos en estado CREATED — no necesita que el SP los selle.
+        # 3. put_object frecuentemente falla con 50004 (SP auto-selló) y
+        #    requería un sleep de 12s previo (_SP_SYNC_DELAY).  Ese delay
+        #    causaba que handle_language_selection excediera el timeout
+        #    de callback de Telegram (~10s), produciendo
+        #    "query is too old and response timeout expired".
+        # El objeto queda en estado CREATED on-chain — perfectamente
+        # válido para leer/actualizar tags.
+        # ─────────────────────────────────────────────────────────────
     else:
         # Usuario existente: actualizar tags vía MsgSetTag
         resource = (
