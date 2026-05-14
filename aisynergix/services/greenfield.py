@@ -1214,13 +1214,21 @@ async def update_brain_pointer_tag(code: str, version_name: str) -> None:
             ),
         )
         await asyncio.sleep(_SP_SYNC_DELAY)
-        await client.object.put_object(
-            bucket_name=BUCKET_NAME,
-            object_name=data_path,
-            object_size=0,
-            reader=io.BytesIO(b""),
-            opts=PutObjectOptions(content_type="application/octet-stream"),
-        )
+        # put_object best-effort: si el SP auto-selló el objeto (50004 "no
+        # permission"), el contenido ya está on-chain desde create_object.
+        try:
+            await client.object.put_object(
+                bucket_name=BUCKET_NAME,
+                object_name=data_path,
+                object_size=0,
+                reader=io.BytesIO(b""),
+                opts=PutObjectOptions(content_type="application/octet-stream"),
+            )
+        except Exception as put_exc:
+            logger.warning(
+                "put_object para brain_pointer: %s (esperado si el SP auto-selló)",
+                put_exc,
+            )
 
     # Preserve all 4 tags, overwrite only the specified code
     new_tags = {c: current_tags.get(c, f"{c}_v0") for c in BRAIN_CODES}
@@ -1267,13 +1275,22 @@ async def upload_brain_index(code: str, version_name: str, binary: bytes) -> Non
         ),
     )
     await asyncio.sleep(_SP_SYNC_DELAY)
-    await client.object.put_object(
-        bucket_name=BUCKET_NAME,
-        object_name=data_path,
-        object_size=payload_size,
-        reader=io.BytesIO(binary),
-        opts=PutObjectOptions(content_type="application/octet-stream"),
-    )
+    # put_object best-effort: el contenido ya va en create_object (línea
+    # superior).  Si el SP auto-selló o aún no propagó el create on-chain,
+    # devuelve 50004 "no permission" — se loguea como warning y se sigue.
+    try:
+        await client.object.put_object(
+            bucket_name=BUCKET_NAME,
+            object_name=data_path,
+            object_size=payload_size,
+            reader=io.BytesIO(binary),
+            opts=PutObjectOptions(content_type="application/octet-stream"),
+        )
+    except Exception as put_exc:
+        logger.warning(
+            "put_object para brain index %s: %s (esperado si el SP auto-selló)",
+            data_path, put_exc,
+        )
     logger.info("📤 Brain index subido: %s (%d bytes)", data_path, payload_size)
 
 
@@ -1317,13 +1334,20 @@ async def upload_brain_meta(code: str, version_name: str, meta: Dict[str, Any]) 
         ),
     )
     await asyncio.sleep(_SP_SYNC_DELAY)
-    await client.object.put_object(
-        bucket_name=BUCKET_NAME,
-        object_name=data_path,
-        object_size=payload_size,
-        reader=io.BytesIO(content),
-        opts=PutObjectOptions(content_type="application/json"),
-    )
+    # put_object best-effort: el contenido ya va en create_object.
+    try:
+        await client.object.put_object(
+            bucket_name=BUCKET_NAME,
+            object_name=data_path,
+            object_size=payload_size,
+            reader=io.BytesIO(content),
+            opts=PutObjectOptions(content_type="application/json"),
+        )
+    except Exception as put_exc:
+        logger.warning(
+            "put_object para brain meta %s: %s (esperado si el SP auto-selló)",
+            data_path, put_exc,
+        )
     logger.debug("📤 Brain meta subido: %s", data_path)
 
 
