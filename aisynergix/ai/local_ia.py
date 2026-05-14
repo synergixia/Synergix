@@ -20,7 +20,14 @@ THINKER_HOST = os.getenv("THINKER_HOST", "http://thinker:8081")
 JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
 PROGRAMMER_HOST = os.getenv("PROGRAMMER_HOST", "http://programmer:8082")
 THINKER_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
-JUDGE_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+
+# Maximum characters sent to the Judge.  Qwen3-0.6B has a ~2048-token
+# context; long inputs (LaTeX math, code dumps) push it over the limit,
+# causing llama.cpp to close the connection without sending a response.
+# 1500 chars ≈ ~500 tokens, leaving plenty of room for the system prompt
+# and the JSON output.
+JUDGE_MAX_INPUT_CHARS = 1500
 PROGRAMMER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
 THINKER_TEMPERATURE = 0.35
@@ -205,7 +212,7 @@ class LocalLLMConnector:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)),
     )
     async def generate(
         self,
@@ -343,8 +350,13 @@ class Judge:
         return await self._connector.health_check()
 
     async def evaluate(self, contribution_text: str) -> Dict[str, Any]:
+        # Truncate before sending — Qwen3-0.6B context ~2048 tokens.
+        # Long inputs (LaTeX, code) cause llama.cpp to disconnect silently.
+        text = contribution_text
+        if len(text) > JUDGE_MAX_INPUT_CHARS:
+            text = text[:JUDGE_MAX_INPUT_CHARS] + "… [truncado para evaluación]"
         prompt = (
-            f"APORTE A EVALUAR:\n{contribution_text}\n\n"
+            f"APORTE A EVALUAR:\n{text}\n\n"
             "Evalua este aporte y devuelve exclusivamente el JSON requerido."
         )
 
