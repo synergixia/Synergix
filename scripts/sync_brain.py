@@ -434,67 +434,72 @@ async def on_startup():
 
     rag = await get_rag_engine()
 
-    # Try to load each brain from Greenfield (avoids full bucket rebuild)
+    # ── Fase 1: cargar cerebros desde Greenfield ────────────────────────
     brain_versions = await get_all_brain_pointers()
-    loaded_any = False
+    loaded_codes: List[str] = []
+    failed_codes: List[str] = []
+    virgin_codes: List[str] = []   # codes con version=v0 (sin Greenfield aún)
+
     for code, version in brain_versions.items():
         if version == f"{code}_v0":
-            continue  # No real data yet
+            virgin_codes.append(code)
+            continue
         loaded = await rag.load_brain_from_greenfield(code, version)
         if loaded:
-            loaded_any = True
+            loaded_codes.append(code)
             logger.info("🧠 Brain [%s] cargado desde Greenfield: %s", code, version)
         else:
+            failed_codes.append(code)
             logger.warning(
-                "⚠️ Brain [%s] no pudo cargarse desde Greenfield (%s) — "
-                "se usará caché local o rebuild.",
+                "⚠️ Brain [%s] no pudo cargarse desde Greenfield (%s).",
                 code, version,
             )
 
-    if not loaded_any:
-        await rag.rebuild_from_bucket()
-        logger.info("🧠 Motor RAG reconstruido desde el bucket.")
+    # ── Fase 2: detectar cerebros vacíos y determinar qué rebuildar ─────
+    # Un cerebro cargado con total_documents==0 significa que su versión
+    # en Greenfield fue guardada vacía (bootstrap inicial sin aportes).
+    # En ese caso, tratarlo igual que failed → rebuild selectivo.
+    empty_loaded: List[str] = [
+        c for c in loaded_codes
+        if rag._brains[c].total_documents == 0
+    ]
+    codes_to_rebuild = failed_codes + virgin_codes + empty_loaded
 
-        # Solo creamos versiones nuevas en INSTALACIÓN VIRGEN (sin
-        # brain_pointer existente).  Si el pointer ya existe pero las
-        # cargas fallaron (v1 en CREATED state porque el SP nunca selló),
-        # NO subimos v2 — sería otro orphan más.  En su lugar, dejamos
-        # los cerebros reconstruidos en RAM y dejamos que
-        # federated_evolution suba una nueva versión solo cuando haya
-        # aportes nuevos que justifiquen el gas.
-        pointer_exists = any(
-            v != f"{c}_v0" for c, v in brain_versions.items()
-        )
-        if pointer_exists:
-            logger.warning(
-                "⚠️ brain_pointer existe (%s) pero los índices no se "
-                "pudieron descargar.  Reconstruido en RAM — NO se subirá "
-                "una nueva versión hasta que haya aportes nuevos.",
-                {c: v for c, v in brain_versions.items()},
-            )
-        else:
-            # Instalación virgen — bootstrap v1
-            for code in BRAIN_CODES:
-                engine = rag._brains.get(code)
-                if engine is None:
-                    continue
-                await engine._ensure_index()
-                new_version = await rag.save_brain_to_greenfield(
-                    code, brain_versions.get(code, f"{code}_v0")
-                )
-                if new_version:
-                    try:
-                        await update_brain_pointer_tag(code, new_version)
-                        logger.info(
-                            "🧠 Bootstrap brain [%s] → %s (%d docs)",
-                            code, new_version, engine.total_documents,
-                        )
-                    except Exception as e:
-                        logger.error("❌ Bootstrap pointer [%s] falló: %s", code, e)
-                else:
-                    logger.error("❌ Bootstrap save brain [%s] falló", code)
+    if codes_to_rebuild:
+        logger.info("🔄 Rebuild selectivo para: %s", codes_to_rebuild)
+        added = await rag.rebuild_from_bucket(only_codes=codes_to_rebuild)
+        logger.info("🧠 Rebuild completado: %s", added)
     else:
-        logger.info("🧠 Motor RAG inicializado desde Greenfield.")
+        logger.info("🧠 Todos los cerebros cargados desde Greenfield correctamente.")
+
+    # ── Fase 3: persistir nueva versión solo para los codes que cambiaron
+    # Casos donde guardamos nueva versión:
+    # a) virgin_codes (instalación virgen) → siempre guardamos v1
+    # b) failed_codes cuyo rebuild añadió aportes → guardamos v_new
+    # c) empty_loaded cuyo rebuild añadió aportes → actualizamos a v_new
+    # NO guardamos si pointer existe y el rebuild no encontró aportes
+    # (evita orphans vacíos que se acumulan en cada restart).
+    for code in codes_to_rebuild:
+        engine = rag._brains.get(code)
+        if engine is None:
+            continue
+        if engine.total_documents == 0 and code not in virgin_codes:
+            # Pointer existe pero aún sin aportes para esta categoría
+            logger.info("Brain [%s] sin aportes aún — no se sube versión.", code)
+            continue
+        new_version = await rag.save_brain_to_greenfield(
+            code, brain_versions.get(code, f"{code}_v0")
+        )
+        if new_version:
+            try:
+                await update_brain_pointer_tag(code, new_version)
+                logger.info(
+                    "🧠 Brain [%s] → %s (%d docs)", code, new_version, engine.total_documents
+                )
+            except Exception as e:
+                logger.error("❌ Pointer [%s] falló: %s", code, e)
+        else:
+            logger.error("❌ Save brain [%s] falló", code)
 
     # Bootstrap del reto semanal: si no existe challenges/current.json en
     # Greenfield, lo generamos ahora.  El cron del lunes 00:05 UTC seguirá
