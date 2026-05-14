@@ -1558,8 +1558,15 @@ async def get_all_user_uids() -> List[str]:
 # AI GUARD — Anti-jailbreak pattern list
 # ═══════════════════════════════════════════════════════════════════════
 
-async def load_ai_guard() -> List[str]:
-    """Load ai_guard.txt from Greenfield; create with defaults only if truly missing."""
+async def load_ai_guard(auto_create: bool = False) -> List[str]:
+    """
+    Load ai_guard.txt from Greenfield.
+    - Si el objeto se puede leer, devuelve los patrones cargados.
+    - Si falla la lectura, devuelve los defaults en RAM.
+    - Solo intenta crear el objeto cuando auto_create=True (solo sync_brain).
+      Esto evita race conditions cuando bot y sync_brain arrancan en paralelo
+      con la misma wallet y compiten por el mismo nonce de cuenta.
+    """
     global _ai_guard_patterns
     client = await get_client()
     path = "aisynergix/ai_guard.txt"
@@ -1584,7 +1591,6 @@ async def load_ai_guard() -> List[str]:
     ]
 
     # Step 1: try to read the file content
-    # SDK retorna (ObjectInfo, data) en ese orden
     try:
         _, raw = await client.object.get_object(BUCKET_NAME, path, GetObjectOption())
         text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
@@ -1599,22 +1605,26 @@ async def load_ai_guard() -> List[str]:
     except Exception:
         pass
 
-    # Step 2: reading failed — check if the object exists on-chain (SEALED/CREATED)
-    object_exists = False
-    try:
-        await client.object.get_object_head(BUCKET_NAME, path)
-        object_exists = True
-    except Exception:
-        object_exists = False
+    # Step 2: read failed — fall back to defaults in RAM
+    _ai_guard_patterns = default_patterns
 
-    if object_exists:
-        # Object exists but content is unreadable (SP quirk / SEALED state).
-        # Use default patterns in RAM without attempting to create a duplicate.
-        logger.info("🛡️ ai_guard.txt existe en Greenfield — usando patrones por defecto en RAM")
-        _ai_guard_patterns = default_patterns
+    if not auto_create:
+        logger.info("🛡️ ai_guard.txt no legible — usando patrones por defecto en RAM (read-only)")
         return default_patterns
 
-    # Step 3: object genuinely doesn't exist — create it with defaults
+    # Step 3 (auto_create only): if the object already exists (CREATED/SEALED
+    # but unreadable), don't try to re-create — would fail with conflict.
+    try:
+        await client.object.get_object_head(BUCKET_NAME, path)
+        logger.info(
+            "🛡️ ai_guard.txt ya existe en Greenfield pero no es legible "
+            "(probable estado CREATED) — usando defaults en RAM"
+        )
+        return default_patterns
+    except Exception:
+        pass
+
+    # Step 4: truly missing — create with defaults
     try:
         encoded = default_content.encode("utf-8")
         await client.object.create_object(
@@ -1638,7 +1648,6 @@ async def load_ai_guard() -> List[str]:
     except Exception as create_exc:
         logger.warning("No se pudo crear ai_guard.txt: %s", create_exc)
 
-    _ai_guard_patterns = default_patterns
     return default_patterns
 
 
@@ -1759,8 +1768,13 @@ async def _write_system_config_if_missing() -> None:
         logger.warning("No se pudo crear system_config.json: %s", exc)
 
 
-async def load_system_config() -> Dict[str, Any]:
-    """Load system_config.json from Greenfield; create with defaults if missing."""
+async def load_system_config(auto_create: bool = False) -> Dict[str, Any]:
+    """
+    Load system_config.json from Greenfield.
+    - Lectura siempre disponible; si falla, devuelve los defaults en RAM.
+    - Solo intenta crear el archivo cuando auto_create=True (solo sync_brain),
+      para evitar race conditions de nonce entre bot y sync_brain al startup.
+    """
     global _system_config
     data_path = "aisynergix/data/system_config.json"
     try:
@@ -1772,10 +1786,13 @@ async def load_system_config() -> Dict[str, Any]:
             return merged
     except Exception:
         pass
-    try:
-        await _write_system_config_if_missing()
-    except Exception:
-        pass
+
+    if auto_create:
+        try:
+            await _write_system_config_if_missing()
+        except Exception:
+            pass
+
     _system_config = dict(_DEFAULT_SYSTEM_CONFIG)
     return _system_config
 

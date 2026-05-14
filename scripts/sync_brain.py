@@ -397,10 +397,12 @@ async def on_startup():
     await load_all_locales()
     logger.info("🌐 %d idiomas cargados en RAM.", len(LANG_NAMES))
 
-    await load_system_config()
+    # sync_brain es el único proceso autorizado a CREAR archivos singleton
+    # (system_config.json, ai_guard.txt) — evita race condition de nonce con bot
+    await load_system_config(auto_create=True)
     logger.info("⚙️ System config cargado.")
 
-    await load_ai_guard()
+    await load_ai_guard(auto_create=True)
     logger.info("🛡️ AI Guard inicializado.")
 
     locked = await check_emergency_lock()
