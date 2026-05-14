@@ -1421,15 +1421,13 @@ def get_top10_cached() -> List[Dict[str, Any]]:
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
-async def rebuild_top10() -> List[Dict[str, Any]]:
+async def compute_top10() -> List[Dict[str, Any]]:
     """
-    Reconstruye el leaderboard global leyendo todos los usuarios reales
-    de Greenfield y actualiza el cache RAM.  No escribe a Greenfield para
-    evitar el ciclo delete+create+put que falla con error 50004 cuando el
-    SP tiene en caché el objeto anterior como SEALED.
-    Retorna la lista de los 10 mejores.
+    Read-only: calcula el top10 leyendo los tags de cada usuario en
+    aisynergix/users/. No escribe a Greenfield. No actualiza el cache RAM.
+    Útil para que el proceso del bot pueda obtener un leaderboard fresco
+    sin depender del cache de sync_brain (que vive en otro proceso).
     """
-    global _top10_cache
     client = await get_client()
     usuarios: List[Dict[str, Any]] = []
     prefix = "aisynergix/users/"
@@ -1448,9 +1446,7 @@ async def rebuild_top10() -> List[Dict[str, Any]]:
                         "uid": obj.object_name.replace(prefix, ""),
                         "points": int(tags.get("points", "0")),
                         "rank": tags.get("rank", "🌱 Iniciado"),
-                        "total_uses_count": int(
-                            tags.get("total_uses_count", "0")
-                        ),
+                        "total_uses_count": int(tags.get("total_uses_count", "0")),
                     }
                 )
             except Exception:
@@ -1459,7 +1455,24 @@ async def rebuild_top10() -> List[Dict[str, Any]]:
         pass
 
     usuarios.sort(key=lambda u: u["points"], reverse=True)
-    top10 = usuarios[:10]
+    return usuarios[:10]
+
+
+@retry(
+    retry=retry_if_exception_type(
+        (httpx.HTTPError, ConnectionError, TimeoutError, OSError)
+    ),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def rebuild_top10() -> List[Dict[str, Any]]:
+    """
+    Reconstruye el leaderboard global, actualiza el cache RAM, y persiste
+    a Greenfield SOLO la primera vez (el SP no soporta overwrite).
+    Retorna la lista de los 10 mejores.
+    """
+    global _top10_cache
+    top10 = await compute_top10()
     _top10_cache = top10
     logger.info(
         "🏆 Leaderboard reconstruido: %d usuarios en top10 (RAM cache)", len(top10)
@@ -1468,9 +1481,8 @@ async def rebuild_top10() -> List[Dict[str, Any]]:
     # Persist top10.json a Greenfield SOLO si no existe aún.
     # El SP de Greenfield rechaza put_object con 50004 cuando se intenta
     # sobreescribir un path previamente SEALED (limitación conocida).
-    # Después de la primera creación, mantenemos top10 sólo en RAM —
-    # se reconstruye cada 10 min desde los tags de usuarios.
     try:
+        client = await get_client()
         already_exists = False
         try:
             await client.object.get_object_head(
@@ -1885,6 +1897,7 @@ __all__ = [
     "download_brain_meta",
     "reset_all_daily_counts",
     "rebuild_top10",
+    "compute_top10",
     "get_top10_cached",
     "get_all_user_uids",
     "get_current_challenge",
