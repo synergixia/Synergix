@@ -109,6 +109,7 @@ async def _put_object_with_retry(
     object_size: int,
     content: bytes,
     content_type: str,
+    tx_hash: str = "",
 ) -> bool:
     """
     Sube contenido al SP con reintentos progresivos.  Verifica SEALED
@@ -118,17 +119,28 @@ async def _put_object_with_retry(
     import io as _io
     client = await get_client()
 
+    # Resolución del SP para logging diagnóstico
+    sp_endpoint_info = "unknown-sp"
+    try:
+        sp_addr = await client.bucket.storage_provider_by_bucket(bucket_name)
+        sp_endpoint_info = sp_addr or "no-sp-addr"
+    except Exception:
+        pass
+
     last_exc: Optional[Exception] = None
     for attempt, delay in enumerate([0] + _PUT_RETRY_DELAYS):
         if delay > 0:
             await asyncio.sleep(delay)
         try:
+            opts = PutObjectOptions(content_type=content_type)
+            if tx_hash:
+                opts.txn_hash = tx_hash
             await client.object.put_object(
                 bucket_name=bucket_name,
                 object_name=object_name,
                 object_size=object_size,
                 reader=_io.BytesIO(content),
-                opts=PutObjectOptions(content_type=content_type),
+                opts=opts,
             )
             last_exc = None
             break  # éxito
@@ -143,9 +155,10 @@ async def _put_object_with_retry(
                 )
                 last_exc = None
                 break
-            logger.debug(
-                "put_object %s falló intento %d/%d: %s",
-                object_name, attempt + 1, len(_PUT_RETRY_DELAYS) + 1, exc,
+            logger.warning(
+                "put_object %s — SP=%s — intento %d/%d FALLÓ: %s",
+                object_name, sp_endpoint_info,
+                attempt + 1, len(_PUT_RETRY_DELAYS) + 1, exc,
             )
 
     # Verificar estado SEALED
@@ -161,8 +174,9 @@ async def _put_object_with_retry(
             return True
         else:
             logger.error(
-                "❌ %s quedó en %s — contenido NO legible.  Último put_object error: %s",
-                object_name, status, last_exc,
+                "❌ %s quedó en %s (SP=%s) — contenido NO legible.  "
+                "Último put_object error: %s",
+                object_name, status, sp_endpoint_info, last_exc,
             )
             return False
     except Exception as head_exc:
@@ -942,6 +956,7 @@ async def write_aporte(
         object_size=payload_size,
         content=encoded,
         content_type="text/plain; charset=utf-8",
+        tx_hash=tx_hash,
     )
     if not sealed:
         logger.error(
@@ -1340,7 +1355,7 @@ async def upload_brain_index(code: str, version_name: str, binary: bytes) -> Non
         pass
 
     payload_size = len(binary)
-    await client.object.create_object(
+    create_res = await client.object.create_object(
         BUCKET_NAME,
         data_path,
         io.BytesIO(binary),
@@ -1349,6 +1364,7 @@ async def upload_brain_index(code: str, version_name: str, binary: bytes) -> Non
             content_type="application/octet-stream",
         ),
     )
+    idx_tx_hash = _extract_txhash(create_res)
     await asyncio.sleep(_SP_SYNC_DELAY)
     sealed = await _put_object_with_retry(
         bucket_name=BUCKET_NAME,
@@ -1356,6 +1372,7 @@ async def upload_brain_index(code: str, version_name: str, binary: bytes) -> Non
         object_size=payload_size,
         content=binary,
         content_type="application/octet-stream",
+        tx_hash=idx_tx_hash,
     )
     if not sealed:
         logger.error(
@@ -1398,7 +1415,7 @@ async def upload_brain_meta(code: str, version_name: str, meta: Dict[str, Any]) 
 
     content = json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8")
     payload_size = len(content)
-    await client.object.create_object(
+    meta_create_res = await client.object.create_object(
         BUCKET_NAME,
         data_path,
         io.BytesIO(content),
@@ -1407,6 +1424,7 @@ async def upload_brain_meta(code: str, version_name: str, meta: Dict[str, Any]) 
             content_type="application/json",
         ),
     )
+    meta_tx_hash = _extract_txhash(meta_create_res)
     await asyncio.sleep(_SP_SYNC_DELAY)
     sealed = await _put_object_with_retry(
         bucket_name=BUCKET_NAME,
@@ -1414,6 +1432,7 @@ async def upload_brain_meta(code: str, version_name: str, meta: Dict[str, Any]) 
         object_size=payload_size,
         content=content,
         content_type="application/json",
+        tx_hash=meta_tx_hash,
     )
     if not sealed:
         logger.error(
