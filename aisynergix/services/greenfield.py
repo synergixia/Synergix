@@ -117,6 +117,7 @@ _PUT_RETRY_DELAYS: List[int] = [5, 10, 20, 40]
 # ═══════════════════════════════════════════════════════════════════════
 
 def _apply_sdk_patches() -> None:
+    import hashlib as _hashlib
     from datetime import datetime, timedelta, timezone
 
     import greenfield_python_sdk.storage_provider.request as _sp_request
@@ -139,11 +140,25 @@ def _apply_sdk_patches() -> None:
             headers["Content-Length"] = str(metadata["content_length"])
         if metadata.get("content_type"):
             headers["Content-Type"] = metadata["content_type"]
+        if metadata.get("content_sha256"):
+            headers["X-Gnfd-Content-Sha256"] = metadata["content_sha256"]
         if metadata.get("expiry_timestamp"):
             headers["X-Gnfd-Expiry-Timestamp"] = metadata["expiry_timestamp"]
         if metadata.get("txn_hash"):
             headers["X-Gnfd-Txn-Hash"] = metadata["txn_hash"]
         headers["Authorization"] = await generate_authorization_header(metadata, key_manager, headers)
+        # Debug: imprimir headers sin Authorization para no exponer firma
+        try:
+            method = metadata.get("method", "?")
+            rp = metadata.get("relative_path", "?")
+            if method == "PUT":
+                debug_headers = {k: v for k, v in headers.items() if k != "Authorization"}
+                logger.warning(
+                    "🔍 put_object headers → method=%s path=%s headers=%s",
+                    method, rp, debug_headers,
+                )
+        except Exception:
+            pass
         return headers
 
     _sp_request.generate_headers = _patched_generate_headers
@@ -159,6 +174,14 @@ def _apply_sdk_patches() -> None:
         content_type = opts.content_type or "application/octet-stream"
         txn_hash = opts.txn_hash or ""
 
+        # Calcular SHA256 del contenido (requerido por el SP para integridad)
+        content_bytes = b""
+        if hasattr(reader, "getvalue"):
+            content_bytes = reader.getvalue()
+        elif isinstance(reader, bytes):
+            content_bytes = reader
+        content_sha256_hex = _hashlib.sha256(content_bytes).hexdigest()
+
         base_url = await self.client._get_sp_url_by_addr(primary_sp_address, bucket_name)
         expiry = (
             datetime.now(timezone.utc) + timedelta(seconds=1000)
@@ -169,10 +192,17 @@ def _apply_sdk_patches() -> None:
             object_name=object_name,
             content_type=content_type,
             content_length=object_size,
+            content_sha256=content_sha256_hex,
             txn_hash=txn_hash,
             base_url=base_url,
             expiry_timestamp=expiry,
         ).model_dump()
+
+        logger.warning(
+            "🔍 put_object SEND → bucket=%s obj=%s size=%d sha256=%s txn_hash=%s",
+            bucket_name, object_name, object_size,
+            content_sha256_hex[:16] + "...", txn_hash or "(EMPTY)",
+        )
 
         response = await self.client.prepare_request(
             base_url,
