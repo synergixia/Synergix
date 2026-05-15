@@ -33,6 +33,7 @@ from aisynergix.services.greenfield import (
     is_emergency_locked,
     load_current_challenge_from_greenfield,
     diagnose_payment_stream,
+    cleanup_orphaned_created_objects,
 )
 from aisynergix.ai.manager import get_ai_manager
 from aisynergix.ai.local_ia import get_thinker, get_judge
@@ -423,6 +424,11 @@ async def on_startup():
 
     # Diagnóstico temprano: verificar stream de pago antes de cualquier put_object
     await diagnose_payment_stream()
+
+    # Cancelar objetos huérfanos (CREATED sin contenido en SP) usando
+    # MsgCancelCreateObject — libera lock_balance y limpia el bucket.
+    # MsgDeleteObject (usado por DCellar) solo funciona para objetos SEALED.
+    await cleanup_orphaned_created_objects()
 
     # sync_brain es el único proceso autorizado a CREAR archivos singleton
     # (system_config.json, ai_guard.txt) — evita race condition de nonce con bot

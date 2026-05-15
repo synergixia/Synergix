@@ -2148,6 +2148,88 @@ get_greenfield_client = get_client
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# LIMPIEZA DE OBJETOS HUÉRFANOS (CREATED sin contenido en SP)
+# ═══════════════════════════════════════════════════════════════════════
+
+async def cleanup_orphaned_created_objects() -> int:
+    """
+    Cancela todos los objetos en estado CREATED (sin contenido en el SP)
+    usando MsgCancelCreateObject — la única forma de eliminar objetos
+    no sellados porque MsgDeleteObject solo aplica a objetos SEALED.
+
+    DCellar usa Delete (MsgDeleteObject) que no funciona para CREATED,
+    por eso el usuario no puede borrarlos desde la UI.
+
+    Retorna el número de objetos cancelados exitosamente.
+    """
+    client = await get_client()
+    cancelled = 0
+    errors = 0
+
+    # Prefijos donde pueden existir objetos huérfanos
+    prefixes = [
+        "aisynergix/aportes/",
+        "aisynergix/data/brains/",
+        "aisynergix/data/",
+        "aisynergix/logs/",
+        "aisynergix/users/",
+        "aisynergix/",
+    ]
+
+    seen: set = set()
+
+    for prefix in prefixes:
+        try:
+            opts = ListObjectsOptions(prefix=prefix, max_keys=1000, delimiter="")
+            result = await client.object.list_objects(BUCKET_NAME, opts)
+            objects = result.objects if hasattr(result, "objects") else []
+        except Exception as list_exc:
+            logger.debug("list_objects prefix=%s falló: %s", prefix, list_exc)
+            continue
+
+        for obj in objects:
+            obj_name = obj.get("object_name") if isinstance(obj, dict) else getattr(obj, "object_name", None)
+            if not obj_name or obj_name in seen:
+                continue
+            seen.add(obj_name)
+
+            # Chequear estado via chain (get_object_head)
+            try:
+                info = await client.object.get_object_head(BUCKET_NAME, obj_name)
+                status = getattr(info, "object_status", None)
+                if status != ObjectStatus.OBJECT_STATUS_CREATED:
+                    continue  # ya sellado o desconocido — no tocar
+            except Exception:
+                continue  # no existe o no accesible
+
+            # Es CREATED → cancelar
+            try:
+                await client.object.cancel_create_object(BUCKET_NAME, obj_name)
+                cancelled += 1
+                logger.info(
+                    "🗑️ Objeto huérfano cancelado (MsgCancelCreateObject): %s", obj_name
+                )
+                # Small pause to avoid nonce collisions between rapid txs
+                await asyncio.sleep(2)
+            except Exception as cancel_exc:
+                errors += 1
+                logger.warning(
+                    "No se pudo cancelar objeto huérfano %s: %s", obj_name, cancel_exc
+                )
+
+    if cancelled or errors:
+        logger.info(
+            "🧹 Limpieza de objetos huérfanos: %d cancelados, %d errores",
+            cancelled, errors,
+        )
+    else:
+        logger.info("🧹 No se encontraron objetos huérfanos CREATED para cancelar.")
+
+    return cancelled
+
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # EXPORTACIONES PÚBLICAS
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -2193,6 +2275,8 @@ __all__ = [
     # System Config
     "load_system_config",
     "get_system_config",
+    # Limpieza
+    "cleanup_orphaned_created_objects",
     # Constants
     "BUCKET_NAME",
     "PRIVATE_KEY",
