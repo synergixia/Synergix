@@ -104,20 +104,19 @@ _PUT_RETRY_DELAYS: List[int] = [5, 10, 20, 40]
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# MONKEY-PATCH SDK: Corrige put_object que nunca envía X-Gnfd-Txn-Hash
+# MONKEY-PATCH SDK — Causa raíz del 50004 "no permission" en put_object
 #
-# El SP de Greenfield requiere el header X-Gnfd-Txn-Hash para asociar
-# el PUT con el objeto creado on-chain. Sin este header el SP retorna
-# 50004 "no permission" en TODOS los uploads, aunque el stream de pago
-# esté activo y el objeto exista on-chain.
+# El SP verifica la firma GNFD1-ECDSA reconstruyendo la cadena firmada
+# con solo los headers estándar: Content-Type + X-Gnfd-Expiry-Timestamp.
+# Si el cliente incluye headers adicionales (X-Gnfd-Content-Sha256 o
+# X-Gnfd-Txn-Hash) en la cadena firmada, el SP computa una cadena
+# distinta, recupera una dirección diferente y retorna 50004.
 #
-# El SDK tiene el campo `txn_hash` en RequestMeta y X-Gnfd-Txn-Hash en
-# SUPPORT_HEADERS, pero generate_headers nunca lo emite y put_object
-# nunca lo incluye en request_metadata.
+# Referencia: test oficial SDK test_object.py — PutObjectOptions() sin
+# txn_hash + wait_for_tx() antes del put → "Object added successfully".
 # ═══════════════════════════════════════════════════════════════════════
 
 def _apply_sdk_patches() -> None:
-    import hashlib as _hashlib
     from datetime import datetime, timedelta, timezone
 
     import greenfield_python_sdk.storage_provider.request as _sp_request
@@ -129,6 +128,11 @@ def _apply_sdk_patches() -> None:
     )
     from greenfield_python_sdk.models.request import RequestMeta as _RequestMeta
 
+    # ── Patch 1: generate_headers — cadena de firma correcta para el SP ──
+    # El SP reconstruye la cadena firmada usando SOLO los headers estándar:
+    # Content-Type + X-Gnfd-Expiry-Timestamp (para PUT).  Si incluimos
+    # X-Gnfd-Content-Sha256 o X-Gnfd-Txn-Hash en la firma, el SP computa
+    # una cadena diferente → dirección recuperada ≠ creador → 50004.
     async def _patched_generate_headers(metadata, key_manager):
         headers = {}
         if metadata.get("txn_msg"):
@@ -140,29 +144,19 @@ def _apply_sdk_patches() -> None:
             headers["Content-Length"] = str(metadata["content_length"])
         if metadata.get("content_type"):
             headers["Content-Type"] = metadata["content_type"]
-        if metadata.get("content_sha256"):
-            headers["X-Gnfd-Content-Sha256"] = metadata["content_sha256"]
         if metadata.get("expiry_timestamp"):
             headers["X-Gnfd-Expiry-Timestamp"] = metadata["expiry_timestamp"]
-        if metadata.get("txn_hash"):
-            headers["X-Gnfd-Txn-Hash"] = metadata["txn_hash"]
+        # X-Gnfd-Content-Sha256 y X-Gnfd-Txn-Hash NO se incluyen:
+        # el SP no los usa en su verificación de firma → mismatch → 50004.
         headers["Authorization"] = await generate_authorization_header(metadata, key_manager, headers)
-        # Debug: imprimir headers sin Authorization para no exponer firma
-        try:
-            method = metadata.get("method", "?")
-            rp = metadata.get("relative_path", "?")
-            if method == "PUT":
-                debug_headers = {k: v for k, v in headers.items() if k != "Authorization"}
-                logger.warning(
-                    "🔍 put_object headers → method=%s path=%s headers=%s",
-                    method, rp, debug_headers,
-                )
-        except Exception:
-            pass
         return headers
 
     _sp_request.generate_headers = _patched_generate_headers
 
+    # ── Patch 2: SP-level put_object — mismo esquema que el SDK original ──
+    # El SDK original nunca enviaba X-Gnfd-Txn-Hash ni X-Gnfd-Content-Sha256.
+    # El test oficial (test_object.py) usa PutObjectOptions() sin txn_hash y
+    # llama wait_for_tx() antes del put — ese es el patrón que funciona.
     async def _patched_sp_put_object(
         self, bucket_name, object_name, object_size, primary_sp_address, reader, opts
     ):
@@ -172,15 +166,6 @@ def _apply_sdk_patches() -> None:
         check_valid_object_name(object_name)
 
         content_type = opts.content_type or "application/octet-stream"
-        txn_hash = opts.txn_hash or ""
-
-        # Calcular SHA256 del contenido (requerido por el SP para integridad)
-        content_bytes = b""
-        if hasattr(reader, "getvalue"):
-            content_bytes = reader.getvalue()
-        elif isinstance(reader, bytes):
-            content_bytes = reader
-        content_sha256_hex = _hashlib.sha256(content_bytes).hexdigest()
 
         base_url = await self.client._get_sp_url_by_addr(primary_sp_address, bucket_name)
         expiry = (
@@ -192,17 +177,9 @@ def _apply_sdk_patches() -> None:
             object_name=object_name,
             content_type=content_type,
             content_length=object_size,
-            content_sha256=content_sha256_hex,
-            txn_hash=txn_hash,
             base_url=base_url,
             expiry_timestamp=expiry,
         ).model_dump()
-
-        logger.warning(
-            "🔍 put_object SEND → bucket=%s obj=%s size=%d sha256=%s txn_hash=%s",
-            bucket_name, object_name, object_size,
-            content_sha256_hex[:16] + "...", txn_hash or "(EMPTY)",
-        )
 
         response = await self.client.prepare_request(
             base_url,
@@ -304,11 +281,31 @@ def _apply_sdk_patches() -> None:
     _sp_obj_module.Object.list_objects = _patched_sp_list_objects
 
     logger.info(
-        "✅ SDK patches aplicados: put_object (X-Gnfd-Txn-Hash) + list_objects (checksums)"
+        "✅ SDK patches aplicados: generate_headers (firma sin headers extra) + list_objects (checksums)"
     )
 
 
 _apply_sdk_patches()
+
+
+async def _wait_for_create_tx(client: Any, tx_hash: str, label: str = "") -> None:
+    """Espera confirmación de bloque para un MsgCreateObject antes de put_object.
+
+    broadcast_tx_sync retorna en cuanto el TX entra al mempool, NO cuando está
+    en un bloque.  El SP rechaza put_object con 50004 si el objeto no existe
+    aún on-chain.  wait_for_tx() asegura inclusión en bloque real (≤ 30 s).
+    """
+    if not tx_hash:
+        await asyncio.sleep(6)
+        return
+    try:
+        await client.basic.wait_for_tx(hash=tx_hash, timeout=30)
+    except Exception:
+        logger.debug(
+            "wait_for_tx agotado para %s — esperando 6 s adicionales",
+            label or tx_hash[:16],
+        )
+        await asyncio.sleep(6)
 
 
 async def _put_object_with_retry(
@@ -897,7 +894,7 @@ async def _write_user_wallet_object(uid_ofuscado: str, address: str) -> None:
         )
         wallet_tx_hash = _extract_txhash(wallet_create_res)
         logger.info("💎 Wallet object creado para %s", uid_ofuscado)
-        await asyncio.sleep(_SP_SYNC_DELAY)
+        await _wait_for_create_tx(client, wallet_tx_hash, "wallet")
         try:
             wallet_opts = PutObjectOptions(content_type="text/plain; charset=utf-8")
             if wallet_tx_hash:
@@ -1199,8 +1196,7 @@ async def write_aporte(
                 path, list(packed_tags.keys()), create_exc,
             )
             raise
-        # Give the SP time to index the new object before put_object
-        await asyncio.sleep(_SP_SYNC_DELAY)
+        await _wait_for_create_tx(client, tx_hash, path)
 
     # ── Step 2: upload content with retries until SEALED ──────────────
     # put_object con reintentos: el SP puede tardar más de 12s en
@@ -1428,7 +1424,7 @@ async def write_json_data(data_path: str, data: Dict[str, Any]) -> None:
         ),
     )
     json_tx_hash = _extract_txhash(create_res)
-    await asyncio.sleep(_SP_SYNC_DELAY)
+    await _wait_for_create_tx(client, json_tx_hash, data_path)
     json_opts = PutObjectOptions(content_type="application/json")
     if json_tx_hash:
         json_opts.txn_hash = json_tx_hash
@@ -1488,7 +1484,7 @@ async def set_brain_pointer(version: str) -> None:
             ),
         )
         ptr_tx_hash = _extract_txhash(ptr_create_res)
-        await asyncio.sleep(_SP_SYNC_DELAY)
+        await _wait_for_create_tx(client, ptr_tx_hash, "brain_pointer")
         ptr_opts = PutObjectOptions(content_type="application/octet-stream")
         if ptr_tx_hash:
             ptr_opts.txn_hash = ptr_tx_hash
@@ -1568,7 +1564,7 @@ async def update_brain_pointer_tag(code: str, version_name: str) -> None:
             ),
         )
         mp_tx_hash = _extract_txhash(mp_create_res)
-        await asyncio.sleep(_SP_SYNC_DELAY)
+        await _wait_for_create_tx(client, mp_tx_hash, "brain_pointer_tag")
         # put_object best-effort: si el SP auto-selló el objeto (50004 "no
         # permission"), el contenido ya está on-chain desde create_object.
         try:
@@ -1633,7 +1629,7 @@ async def upload_brain_index(code: str, version_name: str, binary: bytes) -> Non
         ),
     )
     idx_tx_hash = _extract_txhash(create_res)
-    await asyncio.sleep(_SP_SYNC_DELAY)
+    await _wait_for_create_tx(client, idx_tx_hash, data_path)
     sealed = await _put_object_with_retry(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
@@ -1693,7 +1689,7 @@ async def upload_brain_meta(code: str, version_name: str, meta: Dict[str, Any]) 
         ),
     )
     meta_tx_hash = _extract_txhash(meta_create_res)
-    await asyncio.sleep(_SP_SYNC_DELAY)
+    await _wait_for_create_tx(client, meta_tx_hash, data_path)
     sealed = await _put_object_with_retry(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
@@ -1962,7 +1958,7 @@ async def upload_log(date_str: str, log_content: str) -> None:
         ),
     )
     log_tx_hash = _extract_txhash(log_create_res)
-    await asyncio.sleep(_SP_SYNC_DELAY)
+    await _wait_for_create_tx(client, log_tx_hash, data_path)
     log_opts = PutObjectOptions(content_type="application/gzip")
     if log_tx_hash:
         log_opts.txn_hash = log_tx_hash
@@ -2085,7 +2081,7 @@ async def load_ai_guard(auto_create: bool = False) -> List[str]:
             ),
         )
         guard_tx_hash = _extract_txhash(guard_create_res)
-        await asyncio.sleep(_SP_SYNC_DELAY)
+        await _wait_for_create_tx(client, guard_tx_hash, "ai_guard")
         guard_opts = PutObjectOptions(content_type="text/plain")
         if guard_tx_hash:
             guard_opts.txn_hash = guard_tx_hash
@@ -2157,7 +2153,7 @@ async def create_emergency_lock() -> None:
         ),
     )
     lock_tx_hash = _extract_txhash(lock_create_res)
-    await asyncio.sleep(_SP_SYNC_DELAY)
+    await _wait_for_create_tx(client, lock_tx_hash, "emergency_lock")
     try:
         lock_opts = PutObjectOptions(content_type="application/octet-stream")
         if lock_tx_hash:
@@ -2212,7 +2208,7 @@ async def _write_system_config_if_missing() -> None:
             ),
         )
         cfg_tx_hash = _extract_txhash(cfg_create_res)
-        await asyncio.sleep(_SP_SYNC_DELAY)
+        await _wait_for_create_tx(client, cfg_tx_hash, "system_config")
         cfg_opts = PutObjectOptions(content_type="application/json")
         if cfg_tx_hash:
             cfg_opts.txn_hash = cfg_tx_hash
