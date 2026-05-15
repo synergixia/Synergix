@@ -2153,78 +2153,77 @@ get_greenfield_client = get_client
 
 async def cleanup_orphaned_created_objects() -> int:
     """
-    Cancela todos los objetos en estado CREATED (sin contenido en el SP)
-    usando MsgCancelCreateObject — la única forma de eliminar objetos
-    no sellados porque MsgDeleteObject solo aplica a objetos SEALED.
+    Cancela TODOS los objetos del bucket que están en estado CREATED
+    (sin contenido en el SP) usando MsgCancelCreateObject.
 
-    DCellar usa Delete (MsgDeleteObject) que no funciona para CREATED,
-    por eso el usuario no puede borrarlos desde la UI.
+    MsgDeleteObject (usado por DCellar) solo funciona con objetos SEALED.
+    MsgCancelCreateObject es el mensaje correcto para objetos CREATED.
 
-    Retorna el número de objetos cancelados exitosamente.
+    Escanea el bucket completo con paginación (lotes de 1000) para no
+    perder objetos en ninguna carpeta. Retorna el total cancelado.
     """
     client = await get_client()
     cancelled = 0
     errors = 0
+    scanned = 0
 
-    # Prefijos donde pueden existir objetos huérfanos
-    prefixes = [
-        "aisynergix/aportes/",
-        "aisynergix/data/brains/",
-        "aisynergix/data/",
-        "aisynergix/logs/",
-        "aisynergix/users/",
-        "aisynergix/",
-    ]
+    logger.info("🧹 Iniciando escaneo completo del bucket para objetos huérfanos...")
 
-    seen: set = set()
-
-    for prefix in prefixes:
+    continuation_token = ""
+    while True:
         try:
-            opts = ListObjectsOptions(prefix=prefix, max_keys=1000, delimiter="")
+            opts = ListObjectsOptions(
+                prefix="",
+                max_keys=1000,
+                delimiter="",
+                continuation_token=continuation_token,
+            )
             result = await client.object.list_objects(BUCKET_NAME, opts)
-            objects = result.objects if hasattr(result, "objects") else []
         except Exception as list_exc:
-            logger.debug("list_objects prefix=%s falló: %s", prefix, list_exc)
-            continue
+            logger.warning("list_objects falló durante limpieza: %s", list_exc)
+            break
+
+        objects = result.objects if hasattr(result, "objects") else []
+        scanned += len(objects)
 
         for obj in objects:
-            obj_name = obj.get("object_name") if isinstance(obj, dict) else getattr(obj, "object_name", None)
-            if not obj_name or obj_name in seen:
+            obj_name = (
+                obj.get("object_name") if isinstance(obj, dict)
+                else getattr(obj, "object_name", None)
+            )
+            if not obj_name:
                 continue
-            seen.add(obj_name)
 
-            # Chequear estado via chain (get_object_head)
+            # Verificar estado CREATED via chain (funciona aunque el SP falle)
             try:
                 info = await client.object.get_object_head(BUCKET_NAME, obj_name)
                 status = getattr(info, "object_status", None)
                 if status != ObjectStatus.OBJECT_STATUS_CREATED:
-                    continue  # ya sellado o desconocido — no tocar
+                    continue
             except Exception:
-                continue  # no existe o no accesible
+                continue
 
-            # Es CREATED → cancelar
+            # CREATED → cancelar con MsgCancelCreateObject
             try:
                 await client.object.cancel_create_object(BUCKET_NAME, obj_name)
                 cancelled += 1
-                logger.info(
-                    "🗑️ Objeto huérfano cancelado (MsgCancelCreateObject): %s", obj_name
-                )
-                # Small pause to avoid nonce collisions between rapid txs
-                await asyncio.sleep(2)
+                logger.info("🗑️ Huérfano cancelado: %s", obj_name)
+                await asyncio.sleep(2)  # pausa anti-nonce entre txs
             except Exception as cancel_exc:
                 errors += 1
-                logger.warning(
-                    "No se pudo cancelar objeto huérfano %s: %s", obj_name, cancel_exc
-                )
+                logger.warning("No se pudo cancelar %s: %s", obj_name, cancel_exc)
 
-    if cancelled or errors:
-        logger.info(
-            "🧹 Limpieza de objetos huérfanos: %d cancelados, %d errores",
-            cancelled, errors,
-        )
-    else:
-        logger.info("🧹 No se encontraron objetos huérfanos CREATED para cancelar.")
+        # Paginación: continuar si hay más objetos
+        is_truncated = getattr(result, "is_truncated", False)
+        next_token = getattr(result, "next_continuation_token", "")
+        if not is_truncated or not next_token:
+            break
+        continuation_token = next_token
 
+    logger.info(
+        "🧹 Limpieza completada: %d objetos escaneados, %d cancelados, %d errores",
+        scanned, cancelled, errors,
+    )
     return cancelled
 
 
