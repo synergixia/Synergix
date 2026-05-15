@@ -92,11 +92,6 @@ GREENFIELD_PORT: int = int(os.getenv("PORT", "443"))
 GREENFIELD_CHAIN_ID: int = int(os.getenv("CHAIN_ID", "1017"))
 PRIVATE_KEY: str = os.getenv("PRIVATE_KEY", "")
 
-# Greenfield ~2 s block time + SP indexing lag.  After broadcasting
-# MsgCreateObject the SP needs this many seconds before it will accept
-# put_object for the new object (error 20008 otherwise).
-_SP_SYNC_DELAY: int = 12
-
 # Reintentos de put_object: 50004 "no permission" suele significar
 # que el SP no ha procesado aún el evento on-chain.  Probamos delays
 # crecientes hasta que acepte o nos rendimos.
@@ -288,16 +283,17 @@ def _apply_sdk_patches() -> None:
 _apply_sdk_patches()
 
 
-async def _wait_for_create_tx(client: Any, tx_hash: str, label: str = "") -> None:
-    """Espera confirmación de bloque para un MsgCreateObject antes de put_object.
+async def _wait_for_tx(client: Any, tx_result: Any, label: str = "") -> str:
+    """Extrae tx_hash de un resultado broadcast y espera confirmación de bloque.
 
-    broadcast_tx_sync retorna en cuanto el TX entra al mempool, NO cuando está
-    en un bloque.  El SP rechaza put_object con 50004 si el objeto no existe
-    aún on-chain.  wait_for_tx() asegura inclusión en bloque real (≤ 30 s).
+    broadcast_tx_sync retorna cuando el TX entra al mempool, NO cuando está
+    en un bloque.  El SP rechaza put_object con 50004 si el objeto recién
+    creado no existe aún on-chain.  wait_for_tx() polea inclusión real.
     """
+    tx_hash = _extract_txhash(tx_result)
     if not tx_hash:
         await asyncio.sleep(6)
-        return
+        return tx_hash
     try:
         await client.basic.wait_for_tx(hash=tx_hash, timeout=30)
     except Exception:
@@ -306,6 +302,7 @@ async def _wait_for_create_tx(client: Any, tx_hash: str, label: str = "") -> Non
             label or tx_hash[:16],
         )
         await asyncio.sleep(6)
+    return tx_hash
 
 
 async def _put_object_with_retry(
@@ -314,7 +311,6 @@ async def _put_object_with_retry(
     object_size: int,
     content: bytes,
     content_type: str,
-    tx_hash: str = "",
 ) -> bool:
     """
     Sube contenido al SP con reintentos progresivos.  Verifica SEALED
@@ -338,8 +334,6 @@ async def _put_object_with_retry(
             await asyncio.sleep(delay)
         try:
             opts = PutObjectOptions(content_type=content_type)
-            if tx_hash:
-                opts.txn_hash = tx_hash
             await client.object.put_object(
                 bucket_name=bucket_name,
                 object_name=object_name,
@@ -892,13 +886,10 @@ async def _write_user_wallet_object(uid_ofuscado: str, address: str) -> None:
                 content_type="text/plain; charset=utf-8",
             ),
         )
-        wallet_tx_hash = _extract_txhash(wallet_create_res)
         logger.info("💎 Wallet object creado para %s", uid_ofuscado)
-        await _wait_for_create_tx(client, wallet_tx_hash, "wallet")
+        await _wait_for_tx(client, wallet_create_res, "wallet")
         try:
             wallet_opts = PutObjectOptions(content_type="text/plain; charset=utf-8")
-            if wallet_tx_hash:
-                wallet_opts.txn_hash = wallet_tx_hash
             await client.object.put_object(
                 bucket_name=BUCKET_NAME,
                 object_name=path,
@@ -1050,9 +1041,8 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
         # 2. MsgSetTag es una operación de cadena que funciona sobre
         #    objetos en estado CREATED — no necesita que el SP los selle.
         # 3. put_object frecuentemente falla con 50004 (SP auto-selló) y
-        #    requería un sleep de 12s previo (_SP_SYNC_DELAY).  Ese delay
-        #    causaba que handle_language_selection excediera el timeout
-        #    de callback de Telegram (~10s), produciendo
+        #    requería esperar la confirmación del TX previo, lo que excedía
+        #    el timeout de callback de Telegram (~10 s), produciendo
         #    "query is too old and response timeout expired".
         # El objeto queda en estado CREATED on-chain — perfectamente
         # válido para leer/actualizar tags.
@@ -1185,30 +1175,25 @@ async def write_aporte(
                     tags=_dict_to_tags(packed_tags),
                 ),
             )
-            tx_hash = _extract_txhash(create_result)
-            logger.info(
-                "✅ create_object atómico OK para aporte %s — tags=%s tx=%s",
-                path, list(packed_tags.keys()), tx_hash or "N/A",
-            )
         except Exception as create_exc:
             logger.exception(
                 "❌ create_object con tags falló para aporte %s — tags=%s err=%s",
                 path, list(packed_tags.keys()), create_exc,
             )
             raise
-        await _wait_for_create_tx(client, tx_hash, path)
+        tx_hash = await _wait_for_tx(client, create_result, path)
+        logger.info(
+            "✅ create_object atómico OK para aporte %s — tags=%s tx=%s",
+            path, list(packed_tags.keys()), tx_hash or "N/A",
+        )
 
     # ── Step 2: upload content with retries until SEALED ──────────────
-    # put_object con reintentos: el SP puede tardar más de 12s en
-    # aceptar uploads.  Sin esto, los aportes quedaban en CREATED
-    # state (ilegibles) y federated_evolution los ignoraba.
     sealed = await _put_object_with_retry(
         bucket_name=BUCKET_NAME,
         object_name=path,
         object_size=payload_size,
         content=encoded,
         content_type="text/plain; charset=utf-8",
-        tx_hash=tx_hash,
     )
     if not sealed:
         logger.error(
@@ -1411,8 +1396,8 @@ async def write_json_data(data_path: str, data: Dict[str, Any]) -> None:
         exists = False
 
     if exists:
-        await client.object.delete_object(BUCKET_NAME, data_path)
-        await asyncio.sleep(_SP_SYNC_DELAY)
+        delete_res = await client.object.delete_object(BUCKET_NAME, data_path)
+        await _wait_for_tx(client, delete_res, f"delete_{data_path}")
 
     create_res = await client.object.create_object(
         BUCKET_NAME,
@@ -1423,11 +1408,8 @@ async def write_json_data(data_path: str, data: Dict[str, Any]) -> None:
             content_type="application/json",
         ),
     )
-    json_tx_hash = _extract_txhash(create_res)
-    await _wait_for_create_tx(client, json_tx_hash, data_path)
+    await _wait_for_tx(client, create_res, data_path)
     json_opts = PutObjectOptions(content_type="application/json")
-    if json_tx_hash:
-        json_opts.txn_hash = json_tx_hash
     await client.object.put_object(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
@@ -1483,11 +1465,8 @@ async def set_brain_pointer(version: str) -> None:
                 content_type="application/octet-stream",
             ),
         )
-        ptr_tx_hash = _extract_txhash(ptr_create_res)
-        await _wait_for_create_tx(client, ptr_tx_hash, "brain_pointer")
+        await _wait_for_tx(client, ptr_create_res, "brain_pointer")
         ptr_opts = PutObjectOptions(content_type="application/octet-stream")
-        if ptr_tx_hash:
-            ptr_opts.txn_hash = ptr_tx_hash
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=data_path,
@@ -1563,14 +1542,11 @@ async def update_brain_pointer_tag(code: str, version_name: str) -> None:
                 content_type="application/octet-stream",
             ),
         )
-        mp_tx_hash = _extract_txhash(mp_create_res)
-        await _wait_for_create_tx(client, mp_tx_hash, "brain_pointer_tag")
+        await _wait_for_tx(client, mp_create_res, "brain_pointer_tag")
         # put_object best-effort: si el SP auto-selló el objeto (50004 "no
         # permission"), el contenido ya está on-chain desde create_object.
         try:
             mp_opts = PutObjectOptions(content_type="application/octet-stream")
-            if mp_tx_hash:
-                mp_opts.txn_hash = mp_tx_hash
             await client.object.put_object(
                 bucket_name=BUCKET_NAME,
                 object_name=data_path,
@@ -1628,15 +1604,13 @@ async def upload_brain_index(code: str, version_name: str, binary: bytes) -> Non
             content_type="application/octet-stream",
         ),
     )
-    idx_tx_hash = _extract_txhash(create_res)
-    await _wait_for_create_tx(client, idx_tx_hash, data_path)
+    await _wait_for_tx(client, create_res, data_path)
     sealed = await _put_object_with_retry(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
         object_size=payload_size,
         content=binary,
         content_type="application/octet-stream",
-        tx_hash=idx_tx_hash,
     )
     if not sealed:
         logger.error(
@@ -1688,15 +1662,13 @@ async def upload_brain_meta(code: str, version_name: str, meta: Dict[str, Any]) 
             content_type="application/json",
         ),
     )
-    meta_tx_hash = _extract_txhash(meta_create_res)
-    await _wait_for_create_tx(client, meta_tx_hash, data_path)
+    await _wait_for_tx(client, meta_create_res, data_path)
     sealed = await _put_object_with_retry(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
         object_size=payload_size,
         content=content,
         content_type="application/json",
-        tx_hash=meta_tx_hash,
     )
     if not sealed:
         logger.error(
@@ -1957,11 +1929,8 @@ async def upload_log(date_str: str, log_content: str) -> None:
             content_type="application/gzip",
         ),
     )
-    log_tx_hash = _extract_txhash(log_create_res)
-    await _wait_for_create_tx(client, log_tx_hash, data_path)
+    await _wait_for_tx(client, log_create_res, data_path)
     log_opts = PutObjectOptions(content_type="application/gzip")
-    if log_tx_hash:
-        log_opts.txn_hash = log_tx_hash
     await client.object.put_object(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
@@ -2080,11 +2049,8 @@ async def load_ai_guard(auto_create: bool = False) -> List[str]:
                 content_type="text/plain",
             ),
         )
-        guard_tx_hash = _extract_txhash(guard_create_res)
-        await _wait_for_create_tx(client, guard_tx_hash, "ai_guard")
+        await _wait_for_tx(client, guard_create_res, "ai_guard")
         guard_opts = PutObjectOptions(content_type="text/plain")
-        if guard_tx_hash:
-            guard_opts.txn_hash = guard_tx_hash
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=path,
@@ -2152,12 +2118,9 @@ async def create_emergency_lock() -> None:
             content_type="application/octet-stream",
         ),
     )
-    lock_tx_hash = _extract_txhash(lock_create_res)
-    await _wait_for_create_tx(client, lock_tx_hash, "emergency_lock")
+    await _wait_for_tx(client, lock_create_res, "emergency_lock")
     try:
         lock_opts = PutObjectOptions(content_type="application/octet-stream")
-        if lock_tx_hash:
-            lock_opts.txn_hash = lock_tx_hash
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=path,
@@ -2207,11 +2170,8 @@ async def _write_system_config_if_missing() -> None:
                 content_type="application/json",
             ),
         )
-        cfg_tx_hash = _extract_txhash(cfg_create_res)
-        await _wait_for_create_tx(client, cfg_tx_hash, "system_config")
+        await _wait_for_tx(client, cfg_create_res, "system_config")
         cfg_opts = PutObjectOptions(content_type="application/json")
-        if cfg_tx_hash:
-            cfg_opts.txn_hash = cfg_tx_hash
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=data_path,
