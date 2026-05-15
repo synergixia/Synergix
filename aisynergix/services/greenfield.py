@@ -184,7 +184,98 @@ def _apply_sdk_patches() -> None:
         return "Object added successfully"
 
     _sp_obj_module.Object.put_object = _patched_sp_put_object
-    logger.info("✅ SDK patch aplicado: put_object enviará X-Gnfd-Txn-Hash al SP")
+
+    # ── Patch 3: list_objects — KeyError 'checksums' para objetos CREATED ──
+    # Objetos en estado CREATED no tienen checksums en la respuesta XML del SP.
+    # El SDK hace acceso directo ["checksums"] → KeyError.  Usamos .get() y
+    # envolvemos cada objeto en try/except para no perder la lista completa.
+    import base64 as _base64
+    import html_to_json as _html_to_json
+    from greenfield_python_sdk.models.object import ListObjectsResult as _ListObjectsResult
+
+    async def _patched_sp_list_objects(self, bucket_name, primary_sp_address, opts):
+        from greenfield_python_sdk.storage_provider.utils import (
+            check_valid_bucket_name,
+            check_valid_object_name,
+            is_valid_object_prefix,
+            convert_key,
+            convert_value,
+        )
+        from greenfield_python_sdk.models.request import RequestMeta as _RequestMeta2
+
+        check_valid_bucket_name(bucket_name)
+
+        if not opts.max_keys:
+            opts.max_keys = 50
+        if opts.max_keys > 1000:
+            raise ValueError("max-keys must be less than or equal to 1000")
+        if opts.start_after:
+            check_valid_object_name(opts.start_after)
+        if opts.continuation_token:
+            decoded = _base64.b64decode(opts.continuation_token)
+            opts.continuation_token = decoded.decode("utf-8")
+            check_valid_object_name(opts.continuation_token)
+            if opts.prefix and not opts.continuation_token.startswith(opts.prefix):
+                raise ValueError("continuation-token does not match the input prefix")
+        if opts.prefix:
+            is_valid_object_prefix(opts.prefix)
+
+        query_parameters = {
+            "continuation-token": opts.continuation_token,
+            "delimiter": opts.delimiter,
+            "max-keys": opts.max_keys,
+            "prefix": opts.prefix,
+            "start-after": opts.start_after,
+        }
+
+        base_url = await self.client._get_sp_url_by_addr(primary_sp_address, bucket_name)
+        request_metadata = _RequestMeta2(
+            base_url=base_url,
+            disable_close_body=True,
+        ).model_dump()
+
+        response = await self.client.prepare_request(base_url, request_metadata, query_parameters)
+        res = _html_to_json.convert(await response.text())["gfsplistobjectsbybucketnameresponse"][0]
+
+        if "objects" in res:
+            current_object = []
+            for object_info in res["objects"]:
+                try:
+                    converted = {
+                        convert_key(k): convert_value(k, v) if v[0] else ""
+                        for k, v in object_info.items()
+                    }
+                    if converted.get("removed") is True:
+                        continue
+                    oi = converted.get("object_info", {})
+                    if not oi or not isinstance(oi, dict):
+                        continue
+                    vis = oi.get("visibility")
+                    current_object.append({
+                        "object_name": oi.get("object_name", ""),
+                        "id": oi.get("id", ""),
+                        "payload_size": oi.get("payload_size", 0),
+                        "visibility": vis.name if vis else "VISIBILITY_TYPE_UNSPECIFIED",
+                        "content_type": oi.get("content_type", ""),
+                        "checksums": oi.get("checksums", []),
+                        "create_at": oi.get("create_at", 0),
+                    })
+                except Exception:
+                    continue  # saltar objetos con campos inesperados
+            res.pop("objects")
+            res = {convert_key(k): convert_value(k, v) for k, v in res.items()}
+            res["objects"] = current_object
+        else:
+            res = {convert_key(k): convert_value(k, v) for k, v in res.items()}
+            res["objects"] = []
+
+        return _ListObjectsResult(**res)
+
+    _sp_obj_module.Object.list_objects = _patched_sp_list_objects
+
+    logger.info(
+        "✅ SDK patches aplicados: put_object (X-Gnfd-Txn-Hash) + list_objects (checksums)"
+    )
 
 
 _apply_sdk_patches()
