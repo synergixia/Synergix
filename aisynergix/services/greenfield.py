@@ -765,7 +765,7 @@ async def _write_user_wallet_object(uid_ofuscado: str, address: str) -> None:
 
     content = address_norm.encode("utf-8")
     try:
-        await client.object.create_object(
+        wallet_create_res = await client.object.create_object(
             BUCKET_NAME,
             path,
             io.BytesIO(content),
@@ -774,15 +774,19 @@ async def _write_user_wallet_object(uid_ofuscado: str, address: str) -> None:
                 content_type="text/plain; charset=utf-8",
             ),
         )
+        wallet_tx_hash = _extract_txhash(wallet_create_res)
         logger.info("💎 Wallet object creado para %s", uid_ofuscado)
         await asyncio.sleep(_SP_SYNC_DELAY)
         try:
+            wallet_opts = PutObjectOptions(content_type="text/plain; charset=utf-8")
+            if wallet_tx_hash:
+                wallet_opts.txn_hash = wallet_tx_hash
             await client.object.put_object(
                 bucket_name=BUCKET_NAME,
                 object_name=path,
                 object_size=len(content),
                 reader=io.BytesIO(content),
-                opts=PutObjectOptions(content_type="text/plain; charset=utf-8"),
+                opts=wallet_opts,
             )
         except Exception as put_exc:
             logger.warning("put_object para wallet %s: %s", uid_ofuscado, put_exc)
@@ -1293,7 +1297,7 @@ async def write_json_data(data_path: str, data: Dict[str, Any]) -> None:
         await client.object.delete_object(BUCKET_NAME, data_path)
         await asyncio.sleep(_SP_SYNC_DELAY)
 
-    await client.object.create_object(
+    create_res = await client.object.create_object(
         BUCKET_NAME,
         data_path,
         io.BytesIO(content),
@@ -1302,13 +1306,17 @@ async def write_json_data(data_path: str, data: Dict[str, Any]) -> None:
             content_type="application/json",
         ),
     )
+    json_tx_hash = _extract_txhash(create_res)
     await asyncio.sleep(_SP_SYNC_DELAY)
+    json_opts = PutObjectOptions(content_type="application/json")
+    if json_tx_hash:
+        json_opts.txn_hash = json_tx_hash
     await client.object.put_object(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
         object_size=payload_size,
         reader=io.BytesIO(content),
-        opts=PutObjectOptions(content_type="application/json"),
+        opts=json_opts,
     )
     logger.debug("JSON escrito en %s", data_path)
 
@@ -1349,7 +1357,7 @@ async def set_brain_pointer(version: str) -> None:
         exists = False
 
     if not exists:
-        await client.object.create_object(
+        ptr_create_res = await client.object.create_object(
             BUCKET_NAME,
             data_path,
             io.BytesIO(b""),
@@ -1358,13 +1366,17 @@ async def set_brain_pointer(version: str) -> None:
                 content_type="application/octet-stream",
             ),
         )
+        ptr_tx_hash = _extract_txhash(ptr_create_res)
         await asyncio.sleep(_SP_SYNC_DELAY)
+        ptr_opts = PutObjectOptions(content_type="application/octet-stream")
+        if ptr_tx_hash:
+            ptr_opts.txn_hash = ptr_tx_hash
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=data_path,
             object_size=0,
             reader=io.BytesIO(b""),
-            opts=PutObjectOptions(content_type="application/octet-stream"),
+            opts=ptr_opts,
         )
 
     resource = (
@@ -1425,7 +1437,7 @@ async def update_brain_pointer_tag(code: str, version_name: str) -> None:
         exists = False
 
     if not exists:
-        await client.object.create_object(
+        mp_create_res = await client.object.create_object(
             BUCKET_NAME,
             data_path,
             io.BytesIO(b""),
@@ -1434,16 +1446,20 @@ async def update_brain_pointer_tag(code: str, version_name: str) -> None:
                 content_type="application/octet-stream",
             ),
         )
+        mp_tx_hash = _extract_txhash(mp_create_res)
         await asyncio.sleep(_SP_SYNC_DELAY)
         # put_object best-effort: si el SP auto-selló el objeto (50004 "no
         # permission"), el contenido ya está on-chain desde create_object.
         try:
+            mp_opts = PutObjectOptions(content_type="application/octet-stream")
+            if mp_tx_hash:
+                mp_opts.txn_hash = mp_tx_hash
             await client.object.put_object(
                 bucket_name=BUCKET_NAME,
                 object_name=data_path,
                 object_size=0,
                 reader=io.BytesIO(b""),
-                opts=PutObjectOptions(content_type="application/octet-stream"),
+                opts=mp_opts,
             )
         except Exception as put_exc:
             logger.warning(
@@ -1815,7 +1831,7 @@ async def upload_log(date_str: str, log_content: str) -> None:
     compressed = _gzip.compress(log_content.encode("utf-8"))
     payload_size = len(compressed)
 
-    await client.object.create_object(
+    log_create_res = await client.object.create_object(
         BUCKET_NAME,
         data_path,
         io.BytesIO(compressed),
@@ -1824,13 +1840,17 @@ async def upload_log(date_str: str, log_content: str) -> None:
             content_type="application/gzip",
         ),
     )
+    log_tx_hash = _extract_txhash(log_create_res)
     await asyncio.sleep(_SP_SYNC_DELAY)
+    log_opts = PutObjectOptions(content_type="application/gzip")
+    if log_tx_hash:
+        log_opts.txn_hash = log_tx_hash
     await client.object.put_object(
         bucket_name=BUCKET_NAME,
         object_name=data_path,
         object_size=payload_size,
         reader=io.BytesIO(compressed),
-        opts=PutObjectOptions(content_type="application/gzip"),
+        opts=log_opts,
     )
     logger.info("📄 Log subido: %s", data_path)
 
@@ -1934,7 +1954,7 @@ async def load_ai_guard(auto_create: bool = False) -> List[str]:
     # Step 4: truly missing — create with defaults
     try:
         encoded = default_content.encode("utf-8")
-        await client.object.create_object(
+        guard_create_res = await client.object.create_object(
             BUCKET_NAME,
             path,
             io.BytesIO(encoded),
@@ -1943,13 +1963,17 @@ async def load_ai_guard(auto_create: bool = False) -> List[str]:
                 content_type="text/plain",
             ),
         )
+        guard_tx_hash = _extract_txhash(guard_create_res)
         await asyncio.sleep(_SP_SYNC_DELAY)
+        guard_opts = PutObjectOptions(content_type="text/plain")
+        if guard_tx_hash:
+            guard_opts.txn_hash = guard_tx_hash
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=path,
             object_size=len(encoded),
             reader=io.BytesIO(encoded),
-            opts=PutObjectOptions(content_type="text/plain"),
+            opts=guard_opts,
         )
         logger.info("🛡️ ai_guard.txt creado con patrones por defecto")
     except Exception as create_exc:
@@ -2002,7 +2026,7 @@ async def create_emergency_lock() -> None:
         return
     except Exception:
         pass
-    await client.object.create_object(
+    lock_create_res = await client.object.create_object(
         BUCKET_NAME,
         path,
         io.BytesIO(b""),
@@ -2011,14 +2035,18 @@ async def create_emergency_lock() -> None:
             content_type="application/octet-stream",
         ),
     )
+    lock_tx_hash = _extract_txhash(lock_create_res)
     await asyncio.sleep(_SP_SYNC_DELAY)
     try:
+        lock_opts = PutObjectOptions(content_type="application/octet-stream")
+        if lock_tx_hash:
+            lock_opts.txn_hash = lock_tx_hash
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=path,
             object_size=0,
             reader=io.BytesIO(b""),
-            opts=PutObjectOptions(content_type="application/octet-stream"),
+            opts=lock_opts,
         )
     except Exception:
         pass
@@ -2053,7 +2081,7 @@ async def _write_system_config_if_missing() -> None:
         except Exception:
             pass
         content = json.dumps(_DEFAULT_SYSTEM_CONFIG, ensure_ascii=False, indent=2).encode("utf-8")
-        await client.object.create_object(
+        cfg_create_res = await client.object.create_object(
             BUCKET_NAME,
             data_path,
             io.BytesIO(content),
@@ -2062,13 +2090,17 @@ async def _write_system_config_if_missing() -> None:
                 content_type="application/json",
             ),
         )
+        cfg_tx_hash = _extract_txhash(cfg_create_res)
         await asyncio.sleep(_SP_SYNC_DELAY)
+        cfg_opts = PutObjectOptions(content_type="application/json")
+        if cfg_tx_hash:
+            cfg_opts.txn_hash = cfg_tx_hash
         await client.object.put_object(
             bucket_name=BUCKET_NAME,
             object_name=data_path,
             object_size=len(content),
             reader=io.BytesIO(content),
-            opts=PutObjectOptions(content_type="application/json"),
+            opts=cfg_opts,
         )
         logger.info("⚙️ system_config.json creado con valores por defecto")
     except Exception as exc:
@@ -2113,6 +2145,87 @@ def get_system_config() -> Dict[str, Any]:
 
 # ── Alias para compatibilidad con sync_brain.py ───────────────────────
 get_greenfield_client = get_client
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# LIMPIEZA DE OBJETOS HUÉRFANOS (CREATED sin contenido en SP)
+# ═══════════════════════════════════════════════════════════════════════
+
+async def cleanup_orphaned_created_objects() -> int:
+    """
+    Cancela TODOS los objetos del bucket que están en estado CREATED
+    (sin contenido en el SP) usando MsgCancelCreateObject.
+
+    MsgDeleteObject (usado por DCellar) solo funciona con objetos SEALED.
+    MsgCancelCreateObject es el mensaje correcto para objetos CREATED.
+
+    Escanea el bucket completo con paginación (lotes de 1000) para no
+    perder objetos en ninguna carpeta. Retorna el total cancelado.
+    """
+    client = await get_client()
+    cancelled = 0
+    errors = 0
+    scanned = 0
+
+    logger.info("🧹 Iniciando escaneo completo del bucket para objetos huérfanos...")
+
+    continuation_token = ""
+    while True:
+        try:
+            opts = ListObjectsOptions(
+                prefix="",
+                max_keys=1000,
+                delimiter="",
+                continuation_token=continuation_token,
+            )
+            result = await client.object.list_objects(BUCKET_NAME, opts)
+        except Exception as list_exc:
+            logger.warning("list_objects falló durante limpieza: %s", list_exc)
+            break
+
+        objects = result.objects if hasattr(result, "objects") else []
+        scanned += len(objects)
+
+        for obj in objects:
+            obj_name = (
+                obj.get("object_name") if isinstance(obj, dict)
+                else getattr(obj, "object_name", None)
+            )
+            if not obj_name:
+                continue
+
+            # Verificar estado CREATED via chain (funciona aunque el SP falle)
+            try:
+                info = await client.object.get_object_head(BUCKET_NAME, obj_name)
+                status = getattr(info, "object_status", None)
+                if status != ObjectStatus.OBJECT_STATUS_CREATED:
+                    continue
+            except Exception:
+                continue
+
+            # CREATED → cancelar con MsgCancelCreateObject
+            try:
+                await client.object.cancel_create_object(BUCKET_NAME, obj_name)
+                cancelled += 1
+                logger.info("🗑️ Huérfano cancelado: %s", obj_name)
+                await asyncio.sleep(2)  # pausa anti-nonce entre txs
+            except Exception as cancel_exc:
+                errors += 1
+                logger.warning("No se pudo cancelar %s: %s", obj_name, cancel_exc)
+
+        # Paginación: continuar si hay más objetos
+        is_truncated = getattr(result, "is_truncated", False)
+        next_token = getattr(result, "next_continuation_token", "")
+        if not is_truncated or not next_token:
+            break
+        continuation_token = next_token
+
+    logger.info(
+        "🧹 Limpieza completada: %d objetos escaneados, %d cancelados, %d errores",
+        scanned, cancelled, errors,
+    )
+    return cancelled
+
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -2161,6 +2274,8 @@ __all__ = [
     # System Config
     "load_system_config",
     "get_system_config",
+    # Limpieza
+    "cleanup_orphaned_created_objects",
     # Constants
     "BUCKET_NAME",
     "PRIVATE_KEY",
