@@ -55,7 +55,7 @@ CACHE_TTL: str = _getenv("CACHE_TTL", "12")
 
 _APP_NAME = "Synergix"
 _GRAPHQL_URL = f"{IRYS_NODE_URL}/graphql"
-_UPLOAD_URL = f"{IRYS_NODE_URL}/upload/{IRYS_TOKEN}"
+_UPLOAD_URL = f"{IRYS_NODE_URL}/tx/{IRYS_TOKEN}"
 
 BRAIN_CODES: List[str] = ["prog", "tech", "cien", "know"]
 
@@ -179,7 +179,7 @@ async def _client() -> httpx.AsyncClient:
 # ═══════════════════════════════════════════════════════════════════════
 
 @retry(
-    retry=retry_if_exception_type((httpx.HTTPError, ConnectionError, TimeoutError, OSError)),
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
@@ -203,7 +203,7 @@ async def _upload(data: bytes, tags: List[Dict[str, str]]) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 
 @retry(
-    retry=retry_if_exception_type((httpx.HTTPError, ConnectionError, TimeoutError, OSError)),
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
@@ -220,7 +220,7 @@ async def _fetch(tx_id: str) -> bytes:
 # ═══════════════════════════════════════════════════════════════════════
 
 @retry(
-    retry=retry_if_exception_type((httpx.HTTPError, ConnectionError, TimeoutError, OSError)),
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
@@ -249,14 +249,18 @@ async def _query_latest(tags: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
     {{
       transactions(
         tags: [{_tag_filter(tags)}],
-        order: DESC, first: 1
-      ) {{ edges {{ node {{ id tags {{ name value }} }} }} }}
+        first: 20
+      ) {{ edges {{ node {{ id tags {{ name value }} timestamp }} }} }}
     }}
     """
     try:
         data = await _gql(q)
-        edges = data.get("data", {}).get("transactions", {}).get("edges", [])
-        return edges[0]["node"] if edges else None
+        edges = (data.get("data") or {}).get("transactions", {}).get("edges", [])
+        nodes = [e["node"] for e in edges if e.get("node")]
+        if not nodes:
+            return None
+        nodes.sort(key=lambda n: n.get("timestamp", 0), reverse=True)
+        return nodes[0]
     except Exception as exc:
         logger.warning("_query_latest falló: %s", exc)
         return None
@@ -265,19 +269,21 @@ async def _query_latest(tags: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
 async def _query_all(
     tags: List[Dict[str, str]], limit: int = 100
 ) -> List[Dict[str, Any]]:
-    """Retorna todos los nodos (DESC) que coincidan con los tags dados."""
+    """Retorna todos los nodos (DESC por timestamp) que coincidan con los tags dados."""
     q = f"""
     {{
       transactions(
         tags: [{_tag_filter(tags)}],
-        order: DESC, first: {limit}
+        first: {limit}
       ) {{ edges {{ node {{ id tags {{ name value }} timestamp }} }} }}
     }}
     """
     try:
         data = await _gql(q)
-        edges = data.get("data", {}).get("transactions", {}).get("edges", [])
-        return [e["node"] for e in edges if e.get("node")]
+        edges = (data.get("data") or {}).get("transactions", {}).get("edges", [])
+        nodes = [e["node"] for e in edges if e.get("node")]
+        nodes.sort(key=lambda n: n.get("timestamp", 0), reverse=True)
+        return nodes
     except Exception as exc:
         logger.warning("_query_all falló: %s", exc)
         return []
@@ -294,7 +300,7 @@ async def _query_by_id(tx_id: str) -> Optional[Dict[str, Any]]:
     """
     try:
         data = await _gql(q)
-        edges = data.get("data", {}).get("transactions", {}).get("edges", [])
+        edges = (data.get("data") or {}).get("transactions", {}).get("edges", [])
         return edges[0]["node"] if edges else None
     except Exception:
         return None
@@ -494,7 +500,7 @@ _PROFILE_TAG_RMAP: Dict[str, str] = {v: k for k, v in _PROFILE_TAG_MAP.items()}
 
 
 @retry(
-    retry=retry_if_exception_type((httpx.HTTPError, ConnectionError, TimeoutError, OSError)),
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
@@ -522,7 +528,7 @@ async def read_user_tags(uid_ofuscado: str) -> Dict[str, str]:
 
 
 @retry(
-    retry=retry_if_exception_type((httpx.HTTPError, ConnectionError, TimeoutError, OSError)),
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
@@ -546,7 +552,7 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
 # ═══════════════════════════════════════════════════════════════════════
 
 @retry(
-    retry=retry_if_exception_type((httpx.HTTPError, ConnectionError, TimeoutError, OSError)),
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
@@ -574,7 +580,7 @@ async def write_aporte(
 
 
 @retry(
-    retry=retry_if_exception_type((httpx.HTTPError, ConnectionError, TimeoutError, OSError)),
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
@@ -599,7 +605,7 @@ async def read_aporte(tx_id: str) -> Tuple[str, Dict[str, str]]:
 
 
 @retry(
-    retry=retry_if_exception_type((httpx.HTTPError, ConnectionError, TimeoutError, OSError)),
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
