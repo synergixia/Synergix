@@ -10,13 +10,14 @@ from typing import List, Dict, Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aisynergix.services.greenfield import (
+from aisynergix.services.irys import (
     get_greenfield_client,
     get_all_user_uids,
     list_aportes,
     read_aporte,
     get_brain_pointer,
     set_brain_pointer,
+    write_aporte,
 )
 from aisynergix.services.rag_engine import get_rag_engine
 from aisynergix.ai.local_ia import get_thinker
@@ -85,28 +86,24 @@ RESUMEN COLECTIVO:"""
 
 
 async def store_collective_summary(summary: str) -> str:
-    gf = await get_greenfield_client()
-
     now = datetime.now(timezone.utc)
     ts = now.strftime("%Y%m%d_%H%M%S")
     summary_hash = hashlib.sha256(summary.encode()).hexdigest()[:12]
+    object_name = f"collective_{ts}_{summary_hash}"
 
-    object_name = f"aisynergix/data/brains/collective_{ts}_{summary_hash}.txt"
-
-    await gf.create_object(
-        object_name=object_name,
-        payload=summary.encode("utf-8"),
-        content_type="text/plain; charset=utf-8",
+    tx_id = await write_aporte(
+        uid_ofuscado="collective",
+        texto=summary,
         tags={
-            "type": "collective_summary",
-            "timestamp": ts,
-            "hash": summary_hash,
+            "type":                "collective_summary",
+            "timestamp":           ts,
+            "hash":                summary_hash,
             "contributions_count": "auto",
         },
     )
 
-    logger.info(f"📚 Resumen colectivo almacenado: {object_name}")
-    return object_name
+    logger.info(f"📚 Resumen colectivo almacenado en Irys: {tx_id}")
+    return tx_id
 
 
 async def refine_contextual_knowledge():

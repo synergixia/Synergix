@@ -11,8 +11,6 @@ sse-starlette>=2.0.0
 # ── Retry / Resilience ──
 tenacity>=8.0.0,<10.0.0
 
-# ── Greenfield SDK oficial (desde GitHub) ──
-greenfield-python-sdk @ git+https://github.com/bnb-chain/greenfield-python-sdk.git
 
 # ── IA Local (Qwen2.5 GGUF) ──
 torch==2.5.1

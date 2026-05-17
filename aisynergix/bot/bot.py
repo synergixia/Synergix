@@ -331,7 +331,7 @@ async def handle_memory_button(message: Message) -> None:
     ghost = get_ghost_state_manager()
     await ghost.reset_state(uid)
 
-    from aisynergix.services.greenfield import list_aportes, read_aporte
+    from aisynergix.services.irys import list_aportes, read_aporte
     from aisynergix.bot.identity import _hash_uid
 
     uid_hash = _hash_uid(uid)
@@ -546,7 +546,7 @@ async def handle_top_mentes_button(message: Message) -> None:
     # _top10_cache vive en el proceso de sync_brain — el bot tiene su
     # propio espacio de memoria y no comparte ese cache.  compute_top10
     # es read-only (no escribe a Greenfield), seguro de llamar on-demand.
-    from aisynergix.services.greenfield import compute_top10
+    from aisynergix.services.irys import compute_top10
     top10 = await compute_top10()
 
     if not top10 or not isinstance(top10, list):
@@ -741,7 +741,7 @@ async def cmd_admin(message: Message) -> None:
         await message.answer("Uso: /admin lock | /admin unlock")
         return
     action = args[1].lower()
-    from aisynergix.services.greenfield import create_emergency_lock, delete_emergency_lock
+    from aisynergix.services.irys import create_emergency_lock, delete_emergency_lock
     if action == "lock":
         await create_emergency_lock()
         await message.answer(t("admin_lock_enabled", lang))
@@ -859,7 +859,7 @@ async def handle_contribution_message(
 
     await ghost.exit_contribution_mode(uid)
 
-    from aisynergix.services.greenfield import is_emergency_locked
+    from aisynergix.services.irys import is_emergency_locked
     if is_emergency_locked():
         await message.answer(t("emergency_lock_active", lang))
         return
@@ -930,7 +930,7 @@ async def handle_conversation_message(
     text: str,
     lang: str,
 ) -> None:
-    from aisynergix.services.greenfield import check_ai_guard
+    from aisynergix.services.irys import check_ai_guard
     if check_ai_guard(text):
         await message.answer(t("ai_guard_blocked", lang))
         return
@@ -1134,7 +1134,7 @@ async def on_startup():
 
     await set_bot_commands()
 
-    from aisynergix.services.greenfield import (
+    from aisynergix.services.irys import (
         load_ai_guard, load_system_config, check_emergency_lock,
         load_current_challenge_from_greenfield,
     )

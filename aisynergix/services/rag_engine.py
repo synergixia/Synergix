@@ -388,12 +388,8 @@ class CrossLingualRAG:
     async def save_brain_to_greenfield(
         self, code: str, current_version: str
     ) -> Optional[str]:
-        """
-        Serializa y sube el cerebro indicado a Greenfield como nueva versión.
-        Nunca sobreescribe versiones antiguas.
-        Retorna el nombre de la nueva versión, o None si falló.
-        """
-        from aisynergix.services.greenfield import upload_brain_index, upload_brain_meta
+        """Serializa y sube el cerebro a Irys como nueva versión."""
+        from aisynergix.services.irys import upload_brain_index, upload_brain_meta
 
         engine = self._brains.get(code)
         if engine is None:
@@ -422,15 +418,13 @@ class CrossLingualRAG:
         except Exception as exc:
             import logging
             logging.getLogger(__name__).error(
-                "save_brain_to_greenfield [%s]: %s", code, exc
+                "save_brain_to_irys [%s]: %s", code, exc
             )
             return None
 
     async def load_brain_from_greenfield(self, code: str, version: str) -> bool:
-        """
-        Carga un cerebro desde Greenfield. Retorna True si tuvo éxito.
-        """
-        from aisynergix.services.greenfield import download_brain_index, download_brain_meta
+        """Carga un cerebro desde Irys. Retorna True si tuvo éxito."""
+        from aisynergix.services.irys import download_brain_index, download_brain_meta
 
         engine = self._brains.get(code)
         if engine is None:
@@ -466,7 +460,7 @@ class CrossLingualRAG:
 
         Retorna dict {code: docs_added}.
         """
-        from aisynergix.services.greenfield import (
+        from aisynergix.services.irys import (
             get_all_user_uids,
             list_aportes,
             read_aporte,

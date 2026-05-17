@@ -140,7 +140,7 @@ class UserProfile:
 
 class UserCache:
     """
-    Cache de perfiles con TTL corto para garantizar que el bucket Greenfield
+    Cache de perfiles con TTL corto para garantizar que Irys
     sea la fuente de verdad en tiempo real. TTL=30s significa staleness máxima
     de 30 segundos — suficiente para que cualquier escritura externa al
     IdentityManager (p. ej. wallet_verify.py, sync_brain.py) se refleje pronto.
@@ -158,7 +158,7 @@ class UserCache:
             return None
         profile, cached_at = entry
         if time.time() - cached_at > self.TTL_SECONDS:
-            # TTL expirado — eliminar y forzar relectura desde Greenfield
+            # TTL expirado — eliminar y forzar relectura desde Irys
             self._cache.pop(uid, None)
             return None
         return profile
@@ -187,7 +187,7 @@ class IdentityManager:
         self._cache = UserCache(max_size=500)
 
     async def get_profile(self, uid: int) -> UserProfile:
-        from aisynergix.services.greenfield import read_user_tags
+        from aisynergix.services.irys import read_user_tags
 
         cached = self._cache.get(uid)
         if cached:
@@ -195,26 +195,18 @@ class IdentityManager:
 
         uid_hash = _hash_uid(uid)
         tags = await read_user_tags(uid_hash)
-
-        # read_user_tags devuelve defaults si el objeto no existe en Greenfield.
-        # NO escribimos aquí — MsgCreateObject con primary_sp_approval=None
-        # falla para objetos 0 bytes. La primera escritura ocurre cuando el
-        # usuario realiza una acción real (aporte, cambio de idioma).
         profile = UserProfile.from_tags(uid, tags)
 
         self._cache.set(uid, profile)
         return profile
 
     async def update_profile(self, uid: int, profile: UserProfile) -> None:
-        from aisynergix.services.greenfield import write_user_tags
+        from aisynergix.services.irys import write_user_tags
 
         uid_hash = _hash_uid(uid)
         try:
             await write_user_tags(uid_hash, profile.to_tags())
         except Exception:
-            # El objeto puede no existir aún en Greenfield (usuario nuevo).
-            # Los datos quedan en cache RAM hasta que el usuario haga su
-            # primera contribución real.
             pass
         self._cache.set(uid, profile)
 

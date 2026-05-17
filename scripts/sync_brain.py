@@ -14,7 +14,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from aisynergix.bot.locales import load_all_locales, t, LANG_NAMES
 from aisynergix.services.rag_engine import get_rag_engine, BRAIN_CODES, CATEGORY_TO_BRAIN
-from aisynergix.services.greenfield import (
+from aisynergix.services.irys import (
     get_greenfield_client,
     get_all_user_uids,
     list_aportes,

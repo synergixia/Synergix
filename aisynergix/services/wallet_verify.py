@@ -6,8 +6,7 @@ Flow:
 2. Bot generates a SIWE-formatted challenge bound to that address.
 3. User signs the challenge in their wallet (no gas, no transaction).
 4. User pastes the signature; bot recovers the signer and confirms it
-   matches the declared address. The address is then stored in the
-   user's Greenfield tags.
+   matches the declared address. The address is then stored in Irys.
 
 The bot never requests the user's private key.
 """
@@ -136,8 +135,8 @@ def clear_pending(uid_hash: str) -> None:
 
 
 async def get_verified_wallet(uid_hash: str) -> Optional[str]:
-    """Read the verified wallet address from Greenfield tags."""
-    from aisynergix.services.greenfield import read_user_tags
+    """Read the verified wallet address from Irys tags."""
+    from aisynergix.services.irys import read_user_tags
     try:
         tags = await read_user_tags(uid_hash)
         return tags.get("wallet_address") or None
@@ -146,8 +145,8 @@ async def get_verified_wallet(uid_hash: str) -> Optional[str]:
 
 
 async def save_verified_wallet(uid_hash: str, address: str) -> None:
-    """Persist the verified wallet address and human_verified flag into user tags."""
-    from aisynergix.services.greenfield import read_user_tags, write_user_tags
+    """Persist the verified wallet address and human_verified flag into Irys."""
+    from aisynergix.services.irys import read_user_tags, write_user_tags
     try:
         tags = await read_user_tags(uid_hash)
         tags["wallet_address"] = address.lower()

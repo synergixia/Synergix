@@ -19,7 +19,7 @@ from aisynergix.bot.identity import (
     RANK_TABLE,
     _hash_uid,
 )
-from aisynergix.services.greenfield import (
+from aisynergix.services.irys import (
     write_aporte,
     read_user_tags,
     write_user_tags,
