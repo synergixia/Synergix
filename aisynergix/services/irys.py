@@ -3,7 +3,7 @@ irys.py — Capa de almacenamiento permanente sobre Irys (Arweave).
 Reemplaza greenfield.py. Misma API pública, sin SDK propio ni Go.
 
 Arquitectura:
-  Upload  → ANS-104 DataItem firmado con ECDSA Ethereum → POST /upload/{token}
+  Upload  → ANS-104 DataItem firmado con ECDSA Ethereum → POST /tx/{token}
   Lectura → GraphQL para metadatos + gateway HTTP para contenido
   Auth    → misma PRIVATE_KEY ya configurada (wallet BNB/ETH)
 
@@ -26,7 +26,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import httpx
 from eth_account import Account
-from eth_account.messages import encode_defunct
+from eth_keys.keys import PrivateKey as _EthPrivateKey
+from eth_utils import keccak
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -117,8 +118,20 @@ def _deep_hash(data: Any) -> bytes:
 
 def _get_owner_bytes(private_key: str) -> bytes:
     """Clave pública sin comprimir de 65 bytes (0x04 + X + Y)."""
-    account = Account.from_key(private_key)
-    return b"\x04" + account._key_obj.public_key.to_bytes()
+    pk = _EthPrivateKey(bytes.fromhex(private_key.lstrip("0x").zfill(64)))
+    return b"\x04" + pk.public_key.to_bytes()
+
+
+def _eth_sign(private_key: str, message: bytes) -> bytes:
+    """Ethereum personal_sign (EIP-191): retorna firma de 65 bytes r+s+v."""
+    prefix = b"\x19Ethereum Signed Message:\n" + str(len(message)).encode()
+    signing_hash = keccak(primitive=prefix + message)   # 32 bytes keccak256
+    pk = _EthPrivateKey(bytes.fromhex(private_key.lstrip("0x").zfill(64)))
+    sig = pk.sign_msg_hash(signing_hash)
+    r = sig.r.to_bytes(32, "big")
+    s = sig.s.to_bytes(32, "big")
+    v = bytes([sig.v + 27])   # eth_keys usa 0/1; Ethereum espera 27/28
+    return r + s + v
 
 
 def _build_data_item(data: bytes, tags: List[Dict[str, str]]) -> bytes:
@@ -144,9 +157,7 @@ def _build_data_item(data: bytes, tags: List[Dict[str, str]]) -> bytes:
         data,
     ])
 
-    eth_msg = encode_defunct(primitive=msg_hash)
-    signed = Account.from_key(PRIVATE_KEY).sign_message(eth_msg)
-    sig = bytes(signed.signature)   # 65 bytes
+    sig = _eth_sign(PRIVATE_KEY, msg_hash)   # 65 bytes r+s+v
 
     item = struct.pack("<H", 3)                      # sig_type
     item += sig                                       # 65 bytes firma
@@ -243,6 +254,14 @@ async def _gql(query: str) -> Dict[str, Any]:
     return result
 
 
+def _owner_filter() -> str:
+    """Filtro owners para limitar queries al wallet propio y evitar timeouts."""
+    if not PRIVATE_KEY:
+        return ""
+    address = Account.from_key(PRIVATE_KEY).address
+    return f', owners: ["{address}"]'
+
+
 def _tag_filter(tags: List[Dict[str, str]]) -> str:
     """Convierte lista de tags a filtro GraphQL."""
     parts = [
@@ -256,7 +275,7 @@ async def _query_latest(tags: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
     q = f"""
     {{
       transactions(
-        tags: [{_tag_filter(tags)}],
+        tags: [{_tag_filter(tags)}]{_owner_filter()},
         first: 20
       ) {{ edges {{ node {{ id tags {{ name value }} timestamp }} }} }}
     }}
@@ -281,7 +300,7 @@ async def _query_all(
     q = f"""
     {{
       transactions(
-        tags: [{_tag_filter(tags)}],
+        tags: [{_tag_filter(tags)}]{_owner_filter()},
         first: {limit}
       ) {{ edges {{ node {{ id tags {{ name value }} timestamp }} }} }}
     }}
@@ -301,7 +320,7 @@ async def _query_by_id(tx_id: str) -> Optional[Dict[str, Any]]:
     """Obtiene tags de una transacción por su ID."""
     q = f"""
     {{
-      transactions(ids: ["{tx_id}"]) {{
+      transactions(ids: ["{tx_id}"]{_owner_filter()}) {{
         edges {{ node {{ id tags {{ name value }} }} }}
       }}
     }}
