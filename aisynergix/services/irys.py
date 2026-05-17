@@ -116,17 +116,33 @@ def _deep_hash(data: Any) -> bytes:
     return acc
 
 
+def _privkey_bytes(private_key: str) -> bytes:
+    """
+    Retorna los 32 bytes raw de la private key, usando la misma lógica que
+    eth_account.Account.from_key (removeprefix '0x', NO lstrip — lstrip
+    eliminaría también ceros iniciales, produciendo una clave distinta).
+    """
+    return bytes(Account.from_key(private_key).key)
+
+
 def _get_owner_bytes(private_key: str) -> bytes:
     """Clave pública sin comprimir de 65 bytes (0x04 + X + Y)."""
-    pk = _eth_keys.PrivateKey(bytes.fromhex(private_key.lstrip("0x").zfill(64)))
-    return b"\x04" + pk.public_key.to_bytes()
+    pk = _eth_keys.PrivateKey(_privkey_bytes(private_key))
+    owner = b"\x04" + pk.public_key.to_bytes()
+
+    # Sanity check: la dirección derivada debe coincidir con Account.address
+    expected = Account.from_key(private_key).address.lower()
+    derived = "0x" + keccak(primitive=owner[1:])[-20:].hex()
+    if derived.lower() != expected:
+        logger.error("Owner mismatch! derived=%s expected=%s", derived, expected)
+    return owner
 
 
 def _eth_sign(private_key: str, message: bytes) -> bytes:
     """Ethereum personal_sign (EIP-191): retorna firma de 65 bytes r+s+v."""
     prefix = b"\x19Ethereum Signed Message:\n" + str(len(message)).encode()
     signing_hash = keccak(primitive=prefix + message)   # 32 bytes keccak256
-    pk = _eth_keys.PrivateKey(bytes.fromhex(private_key.lstrip("0x").zfill(64)))
+    pk = _eth_keys.PrivateKey(_privkey_bytes(private_key))
     sig = pk.sign_msg_hash(signing_hash)
     r = sig.r.to_bytes(32, "big")
     s = sig.s.to_bytes(32, "big")
