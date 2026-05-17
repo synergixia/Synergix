@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import httpx
 from eth_account import Account
-from eth_keys.keys import PrivateKey as _EthPrivateKey
+from eth_keys import keys as _eth_keys
 from eth_utils import keccak
 from tenacity import (
     retry,
@@ -118,7 +118,7 @@ def _deep_hash(data: Any) -> bytes:
 
 def _get_owner_bytes(private_key: str) -> bytes:
     """Clave pública sin comprimir de 65 bytes (0x04 + X + Y)."""
-    pk = _EthPrivateKey(bytes.fromhex(private_key.lstrip("0x").zfill(64)))
+    pk = _eth_keys.PrivateKey(bytes.fromhex(private_key.lstrip("0x").zfill(64)))
     return b"\x04" + pk.public_key.to_bytes()
 
 
@@ -126,7 +126,7 @@ def _eth_sign(private_key: str, message: bytes) -> bytes:
     """Ethereum personal_sign (EIP-191): retorna firma de 65 bytes r+s+v."""
     prefix = b"\x19Ethereum Signed Message:\n" + str(len(message)).encode()
     signing_hash = keccak(primitive=prefix + message)   # 32 bytes keccak256
-    pk = _EthPrivateKey(bytes.fromhex(private_key.lstrip("0x").zfill(64)))
+    pk = _eth_keys.PrivateKey(bytes.fromhex(private_key.lstrip("0x").zfill(64)))
     sig = pk.sign_msg_hash(signing_hash)
     r = sig.r.to_bytes(32, "big")
     s = sig.s.to_bytes(32, "big")
