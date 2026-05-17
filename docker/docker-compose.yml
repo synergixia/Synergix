@@ -228,7 +228,6 @@ services:
       # ── HuggingFace / Transformers ─────────────────────────────
       HF_HOME: /tmp/hf_cache
       SENTENCE_TRANSFORMERS_HOME: /tmp/st_cache
-      TRANSFORMERS_CACHE: /tmp/tr_cache
     deploy:
       resources:
         limits:
