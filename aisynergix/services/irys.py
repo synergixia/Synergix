@@ -192,6 +192,8 @@ async def _upload(data: bytes, tags: List[Dict[str, str]]) -> str:
         content=item,
         headers={"Content-Type": "application/octet-stream"},
     )
+    if not resp.is_success:
+        logger.error("Irys upload %d — body: %s", resp.status_code, resp.text[:400])
     resp.raise_for_status()
     tx_id: str = resp.json().get("id", "")
     logger.debug("Irys upload OK: tx=%s bytes=%d", tx_id, len(data))
@@ -232,7 +234,13 @@ async def _gql(query: str) -> Dict[str, Any]:
         headers={"Content-Type": "application/json"},
     )
     resp.raise_for_status()
-    return resp.json()
+    result = resp.json()
+    if not isinstance(result, dict):
+        logger.warning("GraphQL respuesta inesperada (tipo %s): %s", type(result).__name__, str(result)[:200])
+        return {}
+    if result.get("errors"):
+        logger.warning("GraphQL errors: %s", str(result["errors"])[:400])
+    return result
 
 
 def _tag_filter(tags: List[Dict[str, str]]) -> str:
