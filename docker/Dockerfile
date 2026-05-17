@@ -10,6 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     ca-certificates \
     tzdata \
+    build-essential \
+    cmake \
+    gcc \
+    g++ \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 ENV TZ=UTC
