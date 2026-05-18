@@ -42,6 +42,7 @@ from aisynergix.services.wallet_verify import (
 )
 from aisynergix.services import dexscreener as dex_svc
 from aisynergix.services import four_meme as fourmeme_svc
+from aisynergix.services.irys import IRYS_GATEWAY_URL
 
 
 logger = logging.getLogger("synergix.bot")
@@ -881,9 +882,10 @@ async def handle_contribution_message(
 
             cid_raw = result.get("cid", "")
             if cid_raw.startswith("local:"):
-                cid_display = cid_raw[6:18] + "… (pendiente)"
+                cid_display = cid_raw[6:22] + "… (pendiente)"
             else:
-                cid_display = cid_raw  # 64-char blockchain tx hash completo
+                full_url = f"{IRYS_GATEWAY_URL}/{cid_raw}"
+                cid_display = f'<a href="{full_url}">{full_url}</a>'
 
             response_text = t(
                 message_key,
