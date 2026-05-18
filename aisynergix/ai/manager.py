@@ -440,7 +440,22 @@ class AIManager:
                 "user_language": profile.language,
             }
         except Exception as exc:
-            logger.warning("Programmer error for uid=%s: %s", uid, exc)
+            logger.warning("Programmer unavailable for uid=%s (%s) — falling back to Thinker", uid, exc)
+
+        try:
+            thinker = get_thinker()
+            response = await thinker.think(
+                user_message=message,
+                context="",
+                target_language=profile.language,
+            )
+            return {
+                "status": "success",
+                "response": response,
+                "user_language": profile.language,
+            }
+        except Exception as exc2:
+            logger.warning("Thinker fallback also failed for uid=%s: %s", uid, exc2)
             return {
                 "status": "error",
                 "message_key": "error_generic",
