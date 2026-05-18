@@ -81,7 +81,7 @@ _http: Optional[httpx.AsyncClient] = None
 async def _client() -> httpx.AsyncClient:
     global _http
     if _http is None or _http.is_closed:
-        _http = httpx.AsyncClient(timeout=120.0)
+        _http = httpx.AsyncClient(timeout=120.0, follow_redirects=True)
     return _http
 
 
