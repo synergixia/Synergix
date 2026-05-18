@@ -95,6 +95,7 @@ app.post("/upload", async (req, res) => {
     const buffer = Buffer.from(data, "base64");
     const u = await getUploader();
     const receipt = await u.upload(buffer, { tags: cleanTags });
+    console.log("TxID generado:", receipt.id);
     res.json({
       id: receipt.id,
       timestamp: receipt.timestamp,
