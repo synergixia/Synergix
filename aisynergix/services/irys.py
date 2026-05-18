@@ -1,33 +1,26 @@
 """
 irys.py — Capa de almacenamiento permanente sobre Irys (Arweave).
-Reemplaza greenfield.py. Misma API pública, sin SDK propio ni Go.
 
 Arquitectura:
-  Upload  → ANS-104 DataItem firmado con ECDSA Ethereum → POST /tx/{token}
-  Lectura → GraphQL para metadatos + gateway HTTP para contenido
-  Auth    → misma PRIVATE_KEY ya configurada (wallet BNB/ETH)
-
-Ventajas respecto a Greenfield:
-  - Tags ilimitados (sin límite de 4 tags / 64 bytes)
-  - Sin patches de SDK ni compilación Go
-  - Inmutable y permanente en Arweave
-  - Patrón "latest by tag" para datos mutables (perfiles de usuario)
+  Upload  → HTTP POST al microservicio `irys-uploader` (Node.js, SDK oficial
+            @irys/upload-ethereum). El bot NO firma DataItems en Python.
+  Lectura → GraphQL para metadatos + gateway HTTP para contenido (sin firma).
+  Auth    → la PRIVATE_KEY vive en el microservicio. Aquí solo se usa la
+            dirección pública para filtros GraphQL.
 """
 
 import asyncio
+import base64
 import gzip
 import hashlib
 import json
 import logging
 import os
-import struct
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import httpx
 from eth_account import Account
-from eth_keys import keys as _eth_keys
-from eth_utils import keccak
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -49,6 +42,7 @@ PRIVATE_KEY: str = os.getenv("PRIVATE_KEY", "")
 IRYS_NODE_URL: str = _getenv("IRYS_NODE_URL", "https://uploader.irys.xyz")
 IRYS_GATEWAY_URL: str = _getenv("IRYS_GATEWAY_URL", "https://gateway.irys.xyz")
 IRYS_TOKEN: str = _getenv("IRYS_TOKEN", "bnb")
+IRYS_UPLOADER_URL: str = _getenv("IRYS_UPLOADER_URL", "http://irys-uploader:8083")
 TELEGRAM_TOKEN: str = _getenv("TELEGRAM_TOKEN", "")
 THINKER_HOST: str = _getenv("THINKER_HOST", "http://thinker:8081")
 JUDGE_HOST: str = _getenv("JUDGE_HOST", "http://judge:8080")
@@ -56,7 +50,9 @@ CACHE_TTL: str = _getenv("CACHE_TTL", "12")
 
 _APP_NAME = "Synergix"
 _GRAPHQL_URL = f"{IRYS_NODE_URL}/graphql"
-_UPLOAD_URL = f"{IRYS_NODE_URL}/tx/{IRYS_TOKEN}"
+_UPLOADER_UPLOAD_URL = f"{IRYS_UPLOADER_URL}/upload"
+_UPLOADER_BALANCE_URL = f"{IRYS_UPLOADER_URL}/balance"
+_UPLOADER_HEALTH_URL = f"{IRYS_UPLOADER_URL}/health"
 
 BRAIN_CODES: List[str] = ["prog", "tech", "cien", "know"]
 
@@ -71,157 +67,6 @@ def _hash_uid(uid: int) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# ANS-104 DATAITEM — Implementación nativa Python para Ethereum
-# ═══════════════════════════════════════════════════════════════════════
-# Ethereum signer: tipo 3, firma 65 bytes, owner 65 bytes (clave pública
-# sin comprimir: 0x04 + 32 bytes X + 32 bytes Y).
-
-def _avro_long(n: int) -> bytes:
-    """Zigzag + varint encoding para campos long de Avro."""
-    n = (n << 1) ^ (n >> 63)
-    buf = bytearray()
-    while n > 0x7F:
-        buf.append((n & 0x7F) | 0x80)
-        n >>= 7
-    buf.append(n)
-    return bytes(buf)
-
-
-def _avro_str(s: str) -> bytes:
-    b = s.encode("utf-8")
-    return _avro_long(len(b)) + b
-
-
-def _encode_tags_avro(tags: List[Dict[str, str]]) -> bytes:
-    """Serializa tags en formato Avro para ANS-104."""
-    if not tags:
-        return b""
-    result = _avro_long(len(tags))
-    for t in tags:
-        result += _avro_str(t["name"])
-        result += _avro_str(t["value"])
-    result += _avro_long(0)  # fin de array
-    return result
-
-
-def _deep_hash(data: Any) -> bytes:
-    """Arweave deep hash (SHA-384 iterativo)."""
-    if isinstance(data, (bytes, bytearray)):
-        tag = b"blob\n" + str(len(data)).encode()
-        return hashlib.sha384(tag + data).digest()
-    tag = b"list\n" + str(len(data)).encode()
-    acc = hashlib.sha384(tag).digest()
-    for item in data:
-        acc = hashlib.sha384(acc + _deep_hash(item)).digest()
-    return acc
-
-
-def _privkey_bytes(private_key: str) -> bytes:
-    """
-    Retorna los 32 bytes raw de la private key, usando la misma lógica que
-    eth_account.Account.from_key (removeprefix '0x', NO lstrip — lstrip
-    eliminaría también ceros iniciales, produciendo una clave distinta).
-    """
-    return bytes(Account.from_key(private_key).key)
-
-
-def _get_owner_bytes(private_key: str) -> bytes:
-    """Clave pública sin comprimir de 65 bytes (0x04 + X + Y)."""
-    pk = _eth_keys.PrivateKey(_privkey_bytes(private_key))
-    owner = b"\x04" + pk.public_key.to_bytes()
-
-    # Sanity check: la dirección derivada debe coincidir con Account.address
-    expected = Account.from_key(private_key).address.lower()
-    derived = "0x" + keccak(primitive=owner[1:])[-20:].hex()
-    if derived.lower() != expected:
-        logger.error("Owner mismatch! derived=%s expected=%s", derived, expected)
-    return owner
-
-
-def _eth_sign(private_key: str, message: bytes) -> bytes:
-    """
-    Firma ANS-104 para sigType=3 (Ethereum/Secp256k1):
-    sign(keccak256(deepHash)) con ECDSA raw — SIN prefijo personal_sign.
-
-    arbundles/Irys usa @noble/curves/secp256k1 que firma el hash directamente
-    (no usa wallet.signMessage que añadiría \\x19Ethereum Signed Message:\\n).
-    """
-    signing_hash = keccak(primitive=message)   # keccak256 del deepHash → 32 bytes
-    pk = _eth_keys.PrivateKey(_privkey_bytes(private_key))
-    sig = pk.sign_msg_hash(signing_hash)
-    r = sig.r.to_bytes(32, "big")
-    s = sig.s.to_bytes(32, "big")
-    v = bytes([sig.v + 27])   # eth_keys usa 0/1; Ethereum espera 27/28
-    return r + s + v
-
-
-def _build_data_item(data: bytes, tags: List[Dict[str, str]]) -> bytes:
-    """
-    Construye y firma un ANS-104 DataItem con Ethereum (tipo 3).
-    Incluye App-Name automáticamente como primer tag.
-    """
-    if not PRIVATE_KEY:
-        raise RuntimeError("PRIVATE_KEY no está configurada en .env")
-
-    all_tags = [{"name": "App-Name", "value": _APP_NAME}] + tags
-    owner = _get_owner_bytes(PRIVATE_KEY)
-    tags_bytes = _encode_tags_avro(all_tags)
-
-    msg_hash = _deep_hash([
-        b"dataitem",
-        b"1",
-        b"3",        # tipo Ethereum como cadena ASCII
-        owner,
-        b"",         # sin target
-        b"",         # sin anchor
-        tags_bytes,
-        data,
-    ])
-
-    sig = _eth_sign(PRIVATE_KEY, msg_hash)   # 65 bytes r+s+v
-
-    # ── Auto-verificación local de la firma ──
-    # Si la firma es matemáticamente correcta, recover_public_key debe
-    # devolver la misma dirección que el owner. Si falla aquí, el bug
-    # está en _eth_sign. Si pasa aquí pero Irys aún rechaza, el bug
-    # está en el formato binario o en los inputs del deep_hash.
-    try:
-        from eth_keys.datatypes import Signature
-        signing_hash = keccak(primitive=msg_hash)   # debe coincidir con _eth_sign
-        v_raw = sig[64] - 27
-        r_int = int.from_bytes(sig[:32], "big")
-        s_int = int.from_bytes(sig[32:64], "big")
-        sig_obj = Signature(vrs=(v_raw, r_int, s_int))
-        recovered_pk = sig_obj.recover_public_key_from_msg_hash(signing_hash)
-        recovered_addr = "0x" + recovered_pk.to_canonical_address().hex()
-        expected_addr = Account.from_key(PRIVATE_KEY).address.lower()
-        if recovered_addr.lower() != expected_addr:
-            logger.error(
-                "Sig local FAIL: recovered=%s expected=%s msg_hash=%s",
-                recovered_addr, expected_addr, msg_hash.hex(),
-            )
-        else:
-            logger.info(
-                "Sig local OK: addr=%s msg_hash=%s sig=%s owner=%s tags_bytes_len=%d data_len=%d",
-                expected_addr, msg_hash.hex()[:32], sig.hex()[:32],
-                owner.hex()[:32], len(tags_bytes), len(data),
-            )
-    except Exception as e:
-        logger.error("Sig local verify error: %s", e)
-
-    item = struct.pack("<H", 3)                      # sig_type
-    item += sig                                       # 65 bytes firma
-    item += owner                                     # 65 bytes owner
-    item += b"\x00"                                   # sin target
-    item += b"\x00"                                   # sin anchor
-    item += struct.pack("<Q", len(all_tags))           # nº de tags
-    item += struct.pack("<Q", len(tags_bytes))         # bytes de tags
-    item += tags_bytes
-    item += data
-    return item
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # CLIENTE HTTP (singleton)
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -231,12 +76,12 @@ _http: Optional[httpx.AsyncClient] = None
 async def _client() -> httpx.AsyncClient:
     global _http
     if _http is None or _http.is_closed:
-        _http = httpx.AsyncClient(timeout=60.0)
+        _http = httpx.AsyncClient(timeout=120.0)
     return _http
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# UPLOAD
+# UPLOAD — delegado al microservicio Node.js (`irys-uploader`)
 # ═══════════════════════════════════════════════════════════════════════
 
 @retry(
@@ -245,18 +90,30 @@ async def _client() -> httpx.AsyncClient:
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
 async def _upload(data: bytes, tags: List[Dict[str, str]]) -> str:
-    """Sube un DataItem a Irys. Retorna el transaction ID."""
-    item = _build_data_item(data, tags)
+    """
+    Sube data a Irys vía el microservicio `irys-uploader`.
+    El servicio Node.js firma el DataItem con el SDK oficial y retorna el txId.
+    """
+    all_tags = [{"name": "App-Name", "value": _APP_NAME}] + list(tags or [])
+    payload = {
+        "data": base64.b64encode(data).decode("ascii"),
+        "tags": all_tags,
+    }
     cli = await _client()
     resp = await cli.post(
-        _UPLOAD_URL,
-        content=item,
-        headers={"Content-Type": "application/octet-stream"},
+        _UPLOADER_UPLOAD_URL,
+        json=payload,
+        headers={"Content-Type": "application/json"},
+        timeout=120.0,
     )
     if not resp.is_success:
-        logger.error("Irys upload %d — body: %s", resp.status_code, resp.text[:400])
+        logger.error(
+            "irys-uploader upload %d — body: %s",
+            resp.status_code, resp.text[:400],
+        )
     resp.raise_for_status()
-    tx_id: str = resp.json().get("id", "")
+    body = resp.json() if isinstance(resp.json(), dict) else {}
+    tx_id: str = body.get("id", "")
     logger.debug("Irys upload OK: tx=%s bytes=%d", tx_id, len(data))
     return tx_id
 
@@ -961,26 +818,25 @@ async def upload_log(date_str: str, log_content: str) -> None:
 # ═══════════════════════════════════════════════════════════════════════
 
 async def diagnose_irys_balance() -> None:
-    """Consulta y loguea el balance disponible en el nodo Irys."""
-    if not PRIVATE_KEY:
-        return
+    """Consulta y loguea el balance vía el microservicio irys-uploader."""
     try:
-        account = Account.from_key(PRIVATE_KEY)
         cli = await _client()
-        resp = await cli.get(
-            f"{IRYS_NODE_URL}/account/balance/{IRYS_TOKEN}",
-            params={"address": account.address},
-        )
+        resp = await cli.get(_UPLOADER_BALANCE_URL, timeout=20.0)
         if resp.status_code == 200:
-            balance_atomic = int(resp.json().get("balance", 0))
+            body = resp.json() if isinstance(resp.json(), dict) else {}
+            balance_atomic = int(body.get("balance", 0))
             logger.info(
-                "💰 Irys balance: %d atomic (%s BNB) — address=%s",
+                "💰 Irys balance: %d atomic (%s %s) — address=%s",
                 balance_atomic,
                 balance_atomic / 1e18,
-                account.address,
+                IRYS_TOKEN.upper(),
+                body.get("address", "?"),
             )
         else:
-            logger.warning("Irys balance check retornó HTTP %d", resp.status_code)
+            logger.warning(
+                "irys-uploader /balance retornó HTTP %d: %s",
+                resp.status_code, resp.text[:200],
+            )
     except Exception as exc:
         logger.warning("diagnose_irys_balance falló: %s", exc)
 
@@ -994,25 +850,37 @@ diagnose_payment_stream = diagnose_irys_balance
 # ═══════════════════════════════════════════════════════════════════════
 
 async def ensure_irys_connected() -> None:
-    """Verifica conectividad con Irys y loguea info de la wallet."""
-    if not PRIVATE_KEY:
-        raise RuntimeError("PRIVATE_KEY no está configurada en .env")
-    account = Account.from_key(PRIVATE_KEY)
+    """Verifica conectividad con el microservicio irys-uploader y el nodo Irys."""
+    cli = await _client()
     try:
-        cli = await _client()
-        resp = await cli.get(f"{IRYS_NODE_URL}/info")
+        resp = await cli.get(_UPLOADER_HEALTH_URL, timeout=20.0)
         if resp.status_code == 200:
-            info = resp.json()
+            info = resp.json() if isinstance(resp.json(), dict) else {}
             logger.info(
-                "✅ Irys conectado — address=%s version=%s token=%s",
-                account.address,
-                info.get("version", "?"),
-                IRYS_TOKEN,
+                "✅ irys-uploader conectado — address=%s token=%s node=%s",
+                info.get("address", "?"),
+                info.get("token", IRYS_TOKEN),
+                info.get("node", IRYS_NODE_URL),
             )
         else:
-            logger.warning("Irys /info retornó HTTP %d", resp.status_code)
+            logger.warning(
+                "irys-uploader /health retornó HTTP %d: %s",
+                resp.status_code, resp.text[:200],
+            )
     except Exception as exc:
-        logger.warning("No se pudo verificar conectividad Irys: %s", exc)
+        logger.warning("No se pudo verificar conectividad con irys-uploader: %s", exc)
+
+    try:
+        resp = await cli.get(f"{IRYS_NODE_URL}/info", timeout=20.0)
+        if resp.status_code == 200:
+            info = resp.json() if isinstance(resp.json(), dict) else {}
+            logger.info(
+                "✅ Nodo Irys alcanzable — version=%s token=%s",
+                info.get("version", "?"), IRYS_TOKEN,
+            )
+    except Exception as exc:
+        logger.warning("No se pudo verificar nodo Irys: %s", exc)
+
     await diagnose_irys_balance()
 
 
