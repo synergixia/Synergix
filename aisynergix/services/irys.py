@@ -139,9 +139,14 @@ def _get_owner_bytes(private_key: str) -> bytes:
 
 
 def _eth_sign(private_key: str, message: bytes) -> bytes:
-    """Ethereum personal_sign (EIP-191): retorna firma de 65 bytes r+s+v."""
-    prefix = b"\x19Ethereum Signed Message:\n" + str(len(message)).encode()
-    signing_hash = keccak(primitive=prefix + message)   # 32 bytes keccak256
+    """
+    Firma ANS-104 para sigType=3 (Ethereum/Secp256k1):
+    sign(keccak256(deepHash)) con ECDSA raw — SIN prefijo personal_sign.
+
+    arbundles/Irys usa @noble/curves/secp256k1 que firma el hash directamente
+    (no usa wallet.signMessage que añadiría \\x19Ethereum Signed Message:\\n).
+    """
+    signing_hash = keccak(primitive=message)   # keccak256 del deepHash → 32 bytes
     pk = _eth_keys.PrivateKey(_privkey_bytes(private_key))
     sig = pk.sign_msg_hash(signing_hash)
     r = sig.r.to_bytes(32, "big")
@@ -182,8 +187,7 @@ def _build_data_item(data: bytes, tags: List[Dict[str, str]]) -> bytes:
     # está en el formato binario o en los inputs del deep_hash.
     try:
         from eth_keys.datatypes import Signature
-        prefix = b"\x19Ethereum Signed Message:\n" + str(len(msg_hash)).encode()
-        signing_hash = keccak(primitive=prefix + msg_hash)
+        signing_hash = keccak(primitive=msg_hash)   # debe coincidir con _eth_sign
         v_raw = sig[64] - 27
         r_int = int.from_bytes(sig[:32], "big")
         s_int = int.from_bytes(sig[32:64], "big")
