@@ -57,6 +57,11 @@ _UPLOADER_HEALTH_URL = f"{IRYS_UPLOADER_URL}/health"
 BRAIN_CODES: List[str] = ["prog", "tech", "cien", "know"]
 
 
+def _gw(tx_id: str) -> str:
+    """Devuelve la URL pública del gateway para un txId dado."""
+    return f"{IRYS_GATEWAY_URL}/{tx_id}"
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # GHOST PROTOCOL — Ofuscación de UID
 # ═══════════════════════════════════════════════════════════════════════
@@ -273,23 +278,23 @@ def is_emergency_locked() -> bool:
 
 async def create_emergency_lock() -> None:
     global _emergency_lock_active
-    await _upload(b"{}", [
+    tx_id = await _upload(b"{}", [
         {"name": "data-type", "value": "emergency-lock"},
         {"name": "lock-status",  "value": "active"},
     ])
     _emergency_lock_active = True
-    logger.warning("🔒 Emergency lock ACTIVADO en Irys")
+    logger.warning("🔒 Emergency lock ACTIVADO en Irys. Ver dato: %s", _gw(tx_id))
 
 
 async def delete_emergency_lock() -> None:
     """No se puede borrar en Irys; se sube un tx con status=inactive."""
     global _emergency_lock_active
-    await _upload(b"{}", [
+    tx_id = await _upload(b"{}", [
         {"name": "data-type", "value": "emergency-lock"},
         {"name": "lock-status",  "value": "inactive"},
     ])
     _emergency_lock_active = False
-    logger.warning("🔓 Emergency lock DESACTIVADO en Irys")
+    logger.warning("🔓 Emergency lock DESACTIVADO en Irys. Ver dato: %s", _gw(tx_id))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -336,11 +341,11 @@ async def load_ai_guard(auto_create: bool = False) -> List[str]:
     _ai_guard_patterns = defaults
     if auto_create:
         try:
-            await _upload(
+            tx_id = await _upload(
                 _DEFAULT_AI_GUARD.encode("utf-8"),
                 [{"name": "data-type", "value": "ai-guard"}],
             )
-            logger.info("🛡️ ai-guard creado en Irys con patrones por defecto")
+            logger.info("🛡️ ai-guard creado en Irys. Ver dato: %s", _gw(tx_id))
         except Exception as exc:
             logger.warning("No se pudo crear ai-guard en Irys: %s", exc)
     return defaults
@@ -385,11 +390,11 @@ async def load_system_config(auto_create: bool = False) -> Dict[str, Any]:
 
     if auto_create:
         try:
-            await _upload(
+            tx_id = await _upload(
                 json.dumps(_DEFAULT_SYSTEM_CONFIG, indent=2).encode("utf-8"),
                 [{"name": "data-type", "value": "system-config"}],
             )
-            logger.info("⚙️ system-config creado en Irys con valores por defecto")
+            logger.info("⚙️ system-config creado en Irys. Ver dato: %s", _gw(tx_id))
         except Exception as exc:
             logger.warning("No se pudo crear system-config en Irys: %s", exc)
 
@@ -477,8 +482,8 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
         if val is not None and val != "":
             irys_tags.append({"name": irys_key, "value": str(val)})
 
-    await _upload(b"{}", irys_tags)
-    logger.info("✅ Perfil %s actualizado en Irys", uid_ofuscado)
+    tx_id = await _upload(b"{}", irys_tags)
+    logger.info("✅ Perfil %s actualizado en Irys. Ver dato: %s", uid_ofuscado, _gw(tx_id))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -509,7 +514,7 @@ async def write_aporte(
             irys_tags.append({"name": k.replace("_", "-"), "value": str(v)})
 
     tx_id = await _upload(texto.encode("utf-8"), irys_tags)
-    logger.info("✅ Aporte subido a Irys: tx=%s uid=%s", tx_id, uid_ofuscado)
+    logger.info("✅ Aporte subido a Irys. Ver dato: %s  uid=%s", _gw(tx_id), uid_ofuscado)
     return tx_id
 
 
@@ -666,23 +671,23 @@ async def get_all_brain_pointers() -> Dict[str, str]:
 
 async def update_brain_pointer_tag(code: str, version_name: str) -> None:
     """Sube un nuevo brain-pointer para un código específico."""
-    await _upload(b"{}", [
+    tx_id = await _upload(b"{}", [
         {"name": "data-type",     "value": "brain-pointer"},
         {"name": "brain-code",    "value": code},
         {"name": "brain-version", "value": version_name},
     ])
-    logger.info("🧠 Brain pointer [%s] → %s", code, version_name)
+    logger.info("🧠 Brain pointer [%s] → %s. Ver dato: %s", code, version_name, _gw(tx_id))
 
 
 async def upload_brain_index(code: str, version_name: str, binary: bytes) -> None:
     """Sube el binario FAISS a Irys."""
-    await _upload(binary, [
+    tx_id = await _upload(binary, [
         {"name": "data-type",     "value": "brain-index"},
         {"name": "brain-code",    "value": code},
         {"name": "brain-version", "value": version_name},
         {"name": "Content-Type",  "value": "application/octet-stream"},
     ])
-    logger.info("🧠 Brain index [%s] %s subido a Irys", code, version_name)
+    logger.info("🧠 Brain index [%s] %s subido a Irys. Ver dato: %s", code, version_name, _gw(tx_id))
 
 
 async def download_brain_index(code: str, version_name: str) -> Optional[bytes]:
@@ -704,12 +709,13 @@ async def download_brain_index(code: str, version_name: str) -> Optional[bytes]:
 async def upload_brain_meta(code: str, version_name: str, meta: Dict[str, Any]) -> None:
     """Sube los metadatos del cerebro a Irys."""
     content = json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8")
-    await _upload(content, [
+    tx_id = await _upload(content, [
         {"name": "data-type",     "value": "brain-meta"},
         {"name": "brain-code",    "value": code},
         {"name": "brain-version", "value": version_name},
         {"name": "Content-Type",  "value": "application/json"},
     ])
+    logger.info("🧠 Brain meta [%s] %s subido a Irys. Ver dato: %s", code, version_name, _gw(tx_id))
 
 
 async def download_brain_meta(code: str, version_name: str) -> Dict[str, Any]:
@@ -746,12 +752,12 @@ async def get_brain_pointer() -> str:
 async def set_brain_pointer(version: str) -> None:
     """Sube un nuevo puntero global del cerebro a Irys."""
     global _single_brain_pointer
-    await _upload(b"{}", [
+    tx_id = await _upload(b"{}", [
         {"name": "data-type",     "value": "brain-pointer-global"},
         {"name": "brain-version", "value": version},
     ])
     _single_brain_pointer = version
-    logger.info("🧠 Brain pointer global → %s", version)
+    logger.info("🧠 Brain pointer global → %s. Ver dato: %s", version, _gw(tx_id))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -789,11 +795,11 @@ async def save_challenge(challenge: Dict[str, Any]) -> None:
     _challenge_cache = challenge
     try:
         content = json.dumps(challenge, ensure_ascii=False, indent=2).encode("utf-8")
-        await _upload(content, [
+        tx_id = await _upload(content, [
             {"name": "data-type",    "value": "challenge"},
             {"name": "challenge-id", "value": str(challenge.get("id", ""))},
         ])
-        logger.info("🎯 Challenge guardado en Irys: %s", challenge.get("id"))
+        logger.info("🎯 Challenge guardado en Irys. Ver dato: %s", _gw(tx_id))
     except Exception as exc:
         logger.warning("Challenge en RAM pero no persistido en Irys: %s", exc)
 
@@ -805,12 +811,12 @@ async def save_challenge(challenge: Dict[str, Any]) -> None:
 async def upload_log(date_str: str, log_content: str) -> None:
     """Sube log diario comprimido a Irys."""
     compressed = gzip.compress(log_content.encode("utf-8"))
-    await _upload(compressed, [
+    tx_id = await _upload(compressed, [
         {"name": "data-type",    "value": "log"},
         {"name": "log-date",     "value": date_str},
         {"name": "Content-Type", "value": "application/gzip"},
     ])
-    logger.info("📄 Log subido a Irys: %s", date_str)
+    logger.info("📄 Log %s subido a Irys. Ver dato: %s", date_str, _gw(tx_id))
 
 
 # ═══════════════════════════════════════════════════════════════════════
