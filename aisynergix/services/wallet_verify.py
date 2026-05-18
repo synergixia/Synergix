@@ -1,12 +1,11 @@
 """
-wallet_verify.py — EIP-4361 (Sign-In with Ethereum) verification flow.
+wallet_verify.py — Wallet verification via Etherscan verifySig.
 
 Flow:
-1. User pastes their wallet address (0x…40 hex chars).
-2. Bot generates a SIWE-formatted challenge bound to that address.
-3. User signs the challenge in their wallet (no gas, no transaction).
-4. User pastes the signature; bot recovers the signer and confirms it
-   matches the declared address. The address is then stored in Irys.
+1. Bot generates a unique nonce-based challenge (no address required upfront).
+2. User copies the challenge and signs it at https://etherscan.io/verifySig#sign
+3. User pastes the hex signature; bot recovers the signer address via ecrecover
+   and stores it in Irys.
 
 The bot never requests the user's private key.
 """
@@ -87,11 +86,32 @@ def build_challenge(uid_hash: str, address: str) -> Optional[str]:
     return text
 
 
+def build_challenge_simple(uid_hash: str) -> str:
+    """
+    Generate a nonce-based challenge without requiring the user's address upfront.
+    The signer address is recovered from the signature via ecrecover.
+    Intended for use with https://etherscan.io/verifySig#sign
+    """
+    nonce = secrets.token_hex(8)
+    now = datetime.now(timezone.utc)
+    issued_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    text = (
+        f"Synergix Identity Verification\n"
+        f"Nonce: {nonce}\n"
+        f"Issued At: {issued_at}\n"
+        f"This signature is gasless and does not move funds."
+    )
+    _pending[uid_hash] = (None, text, time.time())
+    return text
+
+
 def verify_signature(uid_hash: str, signature_hex: str) -> Optional[str]:
     """
-    Recover the signer from the SIWE signature and confirm it matches the
-    declared address. Returns the checksummed address on success, None
-    otherwise.
+    Recover the signer address from the signature.
+    When build_challenge_simple was used, `declared` is None and any recovered
+    address is accepted (address-free flow). When build_challenge was used,
+    the recovered address is compared against the declared one.
+    Returns the checksummed address on success, None otherwise.
     """
     entry = _pending.get(uid_hash)
     if not entry:
@@ -117,7 +137,7 @@ def verify_signature(uid_hash: str, signature_hex: str) -> Optional[str]:
         logger.warning("Signature recovery failed for %s: %s", uid_hash, exc)
         return None
 
-    if recovered.lower() != declared:
+    if declared is not None and recovered.lower() != declared:
         logger.warning(
             "verify_signature: address mismatch for %s (declared=%s recovered=%s)",
             uid_hash,
@@ -159,6 +179,7 @@ async def save_verified_wallet(uid_hash: str, address: str) -> None:
 
 __all__ = [
     "build_challenge",
+    "build_challenge_simple",
     "verify_signature",
     "clear_pending",
     "get_verified_wallet",

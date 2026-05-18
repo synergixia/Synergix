@@ -33,6 +33,7 @@ from aisynergix.bot.identity import get_identity_manager
 from aisynergix.services import trading as trading_svc
 from aisynergix.services.wallet_verify import (
     build_challenge,
+    build_challenge_simple,
     verify_signature,
     clear_pending,
     get_verified_wallet,
@@ -690,8 +691,9 @@ async def handle_verify_start(callback: CallbackQuery) -> None:
     uid_hash = _hash_uid(uid)
     clear_pending(uid_hash)
 
-    await ghost.enter_wallet_verify_mode(uid)
-    await callback.message.edit_text(t("verify_address_prompt", lang))
+    challenge = build_challenge_simple(uid_hash)
+    await ghost.enter_wallet_signature_mode(uid)
+    await callback.message.edit_text(t("verify_etherscan_prompt", lang, challenge=challenge))
     await callback.answer()
 
 
