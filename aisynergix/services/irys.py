@@ -279,8 +279,9 @@ def is_emergency_locked() -> bool:
 async def create_emergency_lock() -> None:
     global _emergency_lock_active
     tx_id = await _upload(b"{}", [
-        {"name": "data-type", "value": "emergency-lock"},
+        {"name": "data-type",    "value": "emergency-lock"},
         {"name": "lock-status",  "value": "active"},
+        {"name": "Content-Type", "value": "application/json"},
     ])
     _emergency_lock_active = True
     logger.warning("🔒 Emergency lock ACTIVADO en Irys. Ver dato: %s", _gw(tx_id))
@@ -290,8 +291,9 @@ async def delete_emergency_lock() -> None:
     """No se puede borrar en Irys; se sube un tx con status=inactive."""
     global _emergency_lock_active
     tx_id = await _upload(b"{}", [
-        {"name": "data-type", "value": "emergency-lock"},
+        {"name": "data-type",    "value": "emergency-lock"},
         {"name": "lock-status",  "value": "inactive"},
+        {"name": "Content-Type", "value": "application/json"},
     ])
     _emergency_lock_active = False
     logger.warning("🔓 Emergency lock DESACTIVADO en Irys. Ver dato: %s", _gw(tx_id))
@@ -343,7 +345,10 @@ async def load_ai_guard(auto_create: bool = False) -> List[str]:
         try:
             tx_id = await _upload(
                 _DEFAULT_AI_GUARD.encode("utf-8"),
-                [{"name": "data-type", "value": "ai-guard"}],
+                [
+                    {"name": "data-type",    "value": "ai-guard"},
+                    {"name": "Content-Type", "value": "text/plain; charset=utf-8"},
+                ],
             )
             logger.info("🛡️ ai-guard creado en Irys. Ver dato: %s", _gw(tx_id))
         except Exception as exc:
@@ -392,7 +397,10 @@ async def load_system_config(auto_create: bool = False) -> Dict[str, Any]:
         try:
             tx_id = await _upload(
                 json.dumps(_DEFAULT_SYSTEM_CONFIG, indent=2).encode("utf-8"),
-                [{"name": "data-type", "value": "system-config"}],
+                [
+                    {"name": "data-type",    "value": "system-config"},
+                    {"name": "Content-Type", "value": "application/json"},
+                ],
             )
             logger.info("⚙️ system-config creado en Irys. Ver dato: %s", _gw(tx_id))
         except Exception as exc:
@@ -482,6 +490,7 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
         if val is not None and val != "":
             irys_tags.append({"name": irys_key, "value": str(val)})
 
+    irys_tags.append({"name": "Content-Type", "value": "application/json"})
     tx_id = await _upload(b"{}", irys_tags)
     logger.info("✅ Perfil %s actualizado en Irys. Ver dato: %s", uid_ofuscado, _gw(tx_id))
 
@@ -507,7 +516,7 @@ async def write_aporte(
         {"name": "data-type",     "value": "aporte"},
         {"name": "uid-hash",      "value": uid_ofuscado},
         {"name": "timestamp",     "value": str(ts)},
-        {"name": "content-type",  "value": "text/plain"},
+        {"name": "Content-Type",  "value": "text/plain; charset=utf-8"},
     ]
     for k, v in tags.items():
         if v is not None and str(v) != "":
@@ -675,6 +684,7 @@ async def update_brain_pointer_tag(code: str, version_name: str) -> None:
         {"name": "data-type",     "value": "brain-pointer"},
         {"name": "brain-code",    "value": code},
         {"name": "brain-version", "value": version_name},
+        {"name": "Content-Type",  "value": "application/json"},
     ])
     logger.info("🧠 Brain pointer [%s] → %s. Ver dato: %s", code, version_name, _gw(tx_id))
 
@@ -755,6 +765,7 @@ async def set_brain_pointer(version: str) -> None:
     tx_id = await _upload(b"{}", [
         {"name": "data-type",     "value": "brain-pointer-global"},
         {"name": "brain-version", "value": version},
+        {"name": "Content-Type",  "value": "application/json"},
     ])
     _single_brain_pointer = version
     logger.info("🧠 Brain pointer global → %s. Ver dato: %s", version, _gw(tx_id))
@@ -798,6 +809,7 @@ async def save_challenge(challenge: Dict[str, Any]) -> None:
         tx_id = await _upload(content, [
             {"name": "data-type",    "value": "challenge"},
             {"name": "challenge-id", "value": str(challenge.get("id", ""))},
+            {"name": "Content-Type", "value": "application/json"},
         ])
         logger.info("🎯 Challenge guardado en Irys. Ver dato: %s", _gw(tx_id))
     except Exception as exc:
