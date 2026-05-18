@@ -175,6 +175,36 @@ def _build_data_item(data: bytes, tags: List[Dict[str, str]]) -> bytes:
 
     sig = _eth_sign(PRIVATE_KEY, msg_hash)   # 65 bytes r+s+v
 
+    # ── Auto-verificación local de la firma ──
+    # Si la firma es matemáticamente correcta, recover_public_key debe
+    # devolver la misma dirección que el owner. Si falla aquí, el bug
+    # está en _eth_sign. Si pasa aquí pero Irys aún rechaza, el bug
+    # está en el formato binario o en los inputs del deep_hash.
+    try:
+        from eth_keys.datatypes import Signature
+        prefix = b"\x19Ethereum Signed Message:\n" + str(len(msg_hash)).encode()
+        signing_hash = keccak(primitive=prefix + msg_hash)
+        v_raw = sig[64] - 27
+        r_int = int.from_bytes(sig[:32], "big")
+        s_int = int.from_bytes(sig[32:64], "big")
+        sig_obj = Signature(vrs=(v_raw, r_int, s_int))
+        recovered_pk = sig_obj.recover_public_key_from_msg_hash(signing_hash)
+        recovered_addr = "0x" + recovered_pk.to_canonical_address().hex()
+        expected_addr = Account.from_key(PRIVATE_KEY).address.lower()
+        if recovered_addr.lower() != expected_addr:
+            logger.error(
+                "Sig local FAIL: recovered=%s expected=%s msg_hash=%s",
+                recovered_addr, expected_addr, msg_hash.hex(),
+            )
+        else:
+            logger.info(
+                "Sig local OK: addr=%s msg_hash=%s sig=%s owner=%s tags_bytes_len=%d data_len=%d",
+                expected_addr, msg_hash.hex()[:32], sig.hex()[:32],
+                owner.hex()[:32], len(tags_bytes), len(data),
+            )
+    except Exception as e:
+        logger.error("Sig local verify error: %s", e)
+
     item = struct.pack("<H", 3)                      # sig_type
     item += sig                                       # 65 bytes firma
     item += owner                                     # 65 bytes owner
