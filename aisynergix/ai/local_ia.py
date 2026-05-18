@@ -28,7 +28,7 @@ JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 # 1500 chars ≈ ~500 tokens, leaving plenty of room for the system prompt
 # and the JSON output.
 JUDGE_MAX_INPUT_CHARS = 1500
-PROGRAMMER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+PROGRAMMER_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 
 THINKER_TEMPERATURE = 0.35
 THINKER_TOP_K = 40
@@ -38,7 +38,8 @@ JUDGE_TOP_K = 20
 JUDGE_MAX_TOKENS = 768
 PROGRAMMER_TEMPERATURE = 0.2
 PROGRAMMER_TOP_K = 20
-PROGRAMMER_MAX_TOKENS = 1024
+PROGRAMMER_MAX_TOKENS = 512
+PROGRAMMER_MAX_INPUT_CHARS = 2000
 
 # Native names used when telling the model which language to respond in.
 LANG_NAMES: Dict[str, str] = {
@@ -442,6 +443,8 @@ class Programmer:
         return await self._connector.health_check()
 
     async def code(self, user_message: str, target_language: str = "es") -> str:
+        if len(user_message) > PROGRAMMER_MAX_INPUT_CHARS:
+            user_message = user_message[:PROGRAMMER_MAX_INPUT_CHARS] + "…"
         lang_name = LANG_NAMES.get(target_language, "español")
         prompt = (
             f"RESPOND IN LANGUAGE: {lang_name}\n"
