@@ -137,7 +137,7 @@ class FAISSEngine:
             }, f)
 
     async def load_from_bytes(self, index_bytes: bytes, meta_dict: Dict[str, Any]) -> None:
-        """Load index binary + meta from Greenfield into this engine."""
+        """Load index binary + meta from Irys into this engine."""
         tmp_path = TEMP_INDEX_DIR / f"{self._code}_import.index"
         with open(tmp_path, "wb") as f:
             f.write(index_bytes)
@@ -150,11 +150,11 @@ class FAISSEngine:
             int(k): v for k, v in meta_dict.get("vector_meta", {}).items()
         }
         self._current_id = meta_dict.get("current_id", 0)
-        # Cache locally so the next startup can skip a Greenfield download
+        # Cache locally so the next startup can skip an Irys download
         await self._save_index()
 
     async def serialize_index(self) -> bytes:
-        """Serialize current FAISS index to bytes for Greenfield upload."""
+        """Serialize current FAISS index to bytes for Irys upload."""
         await self._ensure_index()
         tmp_path = TEMP_INDEX_DIR / f"{self._code}_export.index"
         await asyncio.to_thread(faiss.write_index, self._index, str(tmp_path))

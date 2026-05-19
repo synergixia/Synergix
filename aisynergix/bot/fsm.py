@@ -109,7 +109,7 @@ class GhostStateManager:
         # Siempre actualizar el cache L1 en RAM
         await self._cache.set_state(uid, state)
 
-        # Solo persistir a Greenfield si el usuario ya existe allí
+        # Solo persistir a Irys si el usuario ya existe allí
         # (tiene puntos o aportes reales). Evita MsgCreateObject con
         # primary_sp_approval=None para usuarios nuevos.
         from aisynergix.bot.identity import get_identity_manager
