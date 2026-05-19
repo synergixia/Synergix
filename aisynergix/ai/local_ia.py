@@ -3,7 +3,7 @@ import re
 import json
 import hashlib
 import asyncio
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, AsyncGenerator
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -244,11 +244,12 @@ class LocalLLMConnector:
         top_k: int = 40,
         max_tokens: int = 1024,
         json_mode: bool = False,
+        no_think: bool = False,
     ) -> str:
         client = await self._get_client()
 
-        # /no_think disables Qwen3 thinking mode, keeping output clean JSON
-        user_content = f"/no_think\n{prompt}" if json_mode else prompt
+        # /no_think disables Qwen3 chain-of-thought, avoiding hundreds of wasted tokens
+        user_content = f"/no_think\n{prompt}" if (json_mode or no_think) else prompt
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -303,6 +304,49 @@ class LocalLLMConnector:
 
         return _strip_thinking(content.strip())
 
+    async def stream_generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+        temperature: float = 0.35,
+        top_k: int = 40,
+        max_tokens: int = 1024,
+        no_think: bool = False,
+    ) -> AsyncGenerator[str, None]:
+        """Yield content tokens via SSE streaming. No retries — caller handles errors."""
+        user_content = f"/no_think\n{prompt}" if no_think else prompt
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        payload = {
+            "messages": messages,
+            "temperature": temperature,
+            "top_k": top_k,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        url = f"{self._base_url}/v1/chat/completions"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(90.0, connect=5.0)) as client:
+            async with client.stream(
+                "POST", url, json=payload,
+                headers={"Content-Type": "application/json"},
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or line == ":":
+                        continue
+                    if line == "data: [DONE]":
+                        return
+                    if line.startswith("data: "):
+                        try:
+                            chunk = json.loads(line[6:])
+                            token = chunk["choices"][0]["delta"].get("content", "")
+                            if token:
+                                yield token
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            pass
+
 
 class Thinker:
     def __init__(self):
@@ -314,27 +358,23 @@ class Thinker:
     async def health(self) -> bool:
         return await self._connector.health_check()
 
-    async def think(
+    def _build_prompt(
         self,
         user_message: str,
         context: str,
-        history: Optional[List[Dict[str, str]]] = None,
-        target_language: str = "es",
+        history: Optional[List[Dict[str, str]]],
+        target_language: str,
         force_language: bool = False,
     ) -> str:
         lang_name = LANG_NAMES.get(target_language, "español")
-
         prompt_parts: List[str] = []
 
-        # Hard override when the model previously responded in the wrong language
         if force_language:
             prompt_parts.append(
                 f"⚠️ OBLIGATORIO: RESPONDE ÚNICAMENTE EN {lang_name}. "
                 f"No uses ningún otro idioma bajo ninguna circunstancia.\n"
             )
 
-        # Memoria Inmortal block — always present (even when empty) so the
-        # model never forgets it must consult RAG before responding.
         if context:
             prompt_parts.append(f"📜 Sabiduría colectiva relevante (CONSULTA OBLIGATORIA):\n{context}\n")
         else:
@@ -355,19 +395,46 @@ class Thinker:
             "frases potentes, no una lista interminable. Mejor breve y completo "
             "que largo y truncado."
         )
+        return "\n".join(prompt_parts)
 
-        full_prompt = "\n".join(prompt_parts)
-
+    async def think(
+        self,
+        user_message: str,
+        context: str,
+        history: Optional[List[Dict[str, str]]] = None,
+        target_language: str = "es",
+        force_language: bool = False,
+    ) -> str:
+        prompt = self._build_prompt(user_message, context, history, target_language, force_language)
         response = await self._connector.generate(
-            prompt=full_prompt,
+            prompt=prompt,
             system_prompt=THINKER_SYSTEM_PROMPT,
             temperature=THINKER_TEMPERATURE,
             top_k=THINKER_TOP_K,
             max_tokens=THINKER_MAX_TOKENS,
             json_mode=False,
+            no_think=True,
         )
-
         return response
+
+    async def stream_think(
+        self,
+        user_message: str,
+        context: str,
+        history: Optional[List[Dict[str, str]]] = None,
+        target_language: str = "es",
+    ) -> AsyncGenerator[str, None]:
+        """Yield raw response tokens without buffering. No language retry."""
+        prompt = self._build_prompt(user_message, context, history, target_language)
+        async for token in self._connector.stream_generate(
+            prompt=prompt,
+            system_prompt=THINKER_SYSTEM_PROMPT,
+            temperature=THINKER_TEMPERATURE,
+            top_k=THINKER_TOP_K,
+            max_tokens=THINKER_MAX_TOKENS,
+            no_think=True,
+        ):
+            yield token
 
 
 class Judge:
