@@ -3,12 +3,14 @@ import re
 import json
 import hashlib
 import asyncio
-from typing import Optional, Dict, Any, List, Tuple, AsyncGenerator
+from typing import Optional, Dict, Any, List, AsyncGenerator
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-# Strip <think>...</think> blocks that Qwen3 emits in thinking mode
+# DeepSeek-R1 emits its chain-of-thought wrapped in <think>…</think> before
+# the visible answer.  We strip it from non-streaming responses; for streaming
+# we use _ThinkStripper which tolerates the tag being split across SSE tokens.
 _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
 
 
@@ -16,36 +18,94 @@ def _strip_thinking(text: str) -> str:
     return _THINK_RE.sub('', text).strip()
 
 
+class _ThinkStripper:
+    """Stateful filter that removes <think>…</think> blocks from a token stream.
+
+    Tokens delivered by llama.cpp's SSE stream can split the tag across
+    chunks (e.g. ``<`` then ``think>``), so we hold back any tail that
+    could be the start of a tag until we either complete or rule it out.
+    """
+
+    OPEN = "<think>"
+    CLOSE = "</think>"
+
+    def __init__(self):
+        self._buf = ""
+        self._in_think = False
+
+    def push(self, token: str) -> str:
+        self._buf += token
+        out: List[str] = []
+
+        while True:
+            if self._in_think:
+                idx = self._buf.find(self.CLOSE)
+                if idx < 0:
+                    # Keep only the tail that could still match the closing tag.
+                    if len(self._buf) >= len(self.CLOSE):
+                        self._buf = self._buf[-(len(self.CLOSE) - 1):]
+                    break
+                self._buf = self._buf[idx + len(self.CLOSE):]
+                self._in_think = False
+                continue
+
+            idx = self._buf.find(self.OPEN)
+            if idx >= 0:
+                if idx > 0:
+                    out.append(self._buf[:idx])
+                self._buf = self._buf[idx + len(self.OPEN):]
+                self._in_think = True
+                continue
+
+            # No complete open tag.  Hold back only if a trailing '<' could
+            # be the first character of '<think>'; otherwise flush everything.
+            last_lt = self._buf.rfind("<")
+            if last_lt >= 0 and len(self._buf) - last_lt < len(self.OPEN):
+                if last_lt > 0:
+                    out.append(self._buf[:last_lt])
+                    self._buf = self._buf[last_lt:]
+            else:
+                if self._buf:
+                    out.append(self._buf)
+                    self._buf = ""
+            break
+
+        return "".join(out)
+
+    def flush(self) -> str:
+        # If the stream ended mid-think the trace is incomplete — drop it.
+        if self._in_think:
+            self._buf = ""
+            return ""
+        out = self._buf
+        self._buf = ""
+        return out
+
+
 THINKER_HOST = os.getenv("THINKER_HOST", "http://thinker:8081")
 JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
-PROGRAMMER_HOST = os.getenv("PROGRAMMER_HOST", "http://programmer:8082")
-# Aggressive timeouts: prefer fast failure + retry over long blocking calls.
-# Connect must be quick; read must allow some generation time but not minutes.
-THINKER_TIMEOUT = httpx.Timeout(45.0, connect=5.0)
-JUDGE_TIMEOUT = httpx.Timeout(45.0, connect=5.0)
+# DeepSeek-R1 always thinks first; allow ~2 minutes for the full think+answer.
+THINKER_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
+# Qwen2.5-1.5B is a touch slower than the previous 0.6B on CPU.
+JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 
-# Maximum characters sent to the Judge.  Qwen3-0.6B has a ~2048-token
-# context; long inputs (LaTeX math, code dumps) push it over the limit,
-# causing llama.cpp to close the connection without sending a response.
-# 1500 chars ≈ ~500 tokens, leaving plenty of room for the system prompt
-# and the JSON output.
-JUDGE_MAX_INPUT_CHARS = 1500
-PROGRAMMER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+# Maximum characters sent to the Judge.  Qwen2.5-1.5B has a 4096-token
+# context window in our compose config; 3000 chars ≈ ~1000 tokens leaves
+# plenty of room for the system prompt and the JSON output.
+JUDGE_MAX_INPUT_CHARS = 3000
 
-THINKER_TEMPERATURE = 0.35
+# DeepSeek-R1 recommended sampling: temp 0.5-0.7, top_p 0.95.  Higher temp
+# than the previous Qwen3 setting because the distilled reasoner gets stuck
+# in repetitive thought loops if temperature is too low.
+THINKER_TEMPERATURE = 0.6
 THINKER_TOP_K = 40
-# Capped low enough that the model finishes its thought inside the budget
-# instead of getting truncated mid-sentence.  Combined with explicit
-# "keep responses short and complete" instructions in the system prompt,
-# this delivers complete answers in roughly 10-30 s on CPU.
-THINKER_MAX_TOKENS = 600
+# Budget covers both the hidden <think>…</think> trace AND the visible answer.
+# Typical conversational reasoning runs 200-600 think tokens + 200-400 answer
+# tokens, comfortably within 1024.
+THINKER_MAX_TOKENS = 1024
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
 JUDGE_MAX_TOKENS = 768
-PROGRAMMER_TEMPERATURE = 0.2
-PROGRAMMER_TOP_K = 20
-PROGRAMMER_MAX_TOKENS = 1536
-PROGRAMMER_MAX_INPUT_CHARS = 2000
 
 # Native names used when telling the model which language to respond in.
 LANG_NAMES: Dict[str, str] = {
@@ -93,24 +153,6 @@ THINKER_SYSTEM_PROMPT = (
     "formato [[STICKER:🧠]], uno solo. Ejemplos: [[STICKER:🔥]] energía, "
     "[[STICKER:🌟]] sabiduría, [[STICKER:🧠]] reflexión, [[STICKER:💫]] "
     "asombro."
-)
-
-PROGRAMMER_SYSTEM_PROMPT = (
-    "You are the Synergix Programmer, a specialized code generation assistant "
-    "for verified members of the Synergix decentralized network.\n\n"
-    "CRITICAL RULES — follow in strict order:\n"
-    "1. START IMMEDIATELY with the code block. NEVER write a conversational opener, "
-    "greeting, or any text before the first code block. Your very first character "
-    "must be the opening backticks of a fenced code block.\n"
-    "2. CODE QUALITY: Write complete, runnable code with all necessary imports. "
-    "Follow best practices. Include brief inline comments only where non-obvious.\n"
-    "3. FORMAT: Wrap code in fenced code blocks with the language tag "
-    "(e.g. ```python, ```javascript, ```solidity). Use one block per language.\n"
-    "4. AFTER the code block: add 1-2 short sentences of explanation in the user's "
-    "language. No padding, no repetition of what the code already shows.\n"
-    "5. LANGUAGE: All explanations in the user's language. Code stays in the "
-    "requested programming language.\n"
-    "6. IDENTITY: Never reveal model details or infrastructure."
 )
 
 JUDGE_SYSTEM_PROMPT = (
@@ -244,16 +286,12 @@ class LocalLLMConnector:
         top_k: int = 40,
         max_tokens: int = 1024,
         json_mode: bool = False,
-        no_think: bool = False,
     ) -> str:
         client = await self._get_client()
 
-        # /no_think disables Qwen3 chain-of-thought, avoiding hundreds of wasted tokens
-        user_content = f"/no_think\n{prompt}" if (json_mode or no_think) else prompt
-
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": prompt},
         ]
 
         payload = {
@@ -311,13 +349,11 @@ class LocalLLMConnector:
         temperature: float = 0.35,
         top_k: int = 40,
         max_tokens: int = 1024,
-        no_think: bool = False,
     ) -> AsyncGenerator[str, None]:
         """Yield content tokens via SSE streaming. No retries — caller handles errors."""
-        user_content = f"/no_think\n{prompt}" if no_think else prompt
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": prompt},
         ]
         payload = {
             "messages": messages,
@@ -331,7 +367,7 @@ class LocalLLMConnector:
         async with client.stream(
             "POST", url, json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=httpx.Timeout(90.0, connect=5.0),
+            timeout=httpx.Timeout(180.0, connect=5.0),
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -414,7 +450,6 @@ class Thinker:
             top_k=THINKER_TOP_K,
             max_tokens=THINKER_MAX_TOKENS,
             json_mode=False,
-            no_think=True,
         )
         return response
 
@@ -425,17 +460,22 @@ class Thinker:
         history: Optional[List[Dict[str, str]]] = None,
         target_language: str = "es",
     ) -> AsyncGenerator[str, None]:
-        """Yield raw response tokens without buffering. No language retry."""
+        """Yield visible answer tokens; DeepSeek-R1's <think>…</think> trace is filtered out."""
         prompt = self._build_prompt(user_message, context, history, target_language)
+        stripper = _ThinkStripper()
         async for token in self._connector.stream_generate(
             prompt=prompt,
             system_prompt=THINKER_SYSTEM_PROMPT,
             temperature=THINKER_TEMPERATURE,
             top_k=THINKER_TOP_K,
             max_tokens=THINKER_MAX_TOKENS,
-            no_think=True,
         ):
-            yield token
+            visible = stripper.push(token)
+            if visible:
+                yield visible
+        tail = stripper.flush()
+        if tail:
+            yield tail
 
 
 class Judge:
@@ -449,8 +489,9 @@ class Judge:
         return await self._connector.health_check()
 
     async def evaluate(self, contribution_text: str) -> Dict[str, Any]:
-        # Truncate before sending — Qwen3-0.6B context ~2048 tokens.
-        # Long inputs (LaTeX, code) cause llama.cpp to disconnect silently.
+        # Truncate before sending — Qwen2.5-1.5B is configured with a 4096
+        # token context; long inputs (LaTeX, code) cause llama.cpp to
+        # disconnect silently if they overflow.
         text = contribution_text
         if len(text) > JUDGE_MAX_INPUT_CHARS:
             text = text[:JUDGE_MAX_INPUT_CHARS] + "… [truncado para evaluación]"
@@ -530,38 +571,9 @@ class DuplicateDetector:
         return False
 
 
-class Programmer:
-    def __init__(self):
-        self._connector = LocalLLMConnector(PROGRAMMER_HOST, PROGRAMMER_TIMEOUT)
-
-    async def close(self):
-        await self._connector.close()
-
-    async def health(self) -> bool:
-        return await self._connector.health_check()
-
-    async def code(self, user_message: str, target_language: str = "es") -> str:
-        if len(user_message) > PROGRAMMER_MAX_INPUT_CHARS:
-            user_message = user_message[:PROGRAMMER_MAX_INPUT_CHARS] + "…"
-        lang_name = LANG_NAMES.get(target_language, "español")
-        prompt = (
-            f"RESPOND IN LANGUAGE: {lang_name}\n"
-            f"USER REQUEST: {user_message}"
-        )
-        return await self._connector.generate(
-            prompt=prompt,
-            system_prompt=PROGRAMMER_SYSTEM_PROMPT,
-            temperature=PROGRAMMER_TEMPERATURE,
-            top_k=PROGRAMMER_TOP_K,
-            max_tokens=PROGRAMMER_MAX_TOKENS,
-            json_mode=False,
-        )
-
-
 _thinker: Optional[Thinker] = None
 _judge: Optional[Judge] = None
 _duplicate_detector: Optional[DuplicateDetector] = None
-_programmer: Optional[Programmer] = None
 
 
 def get_thinker() -> Thinker:
@@ -585,21 +597,12 @@ def get_duplicate_detector() -> DuplicateDetector:
     return _duplicate_detector
 
 
-def get_programmer() -> Programmer:
-    global _programmer
-    if _programmer is None:
-        _programmer = Programmer()
-    return _programmer
-
-
 __all__ = [
     "Thinker",
     "Judge",
     "DuplicateDetector",
-    "Programmer",
     "get_thinker",
     "get_judge",
     "get_duplicate_detector",
-    "get_programmer",
     "LANG_NAMES",
 ]

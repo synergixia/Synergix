@@ -10,7 +10,6 @@ from aisynergix.ai.local_ia import (
     get_thinker,
     get_judge,
     get_duplicate_detector,
-    get_programmer,
 )
 from aisynergix.services.rag_engine import get_rag_engine
 from aisynergix.bot.identity import (
@@ -30,80 +29,6 @@ from aisynergix.services.irys import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Programming question detection — used to route to StarCoder2 for verified users
-_PROG_TERMS: frozenset = frozenset([
-    # Code block markers
-    "```",
-    # Language names
-    "python", "javascript", "typescript", "solidity", "kotlin", "golang",
-    "c++", "c#", "django", "flask", "nodejs", "node.js", "react", "angular",
-    "vue.js", "vue ", "svelte", "fastapi", "springboot", "rails",
-    # SQL & data
-    "sql", "mysql", "postgresql", "mongodb", "redis", "sqlite", "graphql",
-    # Web & infra
-    "html", "css", "webpack", "docker", "kubernetes", "git ", "nginx",
-    "npm ", "yarn ", "pip install", "cargo ", "gradle",
-    # Programming actions / constructs
-    "debug", "debugar", "depurar", "compilar", "compile", "refactor",
-    "def ", "class ", "import ", "function(", "function ",
-    "for loop", "while loop", "bucle", "algoritmo", "algorithm",
-    "array", "hashmap", "recursion", "recursividad",
-    # Multilingual programming words
-    "código", "programar", "programación", "programação", "codificar",
-    "programme ", "programmation",
-    # API / backend
-    " api", "api ", "endpoint", "webhook", "microservicio", "microservice",
-    "blockchain", "smart contract", "web3", "abi ",
-    # Error patterns
-    "traceback", "syntaxerror", "typeerror", "nameerror", "indexerror",
-    "nullpointerexception", "segmentation fault", "stack overflow",
-    "bug fix", "arreglar el error", "fix the bug",
-])
-
-
-def is_programming_question(text: str) -> bool:
-    """Return True if message appears to be a programming/coding request."""
-    lower = text.lower()
-    return any(term in lower for term in _PROG_TERMS)
-
-
-# Regex for markdown code blocks: ```lang\n...\n```
-_MD_CODE_BLOCK_RE = re.compile(r'```(\w*)\n?(.*?)```', re.DOTALL)
-# Regex for inline code: `code`
-_MD_INLINE_CODE_RE = re.compile(r'`([^`\n]+)`')
-
-
-def _format_code_response(text: str) -> str:
-    """Convert markdown code blocks to Telegram HTML <pre><code> blocks."""
-    parts: List[str] = []
-    last_end = 0
-
-    for m in _MD_CODE_BLOCK_RE.finditer(text):
-        # Plain text before the code block — keep as-is
-        parts.append(text[last_end:m.start()])
-
-        lang = m.group(1).strip()
-        code = m.group(2).strip("\n")
-        code_esc = code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-        if lang:
-            parts.append(f'<pre><code class="language-{lang}">{code_esc}</code></pre>')
-        else:
-            parts.append(f'<pre><code>{code_esc}</code></pre>')
-
-        last_end = m.end()
-
-    parts.append(text[last_end:])
-    result = "".join(parts)
-
-    # Convert inline backtick code
-    def _replace_inline(m: re.Match) -> str:
-        code_esc = m.group(1).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        return f"<code>{code_esc}</code>"
-
-    return _MD_INLINE_CODE_RE.sub(_replace_inline, result)
-
 
 CHALLENGE_BONUS_POINTS = 5
 MIN_CONTRIBUTION_LENGTH = 20
@@ -188,23 +113,6 @@ class AIManager:
             )
             target_language = profile.language
 
-            # Route programming questions to StarCoder2 for wallet-verified users
-            if is_programming_question(message) and profile.human_verified:
-                programmer = get_programmer()
-                try:
-                    raw_code = await programmer.code(
-                        user_message=message,
-                        target_language=target_language,
-                    )
-                    formatted = _format_code_response(raw_code)
-                    return formatted, None, []
-                except Exception as exc:
-                    logger.warning(
-                        "StarCoder2 unavailable for uid=%s (%s) — falling back to Thinker+RAG",
-                        uid, exc,
-                    )
-                    # Fall through to Thinker + RAG below
-
             # Thinker MUST always consult immortal memory (RAG) before responding
             history, (context, search_results) = await asyncio.gather(
                 self._get_conversation_history(uid),
@@ -274,19 +182,6 @@ class AIManager:
                 self._ensure_rag(),
             )
             target_language = profile.language
-
-            # Programming questions: return full formatted code in one shot
-            if is_programming_question(message) and profile.human_verified:
-                programmer = get_programmer()
-                try:
-                    raw_code = await programmer.code(
-                        user_message=message,
-                        target_language=target_language,
-                    )
-                    yield _format_code_response(raw_code)
-                    return
-                except Exception as exc:
-                    logger.warning("StarCoder2 failed uid=%s (%s) — falling back to Thinker", uid, exc)
 
             history, (context, search_results) = await asyncio.gather(
                 self._get_conversation_history(uid),
@@ -574,59 +469,13 @@ class AIManager:
             except Exception:
                 continue
 
-    async def process_code_request(self, uid: int, message: str) -> Dict[str, Any]:
-        profile = await self._identity.get_profile(uid)
-
-        if not profile.human_verified:
-            return {
-                "status": "not_verified",
-                "message_key": "programmer_not_verified",
-                "user_language": profile.language,
-            }
-
-        programmer = get_programmer()
-        try:
-            response = await programmer.code(
-                user_message=message,
-                target_language=profile.language,
-            )
-            return {
-                "status": "success",
-                "response": response,
-                "user_language": profile.language,
-            }
-        except Exception as exc:
-            logger.warning("Programmer unavailable for uid=%s (%s) — falling back to Thinker", uid, exc)
-
-        try:
-            thinker = get_thinker()
-            response = await thinker.think(
-                user_message=message,
-                context="",
-                target_language=profile.language,
-            )
-            return {
-                "status": "success",
-                "response": response,
-                "user_language": profile.language,
-            }
-        except Exception as exc2:
-            logger.warning("Thinker fallback also failed for uid=%s: %s", uid, exc2)
-            return {
-                "status": "error",
-                "message_key": "error_generic",
-                "user_language": profile.language,
-            }
-
     async def health_check(self) -> Dict[str, bool]:
         thinker_ok = await self._thinker.health()
         judge_ok = await self._judge.health()
-        programmer_ok = await get_programmer().health()
 
         return {
             "thinker": thinker_ok,
             "judge": judge_ok,
-            "programmer": programmer_ok,
             "all_healthy": thinker_ok and judge_ok,
         }
 
@@ -647,5 +496,4 @@ __all__ = [
     "ELITE_THRESHOLD",
     "LEGENDARY_THRESHOLD",
     "CHALLENGE_BONUS_POINTS",
-    "is_programming_question",
 ]

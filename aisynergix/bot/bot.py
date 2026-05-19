@@ -1153,13 +1153,10 @@ async def on_startup():
 
 async def on_shutdown():
     logger.info("🛑 Apagando Nodo Fantasma...")
-    from aisynergix.ai.local_ia import get_programmer
     thinker = get_ai_manager()._thinker
     judge = get_ai_manager()._judge
-    programmer = get_programmer()
     await thinker.close()
     await judge.close()
-    await programmer.close()
 
 
 async def main():
