@@ -110,9 +110,9 @@ MIN_CONTRIBUTION_LENGTH = 20
 ELITE_THRESHOLD = 9.0
 LEGENDARY_THRESHOLD = 9.5
 
-# Cap concurrent thinker calls so the llama.cpp server is never overwhelmed.
-# Matches --parallel 2 in docker-compose; extras queue in asyncio (no timeout risk).
-_THINKER_SEM = asyncio.Semaphore(3)
+# Cap concurrent thinker calls to match llama.cpp --parallel 2.
+# Extras queue here in asyncio — no HTTP connection, no timeout risk.
+_THINKER_SEM = asyncio.Semaphore(2)
 
 # UIDs whose conversation request is currently being processed.
 # Prevents the same user from stacking duplicate in-flight requests.
@@ -211,7 +211,7 @@ class AIManager:
                 self._rag.query(message, target_language),
             )
 
-            # Semaphore ensures at most 3 concurrent thinker calls
+            # Semaphore matches --parallel 2; extras queue in asyncio (no timeout risk).
             async with _THINKER_SEM:
                 response = await self._thinker.think(
                     user_message=message,
@@ -220,14 +220,16 @@ class AIManager:
                     target_language=target_language,
                 )
 
-                # Language post-check: retry once if model answered in the wrong language
-                if len(response) >= 30:
-                    detected = _detect_lang(response)
-                    if detected and detected != target_language:
-                        logger.info(
-                            "Language mismatch uid=%s expected=%s detected=%s — retrying",
-                            uid, target_language, detected,
-                        )
+            # Language post-check OUTSIDE the semaphore so the slot is released
+            # before the retry — avoids blocking other users for a double-think slot.
+            if len(response) >= 30:
+                detected = _detect_lang(response)
+                if detected and detected != target_language:
+                    logger.info(
+                        "Language mismatch uid=%s expected=%s detected=%s — retrying",
+                        uid, target_language, detected,
+                    )
+                    async with _THINKER_SEM:
                         response = await self._thinker.think(
                             user_message=message,
                             context=context,
