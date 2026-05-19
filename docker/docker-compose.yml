@@ -37,7 +37,7 @@ services:
       - "--port"
       - "8081"
       - "-c"
-      - "2048"
+      - "4096"
       - "-t"
       - "2"
       - "-tb"
@@ -60,10 +60,10 @@ services:
       resources:
         limits:
           cpus: "2.0"
-          memory: "1.8G"
+          memory: "2.2G"
         reservations:
           cpus: "1.0"
-          memory: "1.2G"
+          memory: "1.5G"
     security_opt:
       - no-new-privileges:true
     read_only: false
@@ -94,7 +94,7 @@ services:
       - "--port"
       - "8080"
       - "-c"
-      - "1024"
+      - "2048"
       - "-t"
       - "1"
       - "-tb"
@@ -161,7 +161,7 @@ services:
       - "--repeat-penalty"
       - "1.1"
       - "-n"
-      - "1024"
+      - "2048"
     ports:
       - "127.0.0.1:8082:8082"
     deploy:
