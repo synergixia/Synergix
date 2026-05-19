@@ -550,13 +550,10 @@ async def on_shutdown():
     scheduler.shutdown(wait=False)
     logger.info("⏰ Scheduler detenido.")
 
-    from aisynergix.ai.local_ia import get_programmer
     thinker = get_thinker()
     judge = get_judge()
-    programmer = get_programmer()
     await thinker.close()
     await judge.close()
-    await programmer.close()
 
     logger.info("👋 Synergix fuera de línea.")
 
