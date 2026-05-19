@@ -3,7 +3,7 @@ import hashlib
 import logging
 import re
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple
 from datetime import datetime, timezone
 
 from aisynergix.ai.local_ia import (
@@ -249,6 +249,70 @@ class AIManager:
 
             return clean_response, sticker_emoji, search_results
 
+        finally:
+            _in_flight.discard(uid)
+
+    async def stream_conversation(
+        self,
+        uid: int,
+        message: str,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Yield raw response tokens as they arrive from the Thinker.
+        The caller must accumulate all tokens to get the full text,
+        then call _extract_sticker() for final display.
+        Yields nothing if this uid already has an in-flight request.
+        """
+        if uid in _in_flight:
+            logger.info("uid=%s already in-flight — dropping duplicate stream request", uid)
+            return
+
+        _in_flight.add(uid)
+        try:
+            profile, _ = await asyncio.gather(
+                self._identity.get_profile(uid),
+                self._ensure_rag(),
+            )
+            target_language = profile.language
+
+            # Programming questions: return full formatted code in one shot
+            if is_programming_question(message) and profile.human_verified:
+                programmer = get_programmer()
+                try:
+                    raw_code = await programmer.code(
+                        user_message=message,
+                        target_language=target_language,
+                    )
+                    yield _format_code_response(raw_code)
+                    return
+                except Exception as exc:
+                    logger.warning("StarCoder2 failed uid=%s (%s) — falling back to Thinker", uid, exc)
+
+            history, (context, search_results) = await asyncio.gather(
+                self._get_conversation_history(uid),
+                self._rag.query(message, target_language),
+            )
+
+            full_response = ""
+            async with _THINKER_SEM:
+                async for token in self._thinker.stream_think(
+                    user_message=message,
+                    context=context,
+                    history=history,
+                    target_language=target_language,
+                ):
+                    full_response += token
+                    yield token
+
+            clean_response, _ = _extract_sticker(full_response)
+            await self._append_conversation_history(uid, "user", message)
+            await self._append_conversation_history(uid, "assistant", clean_response)
+
+            if context and search_results:
+                asyncio.create_task(self._process_residual_rewards(search_results))
+
+        except Exception as exc:
+            logger.exception("stream_conversation uid=%s: %s", uid, exc)
         finally:
             _in_flight.discard(uid)
 

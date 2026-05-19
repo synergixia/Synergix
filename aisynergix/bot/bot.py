@@ -916,27 +916,51 @@ async def handle_conversation_message(
             "inteligente y empática en texto, en el idioma del usuario.]"
         )
 
-    stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(_keep_typing(message.chat.id, stop_typing))
-    try:
-        response, sticker_emoji, _ = await ai.process_conversation(uid, ai_text)
+    # Stream tokens: send a placeholder immediately, then edit it as tokens arrive.
+    # The user sees the first words in ~1-2 s instead of waiting for the full response.
+    sent_msg = await message.answer("⏳")
+    accumulated = ""
+    last_edit = 0.0
+    received_any = False
 
-        # Empty response = uid was already in-flight; first response will arrive soon
-        if not response:
+    try:
+        async for token in ai.stream_conversation(uid, ai_text):
+            received_any = True
+            accumulated += token
+            now = asyncio.get_event_loop().time()
+            # Edit every 900 ms to stay well within Telegram rate limits
+            if now - last_edit >= 0.9 and accumulated.strip():
+                try:
+                    await sent_msg.edit_text(accumulated)
+                    last_edit = now
+                except Exception:
+                    pass
+
+        if not received_any:
+            # uid was already in-flight; discard silently
+            await sent_msg.delete()
             return
 
-        final = f"{response}\n{sticker_emoji}" if sticker_emoji else response
-        await message.answer(final)
+        if not accumulated.strip():
+            await sent_msg.edit_text(t("error_generic", lang))
+            return
+
+        # Final edit: strip [[STICKER:emoji]] and apply HTML formatting
+        from aisynergix.ai.manager import _extract_sticker
+        clean, sticker_emoji = _extract_sticker(accumulated)
+        final_text = f"{clean}\n{sticker_emoji}" if sticker_emoji else clean
+
+        # Attempt HTML parse for code blocks; fall back to plain text if Telegram rejects it
+        try:
+            await sent_msg.edit_text(final_text, parse_mode="HTML")
+        except Exception:
+            await sent_msg.edit_text(final_text)
 
     except Exception as e:
-        logger.exception("Error en conversación libre de %s: %s", uid, e)
-        await message.answer(t("error_generic", lang))
-    finally:
-        stop_typing.set()
-        typing_task.cancel()
+        logger.exception("Error en conversación streaming de %s: %s", uid, e)
         try:
-            await typing_task
-        except asyncio.CancelledError:
+            await sent_msg.edit_text(t("error_generic", lang))
+        except Exception:
             pass
 
 
