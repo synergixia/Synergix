@@ -916,51 +916,75 @@ async def handle_conversation_message(
             "inteligente y empática en texto, en el idioma del usuario.]"
         )
 
-    # Stream tokens: send a placeholder immediately, then edit it as tokens arrive.
-    # The user sees the first words in ~1-2 s instead of waiting for the full response.
-    sent_msg = await message.answer("⏳")
+    # Stream tokens: use native Telegram typing indicator while waiting for the
+    # first chunk, then send the real message and edit it as tokens arrive.
+    # No placeholder emoji is ever shown to the user.
+    sent_msg = None
     accumulated = ""
     last_edit = 0.0
-    received_any = False
+    stop_typing = asyncio.Event()
+    typing_task = asyncio.create_task(_keep_typing(message.chat.id, stop_typing))
 
     try:
         async for token in ai.stream_conversation(uid, ai_text):
-            received_any = True
             accumulated += token
             now = asyncio.get_event_loop().time()
-            # Edit every 900 ms to stay well within Telegram rate limits
-            if now - last_edit >= 0.9 and accumulated.strip():
+
+            # First send once we have meaningful content (>=12 chars of real text)
+            if sent_msg is None:
+                if len(accumulated.strip()) >= 12:
+                    stop_typing.set()
+                    sent_msg = await message.answer(accumulated)
+                    last_edit = now
+                continue
+
+            # Subsequent edits at most every 900 ms (well within Telegram rate limits)
+            if now - last_edit >= 0.9:
                 try:
                     await sent_msg.edit_text(accumulated)
                     last_edit = now
                 except Exception:
                     pass
 
-        if not received_any:
-            # uid was already in-flight; discard silently
-            await sent_msg.delete()
-            return
-
-        if not accumulated.strip():
-            await sent_msg.edit_text(t("error_generic", lang))
-            return
+        if sent_msg is None:
+            # Either uid was already in-flight, or no tokens arrived
+            if accumulated.strip():
+                sent_msg = await message.answer(accumulated)
+            else:
+                return
 
         # Final edit: strip [[STICKER:emoji]] and apply HTML formatting
         from aisynergix.ai.manager import _extract_sticker
         clean, sticker_emoji = _extract_sticker(accumulated)
         final_text = f"{clean}\n{sticker_emoji}" if sticker_emoji else clean
 
-        # Attempt HTML parse for code blocks; fall back to plain text if Telegram rejects it
-        try:
-            await sent_msg.edit_text(final_text, parse_mode="HTML")
-        except Exception:
-            await sent_msg.edit_text(final_text)
+        if final_text != accumulated:
+            try:
+                await sent_msg.edit_text(final_text, parse_mode="HTML")
+            except Exception:
+                try:
+                    await sent_msg.edit_text(final_text)
+                except Exception:
+                    pass
 
     except Exception as e:
         logger.exception("Error en conversación streaming de %s: %s", uid, e)
+        if sent_msg is not None:
+            try:
+                await sent_msg.edit_text(t("error_generic", lang))
+            except Exception:
+                pass
+        else:
+            try:
+                await message.answer(t("error_generic", lang))
+            except Exception:
+                pass
+    finally:
+        stop_typing.set()
+        typing_task.cancel()
         try:
-            await sent_msg.edit_text(t("error_generic", lang))
-        except Exception:
+            await typing_task
+        except asyncio.CancelledError:
             pass
 
 

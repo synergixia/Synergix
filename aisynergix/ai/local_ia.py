@@ -327,25 +327,26 @@ class LocalLLMConnector:
             "stream": True,
         }
         url = f"{self._base_url}/v1/chat/completions"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(90.0, connect=5.0)) as client:
-            async with client.stream(
-                "POST", url, json=payload,
-                headers={"Content-Type": "application/json"},
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line or line == ":":
-                        continue
-                    if line == "data: [DONE]":
-                        return
-                    if line.startswith("data: "):
-                        try:
-                            chunk = json.loads(line[6:])
-                            token = chunk["choices"][0]["delta"].get("content", "")
-                            if token:
-                                yield token
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            pass
+        client = await self._get_client()
+        async with client.stream(
+            "POST", url, json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=httpx.Timeout(90.0, connect=5.0),
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line or line == ":":
+                    continue
+                if line == "data: [DONE]":
+                    return
+                if line.startswith("data: "):
+                    try:
+                        chunk = json.loads(line[6:])
+                        token = chunk["choices"][0]["delta"].get("content", "")
+                        if token:
+                            yield token
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        pass
 
 
 class Thinker:
