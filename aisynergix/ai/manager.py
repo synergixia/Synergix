@@ -313,6 +313,7 @@ class AIManager:
 
         except Exception as exc:
             logger.exception("stream_conversation uid=%s: %s", uid, exc)
+            raise  # propagate so the bot can show error_generic to the user
         finally:
             _in_flight.discard(uid)
 
