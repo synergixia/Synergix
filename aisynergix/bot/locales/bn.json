@@ -38,7 +38,7 @@
   "sell_summary": "📋 <b>বিক্রয় সারসংক্ষেপ</b>\n\n🔹 বিক্রি: <b>{syn_in:,.0f} SYNERGIX</b>\n🔹 পাবেন: ~<b>{bnb_out:.6f} BNB</b> (~${usd_out})\n🔹 স্লিপেজ: {slippage}%\n\nনিশ্চিত করুন?",
   "btn_confirm_trade": "✅ নিশ্চিত করুন",
   "btn_cancel_trade": "❌ বাতিল করুন",
-  "trade_link": "🔗 <b>আপনার ওয়ালেটে ট্রেড সম্পন্ন করতে লিংক খুলুন:</b>\n\n{link}\n\n<i>PancakeSwap V2 · স্লিপেজ {slippage}% · SYNERGIX/BNB</i>",
+  "trade_link": "🔗 <b>অপারেশন সম্পন্ন করতে আপনার ওয়ালেটে লিঙ্কটি খুলুন:</b>\n\n{link}\n\n<i>SYNERGIX · BNB Smart Chain · স্লিপেজ {slippage}%</i>",
   "trade_cancelled": "❌ ট্রেড বাতিল।",
   "invalid_amount": "⚠️ অবৈধ পরিমাণ। <code>0.005</code> এর মতো সংখ্যা লিখুন।",
   "amount_too_low_buy": "⚠️ সর্বনিম্ন ক্রয় <b>{min_buy} BNB</b>।",

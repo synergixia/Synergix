@@ -38,7 +38,7 @@
   "sell_summary": "📋 <b>Ringkasan Penjualan</b>\n\n🔹 Jual: <b>{syn_in:,.0f} SYNERGIX</b>\n🔹 Terima: ~<b>{bnb_out:.6f} BNB</b> (~${usd_out})\n🔹 Slippage: {slippage}%\n\nKonfirmasi?",
   "btn_confirm_trade": "✅ Konfirmasi",
   "btn_cancel_trade": "❌ Batal",
-  "trade_link": "🔗 <b>Buka tautan untuk menyelesaikan perdagangan di dompet Anda:</b>\n\n{link}\n\n<i>PancakeSwap V2 · Slippage {slippage}% · SYNERGIX/BNB</i>",
+  "trade_link": "🔗 <b>Buka tautan untuk menyelesaikan operasi di dompet Anda:</b>\n\n{link}\n\n<i>SYNERGIX · BNB Smart Chain · Slippage {slippage}%</i>",
   "trade_cancelled": "❌ Perdagangan dibatalkan.",
   "invalid_amount": "⚠️ Jumlah tidak valid. Masukkan angka seperti <code>0.005</code>.",
   "amount_too_low_buy": "⚠️ Pembelian minimum adalah <b>{min_buy} BNB</b>.",

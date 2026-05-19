@@ -38,7 +38,7 @@
   "sell_summary": "📋 <b>出售摘要</b>\n\n🔹 出售：<b>{syn_in:,.0f} SYNERGIX</b>\n🔹 获得：约 <b>{bnb_out:.6f} BNB</b>（约 ${usd_out}）\n🔹 滑点：{slippage}%\n\n确认？",
   "btn_confirm_trade": "✅ 确认",
   "btn_cancel_trade": "❌ 取消",
-  "trade_link": "🔗 <b>打开链接在您的钱包中完成交易：</b>\n\n{link}\n\n<i>PancakeSwap V2 · 滑点 {slippage}% · SYNERGIX/BNB</i>",
+  "trade_link": "🔗 <b>打开链接以在你的钱包中完成操作：</b>\n\n{link}\n\n<i>SYNERGIX · BNB 智能链 · 滑点 {slippage}%</i>",
   "trade_cancelled": "❌ 交易已取消。",
   "invalid_amount": "⚠️ 无效金额。请输入如 <code>0.005</code> 的数字。",
   "amount_too_low_buy": "⚠️ 最低购买金额为 <b>{min_buy} BNB</b>。",
