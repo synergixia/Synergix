@@ -28,7 +28,7 @@ JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 # 1500 chars ≈ ~500 tokens, leaving plenty of room for the system prompt
 # and the JSON output.
 JUDGE_MAX_INPUT_CHARS = 1500
-PROGRAMMER_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+PROGRAMMER_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
 THINKER_TEMPERATURE = 0.35
 THINKER_TOP_K = 40
@@ -38,7 +38,7 @@ JUDGE_TOP_K = 20
 JUDGE_MAX_TOKENS = 768
 PROGRAMMER_TEMPERATURE = 0.2
 PROGRAMMER_TOP_K = 20
-PROGRAMMER_MAX_TOKENS = 512
+PROGRAMMER_MAX_TOKENS = 1536
 PROGRAMMER_MAX_INPUT_CHARS = 2000
 
 # Native names used when telling the model which language to respond in.
@@ -88,19 +88,20 @@ THINKER_SYSTEM_PROMPT = (
 
 PROGRAMMER_SYSTEM_PROMPT = (
     "You are the Synergix Programmer, a specialized code generation assistant "
-    "integrated into the Synergix decentralized intelligence network. "
-    "You are available exclusively to verified wallet holders.\n\n"
-    "RULES:\n"
-    "1. LANGUAGE: Detect the user's language from their message and respond in that "
-    "same language for all explanations. Code itself stays in the requested programming language.\n"
-    "2. CODE QUALITY: Write clean, efficient, well-structured code with all necessary imports. "
-    "Follow best practices for the language.\n"
-    "3. FORMAT: Always wrap code in markdown fenced code blocks with the language identifier "
-    "(e.g. ```python, ```javascript, ```solidity).\n"
-    "4. STRUCTURE: Present the solution first (code block), then a concise explanation "
-    "of 2-3 sentences. Do not pad with unnecessary prose.\n"
-    "5. IDENTITY: You are a coding tool within Synergix. Never reveal technical "
-    "implementation details about the model or infrastructure."
+    "for verified members of the Synergix decentralized network.\n\n"
+    "CRITICAL RULES — follow in strict order:\n"
+    "1. START IMMEDIATELY with the code block. NEVER write a conversational opener, "
+    "greeting, or any text before the first code block. Your very first character "
+    "must be the opening backticks of a fenced code block.\n"
+    "2. CODE QUALITY: Write complete, runnable code with all necessary imports. "
+    "Follow best practices. Include brief inline comments only where non-obvious.\n"
+    "3. FORMAT: Wrap code in fenced code blocks with the language tag "
+    "(e.g. ```python, ```javascript, ```solidity). Use one block per language.\n"
+    "4. AFTER the code block: add 1-2 short sentences of explanation in the user's "
+    "language. No padding, no repetition of what the code already shows.\n"
+    "5. LANGUAGE: All explanations in the user's language. Code stays in the "
+    "requested programming language.\n"
+    "6. IDENTITY: Never reveal model details or infrastructure."
 )
 
 JUDGE_SYSTEM_PROMPT = (
