@@ -38,7 +38,7 @@
   "sell_summary": "📋 <b>فروخت کا خلاصہ</b>\n\n🔹 فروخت: <b>{syn_in:,.0f} SYNERGIX</b>\n🔹 وصول: ~<b>{bnb_out:.6f} BNB</b> (~${usd_out})\n🔹 سلیپیج: {slippage}%\n\nتصدیق کریں؟",
   "btn_confirm_trade": "✅ تصدیق کریں",
   "btn_cancel_trade": "❌ منسوخ کریں",
-  "trade_link": "🔗 <b>اپنے والیٹ میں ٹریڈ مکمل کرنے کے لیے لنک کھولیں:</b>\n\n{link}\n\n<i>PancakeSwap V2 · سلیپیج {slippage}% · SYNERGIX/BNB</i>",
+  "trade_link": "🔗 <b>آپریشن مکمل کرنے کے لیے اپنے والیٹ میں لنک کھولیں:</b>\n\n{link}\n\n<i>SYNERGIX · BNB Smart Chain · سلیپیج {slippage}%</i>",
   "trade_cancelled": "❌ ٹریڈ منسوخ۔",
   "invalid_amount": "⚠️ غلط مقدار۔ <code>0.005</code> جیسا نمبر درج کریں۔",
   "amount_too_low_buy": "⚠️ کم از کم خریداری <b>{min_buy} BNB</b> ہے۔",

@@ -38,7 +38,7 @@
   "sell_summary": "📋 <b>ملخص البيع</b>\n\n🔹 تبيع: <b>{syn_in:,.0f} SYNERGIX</b>\n🔹 تستلم: ~<b>{bnb_out:.6f} BNB</b> (~${usd_out})\n🔹 الانزلاق: {slippage}%\n\nتأكيد؟",
   "btn_confirm_trade": "✅ تأكيد",
   "btn_cancel_trade": "❌ إلغاء",
-  "trade_link": "🔗 <b>افتح الرابط لإتمام العملية في محفظتك:</b>\n\n{link}\n\n<i>PancakeSwap V2 · انزلاق {slippage}% · SYNERGIX/BNB</i>",
+  "trade_link": "🔗 <b>افتح الرابط لإتمام العملية في محفظتك:</b>\n\n{link}\n\n<i>SYNERGIX · BNB Smart Chain · انزلاق {slippage}%</i>",
   "trade_cancelled": "❌ تم إلغاء العملية.",
   "invalid_amount": "⚠️ مبلغ غير صالح. أدخل رقمًا مثل <code>0.005</code>.",
   "amount_too_low_buy": "⚠️ الحد الأدنى للشراء هو <b>{min_buy} BNB</b>.",

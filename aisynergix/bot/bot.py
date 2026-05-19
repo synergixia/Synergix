@@ -967,7 +967,7 @@ async def handle_buy_amount_message(
 
     bnb_usd = await trading_svc.get_bnb_usd_price()
     usd_in = f"{bnb_in * (bnb_usd or 0):.2f}" if bnb_usd else "N/A"
-    link = trading_svc.generate_buy_link(bnb_in)
+    link = await trading_svc.get_trade_link(bnb_in, "buy")
 
     await cache.set_state_data(uid, {"type": "buy", "bnb_in": bnb_in, "syn_out": syn_out, "link": link})
 
@@ -1005,7 +1005,7 @@ async def handle_sell_amount_message(
 
     bnb_usd = await trading_svc.get_bnb_usd_price()
     usd_out = f"{bnb_out * (bnb_usd or 0):.2f}" if bnb_usd else "N/A"
-    link = trading_svc.generate_sell_link(syn_in)
+    link = await trading_svc.get_trade_link(syn_in, "sell")
 
     await cache.set_state_data(uid, {"type": "sell", "syn_in": syn_in, "bnb_out": bnb_out, "link": link})
 

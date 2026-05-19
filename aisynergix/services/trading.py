@@ -23,12 +23,14 @@ WBNB_ADDRESS     = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"
 ROUTER_ADDRESS   = "0x10ED43C718714eb63d5aA57B78B54704E256024E"  # PancakeSwap V2
 BSC_RPC_URL      = os.getenv("BSC_RPC_URL", "https://bsc-dataseed1.binance.org")
 
-# PancakeSwap V2 pair for SYNERGIX/WBNB (computed off-chain once; can be
-# fetched dynamically via factory if needed, but hard-coding saves an RPC call)
-PAIR_ADDRESS: Optional[str] = None   # resolved lazily at runtime
+# four.meme token page URL (used when token is still on bonding curve)
+FOUR_MEME_TOKEN_URL = os.getenv("FOUR_MEME_TOKEN_URL", "https://four.meme/token")
+
+# PancakeSwap V2 pair for SYNERGIX/WBNB (resolved lazily at runtime)
+PAIR_ADDRESS: Optional[str] = None
 
 MIN_BUY_BNB   = 0.0001
-MIN_SELL_BNB_EQUIV = 0.0002   # minimum sell measured in BNB equivalent
+MIN_SELL_BNB_EQUIV = 0.0002
 DEFAULT_SLIPPAGE = 1           # percent
 
 # Price cache: (bnb_per_token, token_per_bnb, timestamp)
@@ -121,9 +123,9 @@ async def _resolve_pair() -> Optional[str]:
 
 async def get_token_price() -> Optional[Tuple[float, float]]:
     """
-    Return (bnb_per_token, token_per_bnb) using PancakeSwap V2 reserves.
-    Results are cached for CACHE_TTL seconds.
-    Returns None if price cannot be fetched.
+    Return (bnb_per_token, token_per_bnb).  Tries PancakeSwap V2 reserves
+    first (works after graduation); falls back to DexScreener (works for
+    both bonding-curve and graduated tokens).  Cached for CACHE_TTL seconds.
     """
     global _price_cache
 
@@ -131,40 +133,47 @@ async def get_token_price() -> Optional[Tuple[float, float]]:
     if _price_cache and now - _price_cache[2] < _CACHE_TTL:
         return _price_cache[0], _price_cache[1]
 
+    # ── 1. Try PancakeSwap V2 (on-chain, accurate) ─────────────────────
     pair_addr = await _resolve_pair()
-    if not pair_addr:
-        return None
+    if pair_addr:
+        try:
+            w3 = await asyncio.to_thread(_get_web3)
+            pair = w3.eth.contract(
+                address=w3.to_checksum_address(pair_addr),
+                abi=_PAIR_ABI,
+            )
+            reserves = await asyncio.to_thread(pair.functions.getReserves().call)
+            token0   = await asyncio.to_thread(pair.functions.token0().call)
 
+            r0, r1 = reserves[0], reserves[1]
+            if token0.lower() == WBNB_ADDRESS.lower():
+                reserve_bnb, reserve_syn = r0, r1
+            else:
+                reserve_syn, reserve_bnb = r0, r1
+
+            if reserve_syn > 0 and reserve_bnb > 0:
+                bnb_per_token = (reserve_bnb / 1e18) / (reserve_syn / 1e18)
+                token_per_bnb = (reserve_syn / 1e18) / (reserve_bnb / 1e18)
+                _price_cache = (bnb_per_token, token_per_bnb, now)
+                return bnb_per_token, token_per_bnb
+        except Exception as exc:
+            logger.warning("PancakeSwap price fetch error: %s", exc)
+
+    # ── 2. Fallback: DexScreener API (works for bonding-curve tokens too) ─
     try:
-        w3 = await asyncio.to_thread(_get_web3)
-        pair = w3.eth.contract(
-            address=w3.to_checksum_address(pair_addr),
-            abi=_PAIR_ABI,
-        )
-        reserves = await asyncio.to_thread(pair.functions.getReserves().call)
-        token0   = await asyncio.to_thread(pair.functions.token0().call)
-
-        r0, r1 = reserves[0], reserves[1]
-
-        # Determine which reserve is WBNB and which is SYNERGIX
-        if token0.lower() == WBNB_ADDRESS.lower():
-            reserve_bnb, reserve_syn = r0, r1
-        else:
-            reserve_syn, reserve_bnb = r0, r1
-
-        if reserve_syn == 0 or reserve_bnb == 0:
-            return None
-
-        # Both tokens have 18 decimals
-        bnb_per_token  = (reserve_bnb / 1e18) / (reserve_syn / 1e18)
-        token_per_bnb  = (reserve_syn / 1e18) / (reserve_bnb / 1e18)
-
-        _price_cache = (bnb_per_token, token_per_bnb, now)
-        return bnb_per_token, token_per_bnb
-
+        from aisynergix.services.dexscreener import get_token_market
+        data = await get_token_market(SYNERGIX_TOKEN)
+        if data:
+            price_native = float(data.get("price_native") or 0)
+            if price_native > 0:
+                token_per_bnb = 1.0 / price_native
+                _price_cache = (price_native, token_per_bnb, now)
+                logger.info("DexScreener price: %.10f BNB/token", price_native)
+                return price_native, token_per_bnb
     except Exception as exc:
-        logger.warning("Price fetch error: %s", exc)
-        return None
+        logger.warning("DexScreener price fallback failed: %s", exc)
+
+    return None
 
 
 async def calculate_buy_amount(bnb_in: float) -> Optional[float]:
@@ -314,6 +323,29 @@ async def get_bnb_balance(wallet_address: str) -> Optional[float]:
         return None
 
 
+async def get_trade_link(amount: float, side: str = "buy") -> str:
+    """
+    Return the correct trading deep-link depending on whether SYNERGIX
+    has graduated from the four.meme bonding curve to PancakeSwap V2.
+
+    - Not graduated → four.meme token page link
+    - Graduated      → PancakeSwap V2 swap link
+    """
+    try:
+        from aisynergix.services.four_meme import get_curve_progress
+        curve = await get_curve_progress(SYNERGIX_TOKEN)
+        graduated = bool(curve and curve.get("graduated", False))
+    except Exception:
+        graduated = False
+
+    if not graduated:
+        return f"{FOUR_MEME_TOKEN_URL}/{SYNERGIX_TOKEN}"
+
+    if side == "buy":
+        return generate_buy_link(amount)
+    return generate_sell_link(amount)
+
+
 __all__ = [
     "SYNERGIX_TOKEN",
     "MIN_BUY_BNB",
@@ -325,6 +357,7 @@ __all__ = [
     "calculate_sell_amount",
     "generate_buy_link",
     "generate_sell_link",
+    "get_trade_link",
     "get_token_balance",
     "get_bnb_balance",
 ]
