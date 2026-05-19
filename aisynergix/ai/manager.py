@@ -326,7 +326,7 @@ class AIManager:
         profile.increment_contribution()
         profile.update_trust_score(trust_increment)
 
-        # Persist aporte to Greenfield: aisynergix/aportes/YYYY-MM/{uid_hash}_{ts}.txt
+        # Persist aporte to Irys: aisynergix/aportes/YYYY-MM/{uid_hash}_{ts}.txt
         ts = int(datetime.now(timezone.utc).timestamp())
         aporte_tags = {
             "quality_score": str(quality_score),
@@ -353,7 +353,7 @@ class AIManager:
             content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
             object_path = f"local:{profile.uid_hash}_{ts}_{content_hash}"
             logger.error(
-                "❌ Greenfield write_aporte falló para %s — usando local CID %s",
+                "❌ Irys write_aporte falló para %s — usando local CID %s",
                 profile.uid_hash, object_path, exc_info=True,
             )
 

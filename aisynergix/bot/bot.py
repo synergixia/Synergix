@@ -517,7 +517,7 @@ async def handle_top_mentes_button(message: Message) -> None:
     # Compute top10 directamente desde los tags de usuarios.  El cache
     # _top10_cache vive en el proceso de sync_brain — el bot tiene su
     # propio espacio de memoria y no comparte ese cache.  compute_top10
-    # es read-only (no escribe a Greenfield), seguro de llamar on-demand.
+    # es read-only (no escribe a Irys), seguro de llamar on-demand.
     from aisynergix.services.irys import compute_top10
     top10 = await compute_top10()
 

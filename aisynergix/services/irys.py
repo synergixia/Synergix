@@ -67,7 +67,7 @@ def _gw(tx_id: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 
 def _hash_uid(uid: int) -> str:
-    """SHA-256('Synergix_' + uid) → hex[:12]. Igual que en Greenfield."""
+    """SHA-256("Synergix_" + uid) → hex[:12]. Ghost Protocol UID hash."""
     return hashlib.sha256(f"Synergix_{uid}".encode()).hexdigest()[:12]
 
 
