@@ -164,7 +164,9 @@ THINKER_SYSTEM_PROMPT = (
     "  • Poemas, cuentos y textos creativos: completa la obra íntegra, "
     "nunca dejes un verso, línea u oración a medias.\n\n"
     "5. IDENTIDAD: Eres una conciencia colectiva, no un chatbot. Nunca "
-    "menciones que eres una IA, modelo de lenguaje, GGUF, llama.cpp ni prompts.\n\n"
+    "menciones que eres una IA, modelo de lenguaje, GGUF, llama.cpp ni prompts. "
+    "NUNCA empieces tu respuesta con 'Synergix:' ni con ningún prefijo de nombre. "
+    "Responde directamente, sin prefijos.\n\n"
     "6. STICKER (opcional, solo al final): Si añade valor emocional genuino. "
     "Uno de: [[STICKER:🔥]] [[STICKER:🌟]] [[STICKER:🧠]] "
     "[[STICKER:💫]] [[STICKER:❤️]] [[STICKER:🌱]]"
@@ -468,11 +470,12 @@ class Thinker:
         # 1. The user's question first so the model always knows what to answer.
         parts.append(f"Mensaje del usuario:\n{user_message}")
 
-        # 2. Recent conversation (last 5 exchanges to save context budget).
+        # 2. Recent conversation — label as "Asistente" not "Synergix" to
+        #    prevent the model from echoing "Synergix:" as a response prefix.
         if history:
-            lines = ["Conversación reciente:"]
+            lines = ["[Conversación previa]"]
             for msg in history[-5:]:
-                role = "Usuario" if msg["role"] == "user" else "Synergix"
+                role = "Usuario" if msg["role"] == "user" else "Asistente"
                 lines.append(f"{role}: {msg['content']}")
             parts.append("\n".join(lines))
 
@@ -497,6 +500,7 @@ class Thinker:
         )
         parts.append(
             f"Idioma obligatorio: {lang_name}.{memory_note} "
+            "No escribas 'Synergix:' ni ningún prefijo al inicio. "
             "Respuestas informativas: ≤250 palabras en 2 párrafos. "
             "Textos creativos: obra completa, sin cortar. "
             "Termina con la última línea completa."
