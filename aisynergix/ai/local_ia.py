@@ -8,9 +8,10 @@ from typing import Optional, Dict, Any, List, AsyncGenerator, Tuple
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-# DeepSeek-R1 emits its chain-of-thought wrapped in <think>…</think> before
-# the visible answer.  We strip it from non-streaming responses; for streaming
-# we use _ThinkStripper which tolerates the tag being split across SSE tokens.
+# Reasoning models (DeepSeek-R1, QwQ, etc.) wrap their chain-of-thought in
+# <think>…</think>.  We strip it from non-streaming responses; for streaming
+# _ThinkStripper handles tags that are split across SSE tokens.
+# Qwen2.5-3B-Instruct (current thinker) does not emit <think> blocks.
 _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
 
 
@@ -19,7 +20,7 @@ def _strip_thinking(text: str) -> str:
 
 
 class _ThinkStripper:
-    """Stateful splitter that separates a DeepSeek-R1 stream into ``think`` and ``answer`` chunks.
+    """Stateful splitter that separates a ``<think>…</think>`` reasoning trace from the visible answer.
 
     Tokens delivered by llama.cpp's SSE stream can split the ``<think>`` or
     ``</think>`` tag across chunks (e.g. ``<`` then ``think>``), so we hold
@@ -27,10 +28,11 @@ class _ThinkStripper:
     or rule it out.
 
     ``push`` / ``flush`` return a list of ``(kind, text)`` pairs where
-    ``kind`` is ``"think"`` (hidden reasoning trace) or ``"answer"`` (the
-    visible response).  Callers decide how to render each one — the bot
-    shows think chunks live in italic and replaces them with the answer
-    once ``</think>`` arrives.
+    ``kind`` is ``"think"`` (reasoning trace) or ``"answer"`` (visible
+    response).  Qwen2.5-3B-Instruct does not emit ``<think>`` blocks, so in
+    practice all chunks will be tagged ``"answer"``.  The stripper stays in
+    place so that swapping in a reasoning model (QwQ, DeepSeek-R1, etc.)
+    requires no code changes.
     """
 
     OPEN = "<think>"
@@ -99,9 +101,9 @@ class _ThinkStripper:
 
 THINKER_HOST = os.getenv("THINKER_HOST", "http://thinker:8081")
 JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
-# DeepSeek-R1 always thinks first; allow ~2 minutes for the full think+answer.
+# Qwen2.5-3B Q5_K_M on 2 CPU threads: ~8-10 tok/s.  1024 max_tokens →
+# worst-case ~120 s, which matches this timeout.
 THINKER_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
-# Qwen2.5-1.5B is a touch slower than the previous 0.6B on CPU.
 JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 
 # Maximum characters sent to the Judge.  Qwen2.5-1.5B has a 4096-token
@@ -109,16 +111,13 @@ JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 # plenty of room for the system prompt and the JSON output.
 JUDGE_MAX_INPUT_CHARS = 3000
 
-# DeepSeek-R1 recommended sampling: temp 0.5-0.7, top_p 0.95.  Higher temp
-# than the previous Qwen3 setting because the distilled reasoner gets stuck
-# in repetitive thought loops if temperature is too low.
-THINKER_TEMPERATURE = 0.6
-THINKER_TOP_K = 40
-# Budget covers both the hidden <think>…</think> trace AND the visible answer.
-# DeepSeek-R1 can think for 600-1500 tokens before closing </think>; 2048
-# gives enough room for heavy reasoning + a full visible answer without the
-# thinking trace crowding out the response.
-THINKER_MAX_TOKENS = 2048
+# Qwen2.5-3B-Instruct recommended sampling (official Qwen2.5 guidance).
+THINKER_TEMPERATURE = 0.7
+THINKER_TOP_K = 20
+# Qwen2.5-3B produces no <think> trace, so all tokens go to the visible
+# answer.  1024 is generous for the 150-280 word responses the system prompt
+# requests (~200-400 tokens) and keeps worst-case latency under 2 minutes.
+THINKER_MAX_TOKENS = 1024
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
 JUDGE_MAX_TOKENS = 768
@@ -478,9 +477,9 @@ class Thinker:
     ) -> AsyncGenerator[Tuple[str, str], None]:
         """Yield ``(kind, text)`` chunks where ``kind`` is ``"think"`` or ``"answer"``.
 
-        DeepSeek-R1 emits a ``<think>…</think>`` reasoning trace before its
-        visible response.  We surface both so callers can render the trace
-        live (e.g. in italic) and switch to the clean answer once it starts.
+        Qwen2.5-3B-Instruct does not emit a ``<think>`` block, so all chunks
+        will arrive as ``"answer"``.  The ``_ThinkStripper`` stays active so
+        that a future swap to a reasoning model works without code changes.
         """
         prompt = self._build_prompt(user_message, context, history, target_language)
         stripper = _ThinkStripper()

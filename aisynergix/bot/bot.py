@@ -917,10 +917,11 @@ async def handle_conversation_message(
             "inteligente y empática en texto, en el idioma del usuario.]"
         )
 
-    # Stream tokens: while DeepSeek-R1 is still in its hidden <think> phase,
-    # render the trace live in italic with a 💭 header.  As soon as the model
-    # closes </think> and produces real answer tokens, replace the whole
-    # message with the clean answer and continue streaming it normally.
+    # Stream tokens: Qwen2.5-3B produces no <think> block so all chunks arrive
+    # as "answer" immediately.  If the model is ever swapped for a reasoning
+    # model (QwQ, DeepSeek-R1, etc.), the think-trace UI activates
+    # automatically: it renders the trace live in italic with a 💭 header and
+    # replaces it with the clean answer once </think> closes.
     sent_msg = None
     answer_buf = ""
     think_buf = ""
