@@ -39,6 +39,8 @@ services:
       - "4"
       - "-tb"
       - "4"
+      - "--no-mmap"
+      - "-fa"
       - "--temp"
       - "0.7"
       - "--top-k"
