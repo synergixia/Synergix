@@ -1007,19 +1007,21 @@ async def handle_conversation_message(
         if sent_msg is None:
             sent_msg = await message.answer(answer_buf)
 
-        # Final edit: strip [[STICKER:emoji]] and apply HTML formatting
+        # Final edit: always flush the last tokens that may not have been
+        # shown during the throttled streaming loop, then strip [[STICKER:…]].
+        # Previously this edit was skipped when final_text == answer_buf
+        # (i.e. no sticker), causing the last ≤0.9 s of generated text to
+        # be silently dropped.
         from aisynergix.ai.manager import _extract_sticker
         clean, sticker_emoji = _extract_sticker(answer_buf)
         final_text = f"{clean}\n{sticker_emoji}" if sticker_emoji else clean
-
-        if final_text != answer_buf:
+        try:
+            await sent_msg.edit_text(final_text, parse_mode="HTML")
+        except Exception:
             try:
-                await sent_msg.edit_text(final_text, parse_mode="HTML")
+                await sent_msg.edit_text(final_text)
             except Exception:
-                try:
-                    await sent_msg.edit_text(final_text)
-                except Exception:
-                    pass
+                pass
 
     except Exception as e:
         logger.exception("Error en conversación streaming de %s: %s", uid, e)
