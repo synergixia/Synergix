@@ -40,7 +40,6 @@ services:
       - "-tb"
       - "4"
       - "--no-mmap"
-      - "-fa"
       - "--temp"
       - "0.7"
       - "--top-k"
