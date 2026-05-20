@@ -917,11 +917,11 @@ async def handle_conversation_message(
             "inteligente y empática en texto, en el idioma del usuario.]"
         )
 
-    # Stream tokens: Llama-3.2-3B produces no <think> block so all chunks arrive
-    # as "answer" immediately.  If the model is ever swapped for a reasoning
-    # model (QwQ, DeepSeek-R1, etc.), the think-trace UI activates
-    # automatically: it renders the trace live in italic with a 💭 header and
-    # replaces it with the clean answer once </think> closes.
+    # Stream tokens: Qwen3-4B in non-thinking mode produces no <think> block so
+    # all chunks arrive as "answer" immediately.  If thinking mode is ever
+    # enabled, the think-trace UI activates automatically: it renders the trace
+    # live in italic with a 💭 header and replaces it with the clean answer
+    # once </think> closes.
     sent_msg = None
     answer_buf = ""
     think_buf = ""

@@ -8,10 +8,10 @@ from typing import Optional, Dict, Any, List, AsyncGenerator, Tuple
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-# Reasoning models (DeepSeek-R1, QwQ, etc.) wrap their chain-of-thought in
-# <think>…</think>.  We strip it from non-streaming responses; for streaming
-# _ThinkStripper handles tags that are split across SSE tokens.
-# Llama-3.2-3B-Instruct (current thinker) does not emit <think> blocks.
+# Reasoning models wrap their chain-of-thought in <think>…</think>.  We strip
+# it from non-streaming responses; for streaming _ThinkStripper handles tags
+# split across SSE tokens.  Qwen3-4B (current thinker) does NOT emit <think>
+# blocks unless the /think token or a thinking-mode system prompt is used.
 _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
 
 
@@ -29,10 +29,10 @@ class _ThinkStripper:
 
     ``push`` / ``flush`` return a list of ``(kind, text)`` pairs where
     ``kind`` is ``"think"`` (reasoning trace) or ``"answer"`` (visible
-    response).  Llama-3.2-3B-Instruct does not emit ``<think>`` blocks, so
-    in practice all chunks will be tagged ``"answer"``.  The stripper stays
-    in place so that swapping in a reasoning model (QwQ, DeepSeek-R1, etc.)
-    requires no code changes.
+    response).  Qwen3-4B in non-thinking mode does not emit ``<think>``
+    blocks, so in practice all chunks will be tagged ``"answer"``.  The
+    stripper stays active so that enabling thinking mode requires no code
+    changes.
     """
 
     OPEN = "<think>"
@@ -101,8 +101,8 @@ class _ThinkStripper:
 
 THINKER_HOST = os.getenv("THINKER_HOST", "http://thinker:8081")
 JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
-# Llama-3.2-3B Q5_K_M on 4 CPU threads: ~15-20 tok/s.  1536 max_tokens →
-# worst-case ~100 s, which matches this timeout.
+# Qwen3-4B Q4_K_M on 4 CPU threads: ~10-15 tok/s.  1536 max_tokens →
+# worst-case ~150 s; 120 s timeout is a safe cap for normal responses.
 THINKER_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
 JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 
@@ -111,14 +111,15 @@ JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 # plenty of room for the system prompt and the JSON output.
 JUDGE_MAX_INPUT_CHARS = 3000
 
-# Llama-3.2-3B-Instruct sampling — Meta's recommended defaults:
-# temp 0.6, top_p 0.9, top_k 40.  Slightly more creative than the previous
-# 0.5/0.7 Qwen settings while staying grounded enough to avoid hallucinations.
-THINKER_TEMPERATURE = 0.6
-THINKER_TOP_K = 40
-# 1536 gives a safety margin for verbose/creative responses at ~15-20 tok/s
-# on 4 threads.  The system prompt targets ≤250 words for informative answers
-# (~350 tokens), so the extra headroom is consumed mainly by poems/stories.
+# Qwen3-4B sampling — Alibaba's recommended defaults for non-thinking mode:
+# temp 0.7, top_p 0.8, top_k 20, repeat_penalty 1.0.
+# The model does NOT emit <think> blocks unless explicitly prompted;
+# _ThinkStripper stays active in case thinking is triggered.
+THINKER_TEMPERATURE = 0.7
+THINKER_TOP_K = 20
+# 1536 tokens gives headroom for verbose responses at ~10-15 tok/s on 4
+# threads.  The system prompt targets ≤250 words (~350 tokens) so normal
+# answers finish well within the 120 s timeout.
 THINKER_MAX_TOKENS = 1536
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
@@ -516,9 +517,9 @@ class Thinker:
     ) -> AsyncGenerator[Tuple[str, str], None]:
         """Yield ``(kind, text)`` chunks where ``kind`` is ``"think"`` or ``"answer"``.
 
-        Llama-3.2-3B-Instruct does not emit a ``<think>`` block, so all chunks
-        will arrive as ``"answer"``.  The ``_ThinkStripper`` stays active so
-        that a future swap to a reasoning model works without code changes.
+        Qwen3-4B in non-thinking mode does not emit a ``<think>`` block, so
+        all chunks will arrive as ``"answer"``.  The ``_ThinkStripper`` stays
+        active so that enabling thinking mode requires no code changes.
         """
         prompt = self._build_prompt(user_message, context, history, target_language)
         stripper = _ThinkStripper()
