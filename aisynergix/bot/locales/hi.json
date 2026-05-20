@@ -74,5 +74,6 @@
   "status_trust_score": "🎯 ट्रस्ट स्कोर: {trust_score}/10",
   "status_verified": "✅ वॉलेट सत्यापित",
   "admin_lock_enabled": "🔒 आपातकालीन लॉक सक्षम। योगदान रोके गए।",
-  "admin_lock_disabled": "🔓 आपातकालीन लॉक अक्षम। योगदान सक्रिय।"
+  "admin_lock_disabled": "🔓 आपातकालीन लॉक अक्षम। योगदान सक्रिय।",
+  "thinking_label": "💭 सोच रहा हूँ…"
 }

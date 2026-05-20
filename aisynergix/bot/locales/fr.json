@@ -74,5 +74,6 @@
   "status_trust_score": "🎯 Score de confiance: {trust_score}/10",
   "status_verified": "✅ Portefeuille vérifié",
   "admin_lock_enabled": "🔒 Verrouillage d'urgence ACTIVÉ. Les contributions sont suspendues.",
-  "admin_lock_disabled": "🔓 Verrouillage d'urgence DÉSACTIVÉ. Les contributions sont actives."
+  "admin_lock_disabled": "🔓 Verrouillage d'urgence DÉSACTIVÉ. Les contributions sont actives.",
+  "thinking_label": "💭 Réflexion…"
 }

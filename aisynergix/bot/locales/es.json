@@ -74,5 +74,6 @@
   "status_trust_score": "🎯 Trust Score: {trust_score}/10",
   "status_verified": "✅ Wallet verificada",
   "admin_lock_enabled": "🔒 Emergency lock ACTIVADO. Los aportes están pausados.",
-  "admin_lock_disabled": "🔓 Emergency lock DESACTIVADO. Los aportes están activos."
+  "admin_lock_disabled": "🔓 Emergency lock DESACTIVADO. Los aportes están activos.",
+  "thinking_label": "💭 Analizando…"
 }

@@ -3,7 +3,7 @@ import re
 import json
 import hashlib
 import asyncio
-from typing import Optional, Dict, Any, List, AsyncGenerator
+from typing import Optional, Dict, Any, List, AsyncGenerator, Tuple
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -19,11 +19,18 @@ def _strip_thinking(text: str) -> str:
 
 
 class _ThinkStripper:
-    """Stateful filter that removes <think>…</think> blocks from a token stream.
+    """Stateful splitter that separates a DeepSeek-R1 stream into ``think`` and ``answer`` chunks.
 
-    Tokens delivered by llama.cpp's SSE stream can split the tag across
-    chunks (e.g. ``<`` then ``think>``), so we hold back any tail that
-    could be the start of a tag until we either complete or rule it out.
+    Tokens delivered by llama.cpp's SSE stream can split the ``<think>`` or
+    ``</think>`` tag across chunks (e.g. ``<`` then ``think>``), so we hold
+    back any tail that could be the start of a tag until we either complete
+    or rule it out.
+
+    ``push`` / ``flush`` return a list of ``(kind, text)`` pairs where
+    ``kind`` is ``"think"`` (hidden reasoning trace) or ``"answer"`` (the
+    visible response).  Callers decide how to render each one — the bot
+    shows think chunks live in italic and replaces them with the answer
+    once ``</think>`` arrives.
     """
 
     OPEN = "<think>"
@@ -33,18 +40,23 @@ class _ThinkStripper:
         self._buf = ""
         self._in_think = False
 
-    def push(self, token: str) -> str:
+    def push(self, token: str) -> List[Tuple[str, str]]:
         self._buf += token
-        out: List[str] = []
+        out: List[Tuple[str, str]] = []
 
         while True:
             if self._in_think:
                 idx = self._buf.find(self.CLOSE)
                 if idx < 0:
-                    # Keep only the tail that could still match the closing tag.
-                    if len(self._buf) >= len(self.CLOSE):
-                        self._buf = self._buf[-(len(self.CLOSE) - 1):]
+                    # Emit thinking content but hold back the last N-1 chars
+                    # in case they are the start of "</think>" split across tokens.
+                    tail = len(self.CLOSE) - 1
+                    if len(self._buf) > tail:
+                        out.append(("think", self._buf[:-tail]))
+                        self._buf = self._buf[-tail:]
                     break
+                if idx > 0:
+                    out.append(("think", self._buf[:idx]))
                 self._buf = self._buf[idx + len(self.CLOSE):]
                 self._in_think = False
                 continue
@@ -52,7 +64,7 @@ class _ThinkStripper:
             idx = self._buf.find(self.OPEN)
             if idx >= 0:
                 if idx > 0:
-                    out.append(self._buf[:idx])
+                    out.append(("answer", self._buf[:idx]))
                 self._buf = self._buf[idx + len(self.OPEN):]
                 self._in_think = True
                 continue
@@ -62,23 +74,26 @@ class _ThinkStripper:
             last_lt = self._buf.rfind("<")
             if last_lt >= 0 and len(self._buf) - last_lt < len(self.OPEN):
                 if last_lt > 0:
-                    out.append(self._buf[:last_lt])
+                    out.append(("answer", self._buf[:last_lt]))
                     self._buf = self._buf[last_lt:]
             else:
                 if self._buf:
-                    out.append(self._buf)
+                    out.append(("answer", self._buf))
                     self._buf = ""
             break
 
-        return "".join(out)
+        return out
 
-    def flush(self) -> str:
-        # If the stream ended mid-think the trace is incomplete — drop it.
-        if self._in_think:
-            self._buf = ""
-            return ""
-        out = self._buf
+    def flush(self) -> List[Tuple[str, str]]:
+        out: List[Tuple[str, str]] = []
+        if self._buf:
+            # If the stream ended mid-think, surface whatever was buffered
+            # as a final "think" chunk — the bot uses its presence to know
+            # the model never produced a visible answer.
+            kind = "think" if self._in_think else "answer"
+            out.append((kind, self._buf))
         self._buf = ""
+        self._in_think = False
         return out
 
 
@@ -460,8 +475,13 @@ class Thinker:
         context: str,
         history: Optional[List[Dict[str, str]]] = None,
         target_language: str = "es",
-    ) -> AsyncGenerator[str, None]:
-        """Yield visible answer tokens; DeepSeek-R1's <think>…</think> trace is filtered out."""
+    ) -> AsyncGenerator[Tuple[str, str], None]:
+        """Yield ``(kind, text)`` chunks where ``kind`` is ``"think"`` or ``"answer"``.
+
+        DeepSeek-R1 emits a ``<think>…</think>`` reasoning trace before its
+        visible response.  We surface both so callers can render the trace
+        live (e.g. in italic) and switch to the clean answer once it starts.
+        """
         prompt = self._build_prompt(user_message, context, history, target_language)
         stripper = _ThinkStripper()
         async for token in self._connector.stream_generate(
@@ -471,12 +491,10 @@ class Thinker:
             top_k=THINKER_TOP_K,
             max_tokens=THINKER_MAX_TOKENS,
         ):
-            visible = stripper.push(token)
-            if visible:
-                yield visible
-        tail = stripper.flush()
-        if tail:
-            yield tail
+            for chunk in stripper.push(token):
+                yield chunk
+        for chunk in stripper.flush():
+            yield chunk
 
 
 class Judge:

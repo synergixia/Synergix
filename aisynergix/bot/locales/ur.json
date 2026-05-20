@@ -74,5 +74,6 @@
   "status_trust_score": "🎯 ٹرسٹ اسکور: {trust_score}/10",
   "status_verified": "✅ والٹ تصدیق شدہ",
   "admin_lock_enabled": "🔒 ایمرجنسی لاک فعال۔ شراکتیں روک دی گئی ہیں۔",
-  "admin_lock_disabled": "🔓 ایمرجنسی لاک غیر فعال۔ شراکتیں فعال ہیں۔"
+  "admin_lock_disabled": "🔓 ایمرجنسی لاک غیر فعال۔ شراکتیں فعال ہیں۔",
+  "thinking_label": "💭 سوچ رہا ہوں…"
 }

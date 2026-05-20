@@ -164,11 +164,12 @@ class AIManager:
         self,
         uid: int,
         message: str,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[Tuple[str, str], None]:
         """
-        Yield raw response tokens as they arrive from the Thinker.
-        The caller must accumulate all tokens to get the full text,
-        then call _extract_sticker() for final display.
+        Yield ``(kind, text)`` chunks as they arrive from the Thinker, where
+        ``kind`` is ``"think"`` (live reasoning trace) or ``"answer"`` (the
+        visible response).  Only ``answer`` chunks are persisted to the
+        conversation history.
         Yields nothing if this uid already has an in-flight request.
         """
         if uid in _in_flight:
@@ -188,20 +189,24 @@ class AIManager:
                 self._rag.query(message, target_language),
             )
 
-            full_response = ""
+            answer_buf = ""
             async with _THINKER_SEM:
-                async for token in self._thinker.stream_think(
+                async for kind, text in self._thinker.stream_think(
                     user_message=message,
                     context=context,
                     history=history,
                     target_language=target_language,
                 ):
-                    full_response += token
-                    yield token
+                    if kind == "answer":
+                        answer_buf += text
+                    yield (kind, text)
 
-            clean_response, _ = _extract_sticker(full_response)
-            await self._append_conversation_history(uid, "user", message)
-            await self._append_conversation_history(uid, "assistant", clean_response)
+            # Only persist the visible answer.  Skip when the model never
+            # produced one (thinking overflowed max_tokens).
+            if answer_buf.strip():
+                clean_response, _ = _extract_sticker(answer_buf)
+                await self._append_conversation_history(uid, "user", message)
+                await self._append_conversation_history(uid, "assistant", clean_response)
 
             if context and search_results:
                 asyncio.create_task(self._process_residual_rewards(search_results))

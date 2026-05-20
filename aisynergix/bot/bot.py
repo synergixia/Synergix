@@ -1,5 +1,6 @@
 import os
 import asyncio
+import html
 import logging
 import random
 from typing import Optional, Dict, Any
@@ -916,53 +917,101 @@ async def handle_conversation_message(
             "inteligente y empática en texto, en el idioma del usuario.]"
         )
 
-    # Stream tokens: use native Telegram typing indicator while waiting for the
-    # first chunk, then send the real message and edit it as tokens arrive.
-    # No placeholder emoji is ever shown to the user.
+    # Stream tokens: while DeepSeek-R1 is still in its hidden <think> phase,
+    # render the trace live in italic with a 💭 header.  As soon as the model
+    # closes </think> and produces real answer tokens, replace the whole
+    # message with the clean answer and continue streaming it normally.
     sent_msg = None
-    accumulated = ""
+    answer_buf = ""
+    think_buf = ""
+    saw_answer = False
     last_edit = 0.0
+    THINK_PREVIEW_CHARS = 800  # Telegram caps messages at 4096; show tail only
+    THINK_EDIT_INTERVAL = 1.5  # safe distance from Telegram's edit rate limit
+    ANSWER_EDIT_INTERVAL = 0.9
     stop_typing = asyncio.Event()
     typing_task = asyncio.create_task(_keep_typing(message.chat.id, stop_typing))
 
+    def _render_think(text: str) -> str:
+        snippet = text[-THINK_PREVIEW_CHARS:]
+        if len(text) > THINK_PREVIEW_CHARS:
+            snippet = "…" + snippet
+        escaped = html.escape(snippet)
+        header = html.escape(t("thinking_label", lang))
+        return f"<b>{header}</b>\n<i>{escaped}</i>"
+
     try:
-        async for token in ai.stream_conversation(uid, ai_text):
-            accumulated += token
+        async for kind, chunk in ai.stream_conversation(uid, ai_text):
             now = asyncio.get_event_loop().time()
 
-            # First send once we have meaningful content (>=12 chars of real text)
-            if sent_msg is None:
-                if len(accumulated.strip()) >= 12:
-                    stop_typing.set()
-                    sent_msg = await message.answer(accumulated)
-                    last_edit = now
+            if kind == "think" and not saw_answer:
+                think_buf += chunk
+                if sent_msg is None:
+                    if len(think_buf.strip()) >= 12:
+                        stop_typing.set()
+                        try:
+                            sent_msg = await message.answer(
+                                _render_think(think_buf), parse_mode="HTML"
+                            )
+                        except Exception:
+                            sent_msg = await message.answer(t("thinking_label", lang))
+                        last_edit = now
+                    continue
+                if now - last_edit >= THINK_EDIT_INTERVAL:
+                    try:
+                        await sent_msg.edit_text(_render_think(think_buf), parse_mode="HTML")
+                        last_edit = now
+                    except Exception:
+                        pass
                 continue
 
-            # Subsequent edits at most every 900 ms (well within Telegram rate limits)
-            if now - last_edit >= 0.9:
-                try:
-                    await sent_msg.edit_text(accumulated)
+            if kind == "answer":
+                answer_buf += chunk
+                if not saw_answer:
+                    saw_answer = True
+                    stop_typing.set()
+                    if sent_msg is None:
+                        if len(answer_buf.strip()) >= 1:
+                            sent_msg = await message.answer(answer_buf)
+                            last_edit = now
+                        continue
+                    # Replace the live "thinking" preview with the clean answer.
+                    try:
+                        await sent_msg.edit_text(answer_buf or " ")
+                    except Exception:
+                        pass
                     last_edit = now
+                    continue
+                if now - last_edit >= ANSWER_EDIT_INTERVAL:
+                    try:
+                        await sent_msg.edit_text(answer_buf)
+                        last_edit = now
+                    except Exception:
+                        pass
+
+        # Stream finished.
+        if not saw_answer:
+            # Model exhausted max_tokens inside <think> and never produced a
+            # visible answer.  Replace the live trace (if shown) with a
+            # generic error so the user knows the request failed.
+            if sent_msg is not None:
+                try:
+                    await sent_msg.edit_text(t("error_generic", lang))
                 except Exception:
                     pass
+            else:
+                await message.answer(t("error_generic", lang))
+            return
 
         if sent_msg is None:
-            if accumulated.strip():
-                sent_msg = await message.answer(accumulated)
-            else:
-                # The thinker returned 200 OK but no visible tokens reached the
-                # bot — most likely the thinking trace consumed all of max_tokens
-                # before closing </think>.  Show a generic error so the user
-                # knows something went wrong rather than seeing silence.
-                await message.answer(t("error_generic", lang))
-                return
+            sent_msg = await message.answer(answer_buf)
 
         # Final edit: strip [[STICKER:emoji]] and apply HTML formatting
         from aisynergix.ai.manager import _extract_sticker
-        clean, sticker_emoji = _extract_sticker(accumulated)
+        clean, sticker_emoji = _extract_sticker(answer_buf)
         final_text = f"{clean}\n{sticker_emoji}" if sticker_emoji else clean
 
-        if final_text != accumulated:
+        if final_text != answer_buf:
             try:
                 await sent_msg.edit_text(final_text, parse_mode="HTML")
             except Exception:
