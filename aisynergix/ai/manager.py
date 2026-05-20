@@ -35,9 +35,9 @@ MIN_CONTRIBUTION_LENGTH = 20
 ELITE_THRESHOLD = 9.0
 LEGENDARY_THRESHOLD = 9.5
 
-# Cap concurrent thinker calls to match llama.cpp --parallel 2.
+# Cap concurrent thinker calls to match llama.cpp --parallel 1.
 # Extras queue here in asyncio — no HTTP connection, no timeout risk.
-_THINKER_SEM = asyncio.Semaphore(2)
+_THINKER_SEM = asyncio.Semaphore(1)
 
 # UIDs whose conversation request is currently being processed.
 # Prevents the same user from stacking duplicate in-flight requests.
@@ -121,7 +121,7 @@ class AIManager:
                 self._rag.query(message, target_language),
             )
 
-            # Semaphore matches --parallel 2; extras queue in asyncio (no timeout risk).
+            # Semaphore matches --parallel 1; extras queue in asyncio (no timeout risk).
             async with _THINKER_SEM:
                 response = await self._thinker.think(
                     user_message=message,

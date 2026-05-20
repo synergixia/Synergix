@@ -23,18 +23,18 @@ services:
       synergix-net:
         ipv4_address: 172.28.0.10
     volumes:
-      - ../aisynergix/ai/models/llama-3.2-3b-instruct-q5_k_m.gguf:/models/model.gguf:ro
+      - ../aisynergix/ai/models/llama-3.2-3b-instruct-q5_k_m.gguf:/models/synergix.gguf:ro
       - thinker-cache:/tmp
     entrypoint: ["/app/llama-server"]
     command:
       - "-m"
-      - "/models/model.gguf"
+      - "/models/synergix.gguf"
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "8081"
       - "-c"
-      - "8192"
+      - "4096"
       - "-t"
       - "4"
       - "-tb"
@@ -51,8 +51,7 @@ services:
       - "-n"
       - "2048"
       - "--parallel"
-      - "2"
-      - "--cont-batching"
+      - "1"
     ports:
       - "127.0.0.1:8081:8081"
     deploy:
