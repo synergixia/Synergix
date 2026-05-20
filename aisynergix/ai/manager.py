@@ -66,6 +66,74 @@ def _extract_sticker(response: str) -> Tuple[str, Optional[str]]:
     return response, None
 
 
+# Customer-service filler patterns the model produces despite system-prompt prohibitions.
+# _FILLER_START: greeting at the beginning of a response.
+# _FILLER_END: closing offer-to-help anchored to the end of the response.
+_FILLER_START = re.compile(
+    r'^(?:'
+    r'[¡]?\s*Hola[,!]?\s+'           # es
+    r'|Hi[,!]?\s+'                    # en
+    r'|Hey[,!]?\s+'                   # en
+    r'|Hello[,!]?\s+'                 # en
+    r'|Bonjour[,!]?\s+'               # fr
+    r'|Ol[aá][,!]?\s+'                # pt
+    r'|你好[,，！。]?\s*'              # zh
+    r'|مرحبا[،,!]?\s+'                # ar
+    r'|नमस्ते[,!]?\s+'                # hi
+    r'|হ্যালো[,!]?\s+'               # bn
+    r'|Halo[,!]?\s+'                  # id
+    r'|ہیلو[,!]?\s+'                  # ur
+    r')',
+    re.IGNORECASE,
+)
+
+_FILLER_END = re.compile(
+    r'(?:'
+    # Spanish
+    r'[¿]?[Ee]n qu[eé](?: m[aá]s)? puedo (?:ayudarte|asistirte|servirte)[^.!?]*[.!?]?'
+    r'|[¿]?[Hh]ay algo m[aá]s(?: en lo que)? que pueda (?:ayudarte|asistirte)[^.!?]*[.!?]?'
+    r'|[¿]?[Tt]ienes alguna (?:otra )?pregunta[^.!?]*[.!?]?'
+    r'|[¿]?[Nn]ecesitas m[aá]s (?:informaci[oó]n|ayuda)[^.!?]*[.!?]?'
+    r'|[¿]?[Pp]uedo ayudarte en algo m[aá]s[^.!?]*[.!?]?'
+    # English
+    r'|[Hh]ow (?:else )?(?:can|may) I (?:help|assist) you[^.!?]*[.!?]?'
+    r'|[Ii]s there anything else[^.!?]*[.!?]?'
+    r'|[Ff]eel free to ask[^.!?]*[.!?]?'
+    r'|[Dd]o you have any (?:other )?questions[^.!?]*[.!?]?'
+    # French
+    r'|[Cc]omment puis-je (?:vous|te) aider[^.!?]*[.!?]?'
+    r'|[Yy] a-t-il autre chose[^.!?]*[.!?]?'
+    # Portuguese
+    r'|[Cc]omo posso (?:te |lhe )?ajudar[^.!?]*[.!?]?'
+    r'|[Hh][aá] algo mais[^.!?]*[.!?]?'
+    # Indonesian
+    r'|[Aa]da yang bisa saya bantu[^.!?]*[.!?]?'
+    r'|[Bb]agaimana saya bisa membantu[^.!?]*[.!?]?'
+    # Arabic
+    r'|كيف يمكنني مساعدتك[^.!?؟]*[.!?؟]?'
+    r'|هل هناك شيء آخر[^.!?؟]*[.!?؟]?'
+    # Hindi
+    r'|मैं (?:और )?कैसे (?:आपकी )?मदद कर सकता[^.!?]*[.!?]?'
+    # Bengali
+    r'|আমি কীভাবে সাহায্য করতে পারি[^.!?]*[.!?]?'
+    # Urdu
+    r'|میں آپ کی کیسے مدد کر سکتا[^.!?]*[.!?]?'
+    r')\s*$',
+    re.IGNORECASE,
+)
+
+
+def _strip_filler(text: str) -> str:
+    """Strip customer-service filler patterns that the model adds despite prompt prohibitions."""
+    # Strip greeting from start only when enough content would remain after removal.
+    stripped = _FILLER_START.sub('', text)
+    if len(stripped.strip()) > 15:
+        text = stripped
+    # Strip closing offer-to-help anchored to end of string.
+    text = _FILLER_END.sub('', text).rstrip()
+    return text.strip()
+
+
 def _detect_lang(text: str) -> Optional[str]:
     """Return our language code for the dominant language in text, or None on failure."""
     if len(text) < 20:
@@ -149,6 +217,7 @@ class AIManager:
                         )
 
             clean_response, sticker_emoji = _extract_sticker(response)
+            clean_response = _strip_filler(clean_response)
 
             await self._append_conversation_history(uid, "user", message)
             await self._append_conversation_history(uid, "assistant", clean_response)
@@ -207,6 +276,7 @@ class AIManager:
             # produced one (thinking overflowed max_tokens).
             if answer_buf.strip():
                 clean_response, _ = _extract_sticker(answer_buf)
+                clean_response = _strip_filler(clean_response)
                 await self._append_conversation_history(uid, "user", message)
                 await self._append_conversation_history(uid, "assistant", clean_response)
 
@@ -503,4 +573,6 @@ __all__ = [
     "ELITE_THRESHOLD",
     "LEGENDARY_THRESHOLD",
     "CHALLENGE_BONUS_POINTS",
+    "_extract_sticker",
+    "_strip_filler",
 ]
