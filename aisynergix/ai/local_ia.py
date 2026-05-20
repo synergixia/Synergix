@@ -117,10 +117,9 @@ JUDGE_MAX_INPUT_CHARS = 3000
 # _ThinkStripper stays active in case thinking is triggered.
 THINKER_TEMPERATURE = 0.7
 THINKER_TOP_K = 20
-# 1536 tokens gives headroom for verbose responses at ~10-15 tok/s on 4
-# threads.  The system prompt targets ≤250 words (~350 tokens) so normal
-# answers finish well within the 120 s timeout.
-THINKER_MAX_TOKENS = 1536
+# 350 tokens ≈ 250 words — matches the system prompt's target response length.
+# At ~7 t/s (--no-mmap, -fa, ARM NEON) worst-case latency is ~50 s.
+THINKER_MAX_TOKENS = 350
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
 JUDGE_MAX_TOKENS = 768
