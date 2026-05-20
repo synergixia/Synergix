@@ -36,18 +36,18 @@ services:
       - "-c"
       - "8192"
       - "-t"
-      - "2"
+      - "4"
       - "-tb"
-      - "2"
+      - "4"
       - "--no-mmap"
       - "--temp"
-      - "0.7"
+      - "0.5"
       - "--top-k"
       - "20"
       - "--top-p"
-      - "0.8"
+      - "0.7"
       - "--repeat-penalty"
-      - "1.05"
+      - "1.1"
       - "-n"
       - "2048"
       - "--parallel"
@@ -58,10 +58,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2.0"
+          cpus: "4.0"
           memory: "3.0G"
         reservations:
-          cpus: "1.0"
+          cpus: "2.0"
           memory: "1.8G"
     security_opt:
       - no-new-privileges:true

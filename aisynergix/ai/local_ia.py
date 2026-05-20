@@ -111,12 +111,17 @@ JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 # plenty of room for the system prompt and the JSON output.
 JUDGE_MAX_INPUT_CHARS = 3000
 
-# Qwen2.5-3B-Instruct recommended sampling (official Qwen2.5 guidance).
-THINKER_TEMPERATURE = 0.7
+# Qwen2.5-3B-Instruct sampling tuned for precision over creativity:
+# - temp 0.5 (lower than the 0.7 default) cuts hallucinations and produces
+#   more deterministic, factual responses.
+# - top_k 20 / top_p 0.7 (server default) narrows the sampling pool to the
+#   most probable tokens, so the model is less likely to invent details.
+THINKER_TEMPERATURE = 0.5
 THINKER_TOP_K = 20
 # 1536 gives a safety margin for verbose responses while keeping worst-case
-# latency under 3 minutes at ~8-10 tok/s.  The system prompt targets ≤250
-# words (~350 tokens), so the extra headroom is rarely consumed.
+# latency under ~90 s at 4 threads (~15-20 tok/s on Qwen2.5-3B Q5_K_M).
+# The system prompt targets ≤250 words (~350 tokens), so the extra headroom
+# is rarely consumed.
 THINKER_MAX_TOKENS = 1536
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
@@ -151,9 +156,13 @@ THINKER_SYSTEM_PROMPT = (
     "como conocimiento propio — intégralos con naturalidad. No digas 'según la "
     "memoria' ni 'un usuario aportó'. Si no hay fragmentos útiles, responde "
     "desde tu conocimiento general.\n\n"
-    "3. PRECISIÓN SIN ALUCINACIONES: Solo afirma lo que sabes con certeza. Si "
-    "no conoces algo, dilo claramente. Sin relleno, sin datos inventados, sin "
-    "repeticiones vacías. Ve directo al insight valioso.\n\n"
+    "3. PRECISIÓN SIN ALUCINACIONES — REGLA SAGRADA: Solo afirma lo que sabes "
+    "con certeza. NUNCA inventes nombres, fechas, cifras, citas, libros, "
+    "personas, URLs ni hechos específicos. Si no estás 100% seguro, usa "
+    "frases honestas: 'no tengo certeza sobre eso', 'no conozco ese detalle', "
+    "'no puedo confirmarlo'. Es MIL veces mejor admitir desconocimiento que "
+    "inventar datos. Sin relleno, sin repeticiones vacías. Ve directo al "
+    "insight valioso y verificable.\n\n"
     "4. LONGITUD — CRÍTICO: Máximo 2 párrafos cortos, ≤250 palabras. SIEMPRE "
     "termina con una oración completa. Mejor breve y completo que largo y "
     "cortado a la mitad. Adapta la extensión a la pregunta.\n\n"
