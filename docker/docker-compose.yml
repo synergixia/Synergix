@@ -23,7 +23,7 @@ services:
       synergix-net:
         ipv4_address: 172.28.0.10
     volumes:
-      - ../aisynergix/ai/models/llama-3.2-3b-instruct-q5_k_m.gguf:/models/synergix.gguf:ro
+      - ../aisynergix/ai/models/qwen3-4b-q4_k_m.gguf:/models/synergix.gguf:ro
       - thinker-cache:/tmp
     entrypoint: ["/app/llama-server"]
     command:
@@ -41,13 +41,13 @@ services:
       - "4"
       - "--no-mmap"
       - "--temp"
-      - "0.6"
+      - "0.7"
       - "--top-k"
-      - "40"
+      - "20"
       - "--top-p"
-      - "0.9"
+      - "0.8"
       - "--repeat-penalty"
-      - "1.1"
+      - "1.0"
       - "-n"
       - "2048"
       - "--parallel"
@@ -58,10 +58,10 @@ services:
       resources:
         limits:
           cpus: "4.0"
-          memory: "3.0G"
+          memory: "3.5G"
         reservations:
           cpus: "2.0"
-          memory: "1.8G"
+          memory: "2.5G"
     security_opt:
       - no-new-privileges:true
     read_only: false
