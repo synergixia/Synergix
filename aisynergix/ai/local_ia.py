@@ -150,10 +150,12 @@ THINKER_SYSTEM_PROMPT = (
     "nombres de personas reales, fechas exactas, cifras, citas textuales, títulos "
     "de obras, URLs. Si no los sabes, di: 'no tengo certeza sobre ese dato'. "
     "Esta regla aplica a hechos verificables, NO a conversación natural ni saludos.\n\n"
-    "3. IDIOMA — OBLIGATORIO: Detecta el idioma del mensaje del usuario y responde "
-    "en ese mismo idioma, sin mezclas ni excepciones.\n"
-    "español | English | 中文 | हिन्दी | العربية | Français | "
-    "বাংলা | Português | Bahasa Indonesia | اردو\n\n"
+    "3. IDIOMA — REGLA ABSOLUTA: Responde SIEMPRE en el mismo idioma que usó el "
+    "usuario en su mensaje. Si escribió en inglés → responde en inglés. "
+    "Si escribió en árabe → responde en árabe. NUNCA mezcles idiomas. "
+    "NUNCA uses español si el usuario escribió en otro idioma.\n"
+    "Idiomas soportados: español | English | 中文 | हिन्दी | العربية | "
+    "Français | বাংলা | Português | Bahasa Indonesia | اردو\n\n"
     "4. CONVERSACIÓN NATURAL — REGLAS CRÍTICAS:\n"
     "  • NUNCA repitas, copies ni parafrasees el mensaje del usuario. Ni al inicio "
     "ni en ninguna parte. Responde directamente con tu contenido.\n"
@@ -480,28 +482,26 @@ class Thinker:
                 lines.append(f"{role}: {msg['content']}")
             parts.append("\n".join(lines))
 
-        # 3. RAG context placed just before the final directive — highest
-        #    recency weight for small models (lost-in-the-middle effect).
-        #    Phrased as an imperative so a 3B model cannot easily skip it.
+        # 3. RAG context — plain block, no inline instructions that could leak
+        #    into the model's output.  The system prompt (rule 1) already tells
+        #    the model to present this as its own knowledge.
         if context:
-            parts.append(
-                f"📜 Memoria Inmortal — USA ESTO COMO BASE DE TU RESPUESTA:\n{context}\n"
-                "(Integra este conocimiento de forma natural, como saber propio)"
-            )
+            parts.append(f"📜 Memoria Inmortal:\n{context}")
 
         # 4. Final directive — last thing the model reads before generating.
+        #    Language comes from the user message, not the profile, so we only
+        #    include a language hint when force_language is explicitly requested.
+        #    For normal flow the system prompt rule 3 handles detection.
         if force_language:
             parts.append(
                 f"⚠️ OBLIGATORIO: responde ÚNICAMENTE en {lang_name}. "
                 f"No uses ningún otro idioma bajo ninguna circunstancia."
             )
-        memory_note = (
-            " Usa la Memoria Inmortal como base."
-            if context else ""
-        )
+        memory_note = " Usa la Memoria Inmortal como base de tu respuesta." if context else ""
         parts.append(
-            f"Idioma: {lang_name}.{memory_note} "
-            "Sin prefijos, sin cabeceras, sin repetir el mensaje del usuario. "
+            f"Responde en el idioma del mensaje anterior.{memory_note} "
+            "Sin prefijos, sin cabeceras, sin títulos de sección, "
+            "sin repetir el mensaje del usuario. "
             "Responde directamente con tu contenido."
         )
         return "\n\n".join(parts)
