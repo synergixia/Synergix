@@ -74,5 +74,6 @@
   "status_trust_score": "🎯 درجة الثقة: {trust_score}/10",
   "status_verified": "✅ المحفظة موثقة",
   "admin_lock_enabled": "🔒 تم تفعيل القفل الطارئ. المساهمات متوقفة.",
-  "admin_lock_disabled": "🔓 تم تعطيل القفل الطارئ. المساهمات نشطة."
+  "admin_lock_disabled": "🔓 تم تعطيل القفل الطارئ. المساهمات نشطة.",
+  "thinking_label": "💭 يفكّر…"
 }

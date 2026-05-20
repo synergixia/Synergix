@@ -74,5 +74,6 @@
   "status_trust_score": "🎯 信任分数: {trust_score}/10",
   "status_verified": "✅ 钱包已验证",
   "admin_lock_enabled": "🔒 紧急锁定已启用。贡献已暂停。",
-  "admin_lock_disabled": "🔓 紧急锁定已禁用。贡献已激活。"
+  "admin_lock_disabled": "🔓 紧急锁定已禁用。贡献已激活。",
+  "thinking_label": "💭 思考中…"
 }

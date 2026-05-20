@@ -74,5 +74,6 @@
   "status_trust_score": "🎯 Trust Score: {trust_score}/10",
   "status_verified": "✅ Wallet verified",
   "admin_lock_enabled": "🔒 Emergency lock ENABLED. Contributions are paused.",
-  "admin_lock_disabled": "🔓 Emergency lock DISABLED. Contributions are active."
+  "admin_lock_disabled": "🔓 Emergency lock DISABLED. Contributions are active.",
+  "thinking_label": "💭 Thinking…"
 }

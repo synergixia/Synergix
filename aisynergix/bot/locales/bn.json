@@ -74,5 +74,6 @@
   "status_trust_score": "🎯 বিশ্বাস স্কোর: {trust_score}/10",
   "status_verified": "✅ ওয়ালেট যাচাইকৃত",
   "admin_lock_enabled": "🔒 জরুরি লক সক্রিয়। অবদান বিরতি দেওয়া হয়েছে।",
-  "admin_lock_disabled": "🔓 জরুরি লক নিষ্ক্রিয়। অবদান সক্রিয়।"
+  "admin_lock_disabled": "🔓 জরুরি লক নিষ্ক্রিয়। অবদান সক্রিয়।",
+  "thinking_label": "💭 ভাবছি…"
 }

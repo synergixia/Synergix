@@ -114,6 +114,7 @@ def _get_fallback_locale() -> Dict[str, Any]:
         "challenge_broadcast": "🎯 *¡Nuevo reto semanal!*\n\n{challenge_description}\n\n💎 +5 puntos extra por aportes relacionados.\n🔥 ¡Participa ahora!",
         "residual_notify": "💫 ¡Tu sabiduría acaba de ser usada para iluminar a otra mente! +1 punto de regalías.",
         "error_generic": "⚡ Synergix está procesando demasiada sabiduría. Intenta de nuevo en unos segundos.",
+        "thinking_label": "💭 Analizando…",
     }
 
 
