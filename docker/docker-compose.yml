@@ -23,7 +23,7 @@ services:
       synergix-net:
         ipv4_address: 172.28.0.10
     volumes:
-      - ../aisynergix/ai/models/qwen3-4b-q4_k_m.gguf:/models/synergix.gguf:ro
+      - ../aisynergix/ai/models/qwen2.5-3b-instruct-q4_k_m.gguf:/models/synergix.gguf:ro
       - thinker-cache:/tmp
     entrypoint: ["/app/llama-server"]
     command:
@@ -48,7 +48,7 @@ services:
       - "--top-p"
       - "0.8"
       - "--repeat-penalty"
-      - "1.0"
+      - "1.05"
       - "-n"
       - "2048"
       - "--parallel"
