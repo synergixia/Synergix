@@ -369,7 +369,12 @@ class LocalLLMConnector:
         top_k: int = 40,
         max_tokens: int = 1024,
     ) -> AsyncGenerator[str, None]:
-        """Yield content tokens via SSE streaming. No retries — caller handles errors."""
+        """Yield content tokens via SSE streaming.
+
+        Retries up to 3 times with exponential back-off on 503 (model loading /
+        slot busy) and transient network errors.  Other HTTP errors propagate
+        immediately.
+        """
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
@@ -383,25 +388,48 @@ class LocalLLMConnector:
         }
         url = f"{self._base_url}/v1/chat/completions"
         client = await self._get_client()
-        async with client.stream(
-            "POST", url, json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=httpx.Timeout(180.0, connect=5.0),
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line or line == ":":
-                    continue
-                if line == "data: [DONE]":
-                    return
-                if line.startswith("data: "):
-                    try:
-                        chunk = json.loads(line[6:])
-                        token = chunk["choices"][0]["delta"].get("content", "")
-                        if token:
-                            yield token
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        pass
+
+        _RETRYABLE = (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        )
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            if attempt:
+                await asyncio.sleep(3 * attempt)  # 3 s, then 6 s
+            try:
+                async with client.stream(
+                    "POST", url, json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=httpx.Timeout(180.0, connect=5.0),
+                ) as response:
+                    if response.status_code == 503:
+                        last_exc = httpx.HTTPStatusError(
+                            f"503 Service Unavailable from {url}",
+                            request=response.request,
+                            response=response,
+                        )
+                        continue
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line or line == ":":
+                            continue
+                        if line == "data: [DONE]":
+                            return
+                        if line.startswith("data: "):
+                            try:
+                                chunk = json.loads(line[6:])
+                                token = chunk["choices"][0]["delta"].get("content", "")
+                                if token:
+                                    yield token
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                pass
+                    return  # stream finished successfully
+            except _RETRYABLE as exc:
+                last_exc = exc
+
+        raise last_exc  # type: ignore[misc]
 
 
 class Thinker:
