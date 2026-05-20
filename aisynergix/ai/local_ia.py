@@ -100,9 +100,10 @@ JUDGE_MAX_INPUT_CHARS = 3000
 THINKER_TEMPERATURE = 0.6
 THINKER_TOP_K = 40
 # Budget covers both the hidden <think>…</think> trace AND the visible answer.
-# Typical conversational reasoning runs 200-600 think tokens + 200-400 answer
-# tokens, comfortably within 1024.
-THINKER_MAX_TOKENS = 1024
+# DeepSeek-R1 can think for 600-1500 tokens before closing </think>; 2048
+# gives enough room for heavy reasoning + a full visible answer without the
+# thinking trace crowding out the response.
+THINKER_MAX_TOKENS = 2048
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
 JUDGE_MAX_TOKENS = 768

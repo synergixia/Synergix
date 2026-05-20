@@ -49,7 +49,7 @@ services:
       - "--repeat-penalty"
       - "1.1"
       - "-n"
-      - "1536"
+      - "2048"
       - "--parallel"
       - "2"
       - "--cont-batching"

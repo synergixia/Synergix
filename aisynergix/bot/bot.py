@@ -947,10 +947,14 @@ async def handle_conversation_message(
                     pass
 
         if sent_msg is None:
-            # Either uid was already in-flight, or no tokens arrived
             if accumulated.strip():
                 sent_msg = await message.answer(accumulated)
             else:
+                # The thinker returned 200 OK but no visible tokens reached the
+                # bot — most likely the thinking trace consumed all of max_tokens
+                # before closing </think>.  Show a generic error so the user
+                # knows something went wrong rather than seeing silence.
+                await message.answer(t("error_generic", lang))
                 return
 
         # Final edit: strip [[STICKER:emoji]] and apply HTML formatting
