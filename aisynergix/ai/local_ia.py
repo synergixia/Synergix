@@ -11,7 +11,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 # Reasoning models (DeepSeek-R1, QwQ, etc.) wrap their chain-of-thought in
 # <think>…</think>.  We strip it from non-streaming responses; for streaming
 # _ThinkStripper handles tags that are split across SSE tokens.
-# Qwen2.5-3B-Instruct (current thinker) does not emit <think> blocks.
+# Llama-3.2-3B-Instruct (current thinker) does not emit <think> blocks.
 _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
 
 
@@ -29,9 +29,9 @@ class _ThinkStripper:
 
     ``push`` / ``flush`` return a list of ``(kind, text)`` pairs where
     ``kind`` is ``"think"`` (reasoning trace) or ``"answer"`` (visible
-    response).  Qwen2.5-3B-Instruct does not emit ``<think>`` blocks, so in
-    practice all chunks will be tagged ``"answer"``.  The stripper stays in
-    place so that swapping in a reasoning model (QwQ, DeepSeek-R1, etc.)
+    response).  Llama-3.2-3B-Instruct does not emit ``<think>`` blocks, so
+    in practice all chunks will be tagged ``"answer"``.  The stripper stays
+    in place so that swapping in a reasoning model (QwQ, DeepSeek-R1, etc.)
     requires no code changes.
     """
 
@@ -101,8 +101,8 @@ class _ThinkStripper:
 
 THINKER_HOST = os.getenv("THINKER_HOST", "http://thinker:8081")
 JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
-# Qwen2.5-3B Q5_K_M on 2 CPU threads: ~8-10 tok/s.  1024 max_tokens →
-# worst-case ~120 s, which matches this timeout.
+# Llama-3.2-3B Q5_K_M on 4 CPU threads: ~15-20 tok/s.  1536 max_tokens →
+# worst-case ~100 s, which matches this timeout.
 THINKER_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
 JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 
@@ -111,17 +111,14 @@ JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 # plenty of room for the system prompt and the JSON output.
 JUDGE_MAX_INPUT_CHARS = 3000
 
-# Qwen2.5-3B-Instruct sampling tuned for precision over creativity:
-# - temp 0.5 (lower than the 0.7 default) cuts hallucinations and produces
-#   more deterministic, factual responses.
-# - top_k 20 / top_p 0.7 (server default) narrows the sampling pool to the
-#   most probable tokens, so the model is less likely to invent details.
-THINKER_TEMPERATURE = 0.5
-THINKER_TOP_K = 20
-# 1536 gives a safety margin for verbose responses while keeping worst-case
-# latency under ~90 s at 4 threads (~15-20 tok/s on Qwen2.5-3B Q5_K_M).
-# The system prompt targets ≤250 words (~350 tokens), so the extra headroom
-# is rarely consumed.
+# Llama-3.2-3B-Instruct sampling — Meta's recommended defaults:
+# temp 0.6, top_p 0.9, top_k 40.  Slightly more creative than the previous
+# 0.5/0.7 Qwen settings while staying grounded enough to avoid hallucinations.
+THINKER_TEMPERATURE = 0.6
+THINKER_TOP_K = 40
+# 1536 gives a safety margin for verbose/creative responses at ~15-20 tok/s
+# on 4 threads.  The system prompt targets ≤250 words for informative answers
+# (~350 tokens), so the extra headroom is consumed mainly by poems/stories.
 THINKER_MAX_TOKENS = 1536
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
@@ -491,7 +488,7 @@ class Thinker:
     ) -> AsyncGenerator[Tuple[str, str], None]:
         """Yield ``(kind, text)`` chunks where ``kind`` is ``"think"`` or ``"answer"``.
 
-        Qwen2.5-3B-Instruct does not emit a ``<think>`` block, so all chunks
+        Llama-3.2-3B-Instruct does not emit a ``<think>`` block, so all chunks
         will arrive as ``"answer"``.  The ``_ThinkStripper`` stays active so
         that a future swap to a reasoning model works without code changes.
         """
