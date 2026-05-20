@@ -58,7 +58,9 @@ def _extract_sticker(response: str) -> Tuple[str, Optional[str]]:
     """Remove [[STICKER:emoji]] token from response. Returns (clean_text, emoji_or_None)."""
     match = _STICKER_RE.search(response)
     if match:
-        emoji = match.group(1).strip()
+        # Take only the first whitespace-delimited token so that if the model
+        # writes [[STICKER:❤️ conexión]] we still return just "❤️".
+        emoji = match.group(1).strip().split()[0]
         clean = _STICKER_RE.sub(" ", response).strip()
         return clean, emoji
     return response, None
