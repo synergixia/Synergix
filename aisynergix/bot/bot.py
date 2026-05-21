@@ -765,10 +765,13 @@ async def handle_sticker_message(message: Message) -> None:
             "Interpreta la emoción o expresión que transmite este emoji y "
             "responde de forma inteligente y empática en el idioma del usuario.]"
         )
-        response, reply_emoji, _ = await ai.process_conversation(uid, context_text)
+        response, reply_emoji, search_results = await ai.process_conversation(uid, context_text)
         if response:
             final = f"{response}\n{reply_emoji}" if reply_emoji else response
-            await message.answer(final)
+            if search_results:
+                lang = await ai.get_language(uid)
+                final += f"\n\n<i>{t('rag_memory_used', lang, count=len(search_results))}</i>"
+            await message.answer(final, parse_mode="HTML")
     except Exception as e:
         logger.exception("Error en respuesta a sticker de %s: %s", uid, e)
     finally:
@@ -926,6 +929,7 @@ async def handle_conversation_message(
     answer_buf = ""
     think_buf = ""
     saw_answer = False
+    memory_count = 0
     last_edit = 0.0
     THINK_PREVIEW_CHARS = 800  # Telegram caps messages at 4096; show tail only
     THINK_EDIT_INTERVAL = 1.5  # safe distance from Telegram's edit rate limit
@@ -943,6 +947,10 @@ async def handle_conversation_message(
 
     try:
         async for kind, chunk in ai.stream_conversation(uid, ai_text):
+            if kind == "memory_count":
+                memory_count = int(chunk)
+                continue
+
             now = asyncio.get_event_loop().time()
 
             if kind == "think" and not saw_answer:
@@ -1017,6 +1025,8 @@ async def handle_conversation_message(
         clean = _strip_name_prefix(clean)
         clean = _strip_filler(clean)
         final_text = f"{clean}\n{sticker_emoji}" if sticker_emoji else clean
+        if memory_count > 0:
+            final_text += f"\n\n<i>{t('rag_memory_used', lang, count=memory_count)}</i>"
         try:
             await sent_msg.edit_text(final_text, parse_mode="HTML")
         except Exception:

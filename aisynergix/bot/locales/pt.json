@@ -75,5 +75,6 @@
   "status_verified": "✅ Carteira verificada",
   "admin_lock_enabled": "🔒 Bloqueio de emergência ATIVADO. As contribuições estão pausadas.",
   "admin_lock_disabled": "🔓 Bloqueio de emergência DESATIVADO. As contribuições estão ativas.",
-  "thinking_label": "💭 Analisando…"
+  "thinking_label": "💭 Analisando…",
+  "rag_memory_used": "📜 {count} memórias imortais ressoaram aqui"
 }

@@ -75,5 +75,6 @@
   "status_verified": "✅ 钱包已验证",
   "admin_lock_enabled": "🔒 紧急锁定已启用。贡献已暂停。",
   "admin_lock_disabled": "🔓 紧急锁定已禁用。贡献已激活。",
-  "thinking_label": "💭 思考中…"
+  "thinking_label": "💭 思考中…",
+  "rag_memory_used": "📜 {count} 条永恒记忆在此共鸣"
 }

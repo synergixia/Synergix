@@ -75,5 +75,6 @@
   "status_verified": "✅ Wallet verified",
   "admin_lock_enabled": "🔒 Emergency lock ENABLED. Contributions are paused.",
   "admin_lock_disabled": "🔓 Emergency lock DISABLED. Contributions are active.",
-  "thinking_label": "💭 Thinking…"
+  "thinking_label": "💭 Thinking…",
+  "rag_memory_used": "📜 {count} immortal memories resonated here"
 }

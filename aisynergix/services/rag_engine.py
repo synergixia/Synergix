@@ -41,8 +41,11 @@ CATEGORY_TO_BRAIN: Dict[str, str] = {
     "innovacion":   "know",
 }
 
-_QUERY_PREFIX = "query: "
-_PASSAGE_PREFIX = "passage: "
+# paraphrase-multilingual-MiniLM-L12-v2 is a symmetric model — no query/passage
+# prefix needed (those are E5-specific).  Empty strings keep add_batch / search
+# calls uniform without adding noise tokens.
+_QUERY_PREFIX = ""
+_PASSAGE_PREFIX = ""
 
 # Shared embedding model — loaded once, reused by all 4 FAISSEngines
 _shared_model: Optional[SentenceTransformer] = None
@@ -349,7 +352,16 @@ class CrossLingualRAG:
             if isinstance(r, list):
                 all_results.extend(r)
 
-        all_results.sort(key=lambda x: x["score"], reverse=True)
+        # Tag cross-lingual results before sorting
+        for r in all_results:
+            r["cross_lingual"] = (
+                r.get("metadata", {}).get("language") != target_language
+            )
+
+        # Sort: same-language results first, then by semantic score descending.
+        # This ensures the model sees the most relevant same-language fragments
+        # at the top regardless of cross-lingual score competition.
+        all_results.sort(key=lambda x: (x["cross_lingual"], -x["score"]))
 
         # Dedup by first-100-char hash, keep top 7
         seen: Set[str] = set()
@@ -358,9 +370,6 @@ class CrossLingualRAG:
             h = hashlib.sha256(r["text"][:100].encode()).hexdigest()[:8]
             if h not in seen:
                 seen.add(h)
-                r["cross_lingual"] = (
-                    r.get("metadata", {}).get("language") != target_language
-                )
                 merged.append(r)
             if len(merged) == 7:
                 break
@@ -380,9 +389,14 @@ class CrossLingualRAG:
         max_chars = 2000  # tighter cap so the model has room to reason
         for r in relevant:
             text = r["text"].strip()
-            # Clean format: no metadata noise that the model echoes back.
-            # The score header is kept so prompting can reference relevance.
-            entry = f"— {text}\n"
+            # For cross-lingual fragments, add the source language so the model
+            # knows to synthesize the idea in the user's language rather than
+            # copying the original verbatim.
+            if r["cross_lingual"]:
+                src_lang = r.get("metadata", {}).get("language", "?")
+                entry = f"— [{src_lang}] {text}\n"
+            else:
+                entry = f"— {text}\n"
             if total_chars + len(entry) > max_chars:
                 remaining = max_chars - total_chars
                 if remaining > 80:
