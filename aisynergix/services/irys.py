@@ -588,24 +588,39 @@ def get_top10_cached() -> List[Dict[str, Any]]:
 
 async def compute_top10() -> List[Dict[str, Any]]:
     """Calcula top10 leyendo todos los perfiles desde Irys."""
-    nodes = await _query_all(
-        [{"name": "data-type", "value": "user-profile"}], limit=1000
+    # Run both queries in parallel: profiles + all aportes (needed to backfill
+    # contribution-count for profiles written before the tag was added).
+    profile_nodes, aporte_nodes = await asyncio.gather(
+        _query_all([{"name": "data-type", "value": "user-profile"}], limit=1000),
+        _query_all([{"name": "data-type", "value": "aporte"}], limit=5000),
     )
+
+    # Build on-chain aporte count per user (authoritative for all users).
+    aporte_counts: dict = {}
+    for node in aporte_nodes:
+        uid = _node_tags(node).get("uid-hash", "")
+        if uid:
+            aporte_counts[uid] = aporte_counts.get(uid, 0) + 1
+
     seen: Set[str] = set()
     usuarios: List[Dict[str, Any]] = []
-    for node in nodes:
+    for node in profile_nodes:
         rt = _node_tags(node)
         uid = rt.get("uid-hash", "")
         if not uid or uid in seen:
             continue
         seen.add(uid)
         try:
+            # Use the real on-chain aporte count; fall back to stored tag only if
+            # we somehow missed the aportes query (shouldn't happen in practice).
+            real_count = aporte_counts.get(uid, 0)
+            stored_count = int(rt.get("contribution-count", "0"))
             usuarios.append({
-                "uid":              uid,
-                "points":           int(rt.get("points", "0")),
-                "rank":             rt.get("rank", "🌱 Iniciado"),
-                "contribution_count": int(rt.get("contribution-count", "0")),
-                "total_uses_count": int(rt.get("total-uses-count", "0")),
+                "uid":               uid,
+                "points":            int(rt.get("points", "0")),
+                "rank":              rt.get("rank", "🌱 Iniciado"),
+                "contribution_count": max(real_count, stored_count),
+                "total_uses_count":  int(rt.get("total-uses-count", "0")),
             })
         except (ValueError, TypeError):
             continue
