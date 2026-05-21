@@ -1012,8 +1012,9 @@ async def handle_conversation_message(
         # Previously this edit was skipped when final_text == answer_buf
         # (i.e. no sticker), causing the last ≤0.9 s of generated text to
         # be silently dropped.
-        from aisynergix.ai.manager import _extract_sticker
+        from aisynergix.ai.manager import _extract_sticker, _strip_filler
         clean, sticker_emoji = _extract_sticker(answer_buf)
+        clean = _strip_filler(clean)
         final_text = f"{clean}\n{sticker_emoji}" if sticker_emoji else clean
         try:
             await sent_msg.edit_text(final_text, parse_mode="HTML")
