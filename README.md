@@ -1,6 +1,6 @@
 # Synergix — Sovereign Ghost Node AI
 
-Synergix is a decentralized Telegram bot that uses **Irys** (permanent decentralized storage on Arweave) as its only persistent database. The local server holds no mutable state: every user profile, contribution, rank, and configuration lives as a DataItem on the Irys network. If the server is wiped, the node reconstructs itself entirely from Irys by querying tags.
+Synergix is a decentralized Telegram bot powered by local LLMs and **Irys** (permanent decentralized storage on Arweave) as its only persistent database. The server holds no mutable state: every user profile, contribution, rank, and configuration lives as a DataItem on the Irys network. If the server is wiped, the node reconstructs itself entirely from Irys by querying tags.
 
 ---
 
@@ -12,19 +12,18 @@ Telegram User
       ▼
  aiogram 3 Bot  ──── FSM (L1 RAM cache + Irys fallback)
       │
-      ├── Judge (Qwen3-0.6B @ :8080)      — quality scoring 0–10
-      ├── Thinker (Qwen3-1.7B @ :8081)   — conversation + RAG
-      └── Programmer (StarCoder2-3B @ :8082) — code generation
+      ├── Judge  (Qwen2.5-1.5B-Q8 @ :8080)     — quality scoring 0–10
+      ├── Thinker (Qwen2.5-Coder-3B-Q4 @ :8081) — conversation + RAG
       │
-      ├── irys-uploader (:8083)           — Node.js microservice
-      │     └── @irys/upload-ethereum SDK — handles all on-chain signing
+      ├── irys-uploader (:8083)                 — Node.js microservice
+      │     └── @irys/upload-ethereum SDK       — handles all on-chain signing
       │
       ▼
- FAISS Vector Index (multilingual, rebuilt from Irys on startup)
+ FAISS Vector Index (multilingual, 4 specialised brains)
       │
       ▼
  Irys Network (Arweave permanent storage) ─── Source of truth
-      └── gateway.irys.xyz/<txId>         — public immutable URLs
+      └── gateway.irys.xyz/<txId>              — public immutable URLs
 ```
 
 **Ghost Protocol:** Telegram UIDs are never stored on-chain. Every UID is hashed once — `SHA-256("Synergix_" + uid)[:12]` — before touching the storage layer. The real identity behind any profile is permanently unknowable from the blockchain.
@@ -45,8 +44,7 @@ All data is stored as immutable DataItems on Irys. Records are discovered by que
 | `system-config` | `application/json` | Quality thresholds, trust deltas |
 | `ai-guard` | `text/plain; charset=utf-8` | Anti-jailbreak pattern list |
 | `challenge` | `application/json` | Weekly challenge description |
-| `brain-pointer` | `application/json` | Latest FAISS index version per LLM |
-| `brain-pointer-global` | `application/json` | Global FAISS pointer |
+| `brain-pointer` | `application/json` | Latest FAISS index version per brain |
 | `brain-index` | `application/octet-stream` | Serialised FAISS index binary |
 | `brain-meta` | `application/json` | FAISS index metadata (doc count, etc.) |
 | `log` | `application/gzip` | Daily compressed log archive |
@@ -77,18 +75,19 @@ User text
     │
     ├─ length check (min 20 chars)
     ├─ daily quota check (rank.daily_limit)
-    ├─ duplicate check (FAISS cosine similarity)
+    ├─ duplicate check (SHA-256 hash cache, max 2000 entries)
     │
     ▼
-Judge LLM (Qwen3-0.6B)
+Judge LLM (Qwen2.5-1.5B-Q8)
     ├─ quality_score  0.0 – 10.0
-    ├─ approved       bool
+    ├─ approved       bool  (threshold ≥ 6.0)
     ├─ category       string
-    └─ impact_index   float
+    ├─ impact_index   float
+    └─ constructive_feedback  string (when rejected)
     │
     ▼
 Points = int(quality × 2) + bonus
-Trust score ± delta (5.0 default, clipped 0–10)
+Trust score ± delta (default 5.0, clipped 0–10)
     │
     ▼
 write_aporte() → POST irys-uploader:8083/upload
@@ -96,7 +95,7 @@ write_aporte() → POST irys-uploader:8083/upload
     Public URL: https://gateway.irys.xyz/<txId>
     │
     ▼
-RAG index ← add contribution (FAISS + metadata)
+RAG index ← add contribution (FAISS + metadata, brain routed by category)
     │
     ▼
 check_and_update_rank() → write_user_tags() → Irys
@@ -107,10 +106,58 @@ Bot reply: CID = txId (displayed to user)
 
 ---
 
+## Judge Content Policy
+
+The Judge automatically rejects (quality_score = 0.0) any contribution that:
+
+- Is spam, advertising, offensive, or irrelevant
+- Contains only emojis or lacks real semantic meaning
+- Is a question instead of a reflection, knowledge, or assertion
+- Is fewer than 3 meaningful words
+- Contains demonstrably false or dangerous information
+- **References the Synergix project itself** — its mission, tokenomics, features, roadmap, pricing, team, contracts, or bot functionality (Synergix cannot immortalise itself)
+- **Violates third-party privacy** — personal data, confidential information, real-world locations, identities, or doxxing in any form
+- **Promotes illegal activities**, violence, hatred, discrimination, or exploitation of any person or group
+
+---
+
+## AI Conversation
+
+### Streaming Response
+All free-conversation messages are handled via token-streaming from Qwen2.5-Coder-3B. The bot shows a live typing preview that updates every ~0.9 s and performs a final clean edit at stream end. Supports reasoning-model think-traces (`<think>…</think>`) transparently.
+
+### Immortal Memory (RAG)
+On every conversation turn, Synergix searches the FAISS index across 4 specialised brains in parallel:
+
+| Brain | Categories |
+|-------|-----------|
+| `prog` | programacion |
+| `tech` | tecnologia |
+| `cien` | ciencia |
+| `know` | filosofia, arte, vida, espiritualidad, economia, naturaleza, sociedad, innovacion |
+
+- Minimum relevance threshold: **0.45** (below this, context is not injected)
+- Same-language results are prioritised over cross-lingual results
+- Cross-lingual fragments are annotated with `[lang]` so the model synthesises them in the user's language
+- When immortal memory is used, a footer is appended to the response:
+  `📜 N memorias inmortales resonaron aquí` (in the user's language)
+
+### Emoji Responses
+When a user sends an emoji-only message, Synergix responds with a single empathetic emoji reaction — no verbose explanation. The model's `[[STICKER:X]]` output token is used; if absent, emojis are extracted from the response text.
+
+### Response Post-Processing (output pipeline)
+Every response passes through:
+1. `_strip_thinking` — removes `<think>…</think>` blocks (reasoning models)
+2. `_strip_name_prefix` — removes `"Synergix: "` or similar name prefixes the model might add
+3. `_extract_sticker` — extracts `[[STICKER:emoji]]` for Telegram sticker replies
+4. `_strip_filler` — strips customer-service greeting/closing phrases
+
+---
+
 ## Wallet Verification (BscScan)
 
 1. User taps **Synergix → Verify Wallet**
-2. Bot generates a nonce-based challenge (no address required upfront):
+2. Bot generates a nonce-based challenge:
    ```
    Synergix Identity Verification
    Nonce: <16 hex chars>
@@ -118,11 +165,11 @@ Bot reply: CID = txId (displayed to user)
    This signature is gasless and does not move funds.
    ```
 3. Bot displays the challenge + link to **https://bscscan.com/verifiedSignatures**
-4. User signs the message in their wallet via BscScan (MetaMask, Trust Wallet, etc.)
+4. User signs in their wallet via BscScan (MetaMask, Trust Wallet, etc.)
 5. User pastes the hex signature back in the bot
 6. Bot recovers the signer address via `eth_account.Account.recover_message` (ecrecover)
-7. Address stored as `wallet_address` field in the user-profile DataItem on Irys
-8. `human_verified = true` — unlocks Programmer mode
+7. Address stored as `wallet_address` in the user-profile DataItem on Irys
+8. `human_verified = true` unlocked
 
 Challenge expires after 10 minutes. Works in all 10 supported languages.
 
@@ -158,7 +205,6 @@ Language is persisted in the `user-profile` DataItem and auto-detected from the 
 | 📊 View Status | Display points, rank, daily quota, trust score |
 | 🧠 My Memory | List last 10 contributions from Irys |
 | 🌐 Language | Inline language selector (10 options) |
-| 👨‍💻 Programmer | Code generation mode (requires verified wallet) |
 | 💰 Synergix | Trading menu (verify wallet, buy/sell links, balance, price, bonding curve) |
 | 🏆 Top Mentes | Leaderboard top-10 (rebuilt every 10 min) |
 
@@ -170,14 +216,13 @@ Language is persisted in the `user-profile` DataItem and auto-detected from the 
 
 | Service | Model | Port | Role | Resources |
 |---------|-------|------|------|-----------|
-| Thinker | `qwen3-1.7b.gguf` | 8081 | Conversations, Oracle, RAG generation | 2 CPU / 1.8 GB RAM |
-| Judge | `qwen3-0.6b.gguf` | 8080 | Quality scoring, contribution validation | 1 CPU / 0.8 GB RAM |
-| Programmer | `starcoder2-3b.gguf` | 8082 | Code generation (verified users) | 2 CPU / 2.5 GB RAM |
+| Thinker | `qwen2.5-coder-3b-instruct-q4_k_m.gguf` | 8081 | Conversations, Oracle, RAG generation | 4 CPU / 4 GB RAM |
+| Judge | `qwen2.5-1.5b-q8.gguf` | 8080 | Quality scoring, contribution validation | 1 CPU / 2.5 GB RAM |
 | irys-uploader | Node.js 20 | 8083 | Irys DataItem signing via `@irys/upload-ethereum` | 0.5 CPU / 512 MB RAM |
 
-All LLMs run as `llama.cpp` server containers. The bot and irys-uploader communicate over the Docker internal network (`synergix-net`, subnet `172.28.0.0/16`).
+All LLMs run as `llama.cpp` server containers (`ghcr.io/ggml-org/llama.cpp:server`). The bot and irys-uploader communicate over the Docker internal network (`synergix-net`, subnet `172.28.0.0/16`).
 
-**RAG Engine:** `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384-dimensional embeddings, `faiss-cpu`). Index rebuilt from all Irys `aporte` DataItems on startup. Duplicate detection threshold and semantic search run against the same FAISS index.
+**RAG Engine:** `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384-dimensional embeddings, `faiss-cpu`, IVF-PQ index). Index partitioned into 4 brains by knowledge category. Rebuilt from Irys `aporte` DataItems on startup.
 
 ---
 
@@ -214,18 +259,17 @@ All LLMs run as `llama.cpp` server containers. The bot and irys-uploader communi
 Synergix/
 ├── aisynergix/
 │   ├── ai/
-│   │   ├── manager.py          # AI orchestration, contribution processing
-│   │   └── local_ia.py         # LLM client wrappers (thinker / judge / programmer)
+│   │   ├── manager.py          # AI orchestration, contribution processing, RAG pipeline
+│   │   └── local_ia.py         # LLM client wrappers (Thinker / Judge), prompts, streaming
 │   ├── bot/
-│   │   ├── bot.py              # aiogram 3 handlers, commands, keyboards
+│   │   ├── bot.py              # aiogram 3 handlers, commands, keyboards, emoji logic
 │   │   ├── fsm.py              # FSM states, L1 RAM cache (TTL 3600 s, max 500)
 │   │   ├── identity.py         # UserProfile dataclass, UserCache (TTL 30 s), IdentityManager
 │   │   ├── locales.py          # i18n loader
 │   │   └── locales/            # JSON string tables (10 languages)
 │   └── services/
-│       ├── irys.py             # Primary storage layer: Irys DataItem read/write via irys-uploader
-│       ├── greenfield.py       # Legacy Greenfield SDK wrapper (retained for reference)
-│       ├── rag_engine.py       # FAISS index + sentence-transformers
+│       ├── irys.py             # Primary storage layer: Irys DataItem read/write
+│       ├── rag_engine.py       # FAISS index + sentence-transformers, 4-brain architecture
 │       ├── wallet_verify.py    # BscScan nonce challenge + ecrecover verification
 │       ├── trading.py          # PancakeSwap V2 read-only + deep-links
 │       ├── dexscreener.py      # DexScreener market data API
@@ -240,7 +284,7 @@ Synergix/
 │   └── irys_fund.py            # Utility to fund the Irys node wallet
 ├── docker/
 │   ├── Dockerfile              # Python bot image
-│   └── docker-compose.yml      # All 5 services: thinker, judge, programmer, irys-uploader, bot
+│   └── docker-compose.yml      # 4 services: thinker, judge, irys-uploader, bot
 ├── .env.example
 └── requirements.txt
 ```
@@ -269,18 +313,14 @@ Synergix/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SYNERGIX_THINKER_HOST` | `http://thinker:8081` | Thinker LLM endpoint |
-| `SYNERGIX_JUDGE_HOST` | `http://judge:8080` | Judge LLM endpoint |
-| `SYNERGIX_PROGRAMMER_HOST` | `http://programmer:8082` | Programmer LLM endpoint |
+| `THINKER_HOST` | `http://thinker:8081` | Thinker LLM endpoint |
+| `JUDGE_HOST` | `http://judge:8080` | Judge LLM endpoint |
 
 ### Application
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SYNERGIX_ADMIN_IDS` | — | Comma-separated Telegram UIDs for `/admin` commands |
-| `SYNERGIX_SIWE_DOMAIN` | `synergix.bot` | Domain for SIWE-style challenges |
-| `SYNERGIX_SIWE_URI` | `https://synergix.bot` | URI for SIWE-style challenges |
-| `SYNERGIX_SIWE_CHAIN_ID` | `56` | Chain ID for challenges (BSC = 56) |
 | `SYNERGIX_CACHE_TTL` | `12` | Hours for miscellaneous cache TTL |
 | `BSC_RPC_URL` | `https://bsc-dataseed1.binance.org` | BSC RPC for on-chain price reads |
 
@@ -292,9 +332,8 @@ Synergix/
 
 - Docker + Docker Compose
 - GGUF model files placed in `aisynergix/ai/models/`:
-  - `qwen3-1.7b.gguf` (Thinker)
-  - `qwen3-0.6b.gguf` (Judge)
-  - `starcoder2-3b.gguf` (Programmer)
+  - `qwen2.5-coder-3b-instruct-q4_k_m.gguf` (Thinker)
+  - `qwen2.5-1.5b-q8.gguf` (Judge)
 - A BNB wallet with enough BNB on Irys to cover uploads (`scripts/irys_fund.py`)
 
 ### Steps
@@ -327,8 +366,8 @@ On startup the bot:
 2. Loads `system-config` DataItem from Irys (quality thresholds)
 3. Loads `ai-guard` DataItem from Irys (anti-jailbreak patterns)
 4. Checks `emergency-lock` presence on Irys
-5. Rebuilds the FAISS index from all `aporte` DataItems on Irys
-6. Health-checks thinker, judge, and programmer LLMs
+5. Rebuilds the FAISS index from all `aporte` DataItems on Irys (4 brains)
+6. Health-checks Thinker and Judge LLMs
 
 If Irys is unreachable during startup, the bot falls back to in-memory defaults and retries on the next scheduled cycle.
 
@@ -359,3 +398,5 @@ Every successful upload logs `TxID generado: <id>` to stdout. The Python layer l
 | Wallet address recovery without user input | nonce-based challenge + `ecrecover` from BscScan signature |
 | UID privacy | SHA-256 hash prefix used everywhere; raw Telegram UID never stored |
 | FAISS index persistence | Serialised binary uploaded to Irys as `brain-index` DataItem; rebuilt from it on startup |
+| Model name prefix in responses | Post-processing pipeline strips `"Synergix: "` prefix that small LLMs emit |
+| Cross-lingual RAG | Same-language results ranked first; cross-lingual fragments annotated with `[lang]` tag |

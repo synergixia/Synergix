@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 import html
 import logging
@@ -55,6 +56,25 @@ def _is_emoji_only(text: str) -> bool:
     if not cleaned or len(cleaned) > 20:
         return False
     return not any(c.isascii() and (c.isalpha() or c.isdigit()) for c in cleaned)
+
+
+# Broad Unicode emoji range — covers emoticons, symbols, dingbats, flags, extras.
+_EMOJI_CHAR_RE = re.compile(
+    r'[\U0001F000-\U0001FFFF☀-➿⌀-⏿]',
+    re.UNICODE,
+)
+
+
+def _extract_emoji_reply(text: str) -> str:
+    """Extract up to 2 distinct emoji chars from a model response for emoji-only replies."""
+    found = _EMOJI_CHAR_RE.findall(text)
+    deduped: list = []
+    for e in found:
+        if not deduped or e != deduped[-1]:
+            deduped.append(e)
+        if len(deduped) >= 2:
+            break
+    return " ".join(deduped) if deduped else "✨"
 
 
 async def _keep_typing(chat_id: int, stop_event: asyncio.Event) -> None:
@@ -911,13 +931,15 @@ async def handle_conversation_message(
 
     ai = get_ai_manager()
 
-    # Emoji-only message → add interpretation hint so the AI responds meaningfully
+    # Emoji-only message → ask the model for a single emoji reaction.
+    # The full verbose response is suppressed; only emojis are extracted and shown.
+    is_emoji_msg = _is_emoji_only(text)
     ai_text = text
-    if _is_emoji_only(text):
+    if is_emoji_msg:
         ai_text = (
-            f"[El usuario envió solo el emoji/expresión: {text}. "
-            "Interpreta qué emoción o situación expresa y responde de forma "
-            "inteligente y empática en texto, en el idioma del usuario.]"
+            f"[El usuario envió el emoji {text}. "
+            "Responde ÚNICAMENTE con 1 o 2 emojis que expresen una reacción empática "
+            "natural. Nada de texto — solo el [[STICKER:X]] apropiado.]"
         )
 
     # Stream tokens: Qwen2.5-Coder-3B produces no <think> block so all chunks
@@ -979,6 +1001,8 @@ async def handle_conversation_message(
                 if not saw_answer:
                     saw_answer = True
                     stop_typing.set()
+                    if is_emoji_msg:
+                        continue  # accumulate silently; final emoji shown after stream
                     if sent_msg is None:
                         if len(answer_buf.strip()) >= 1:
                             sent_msg = await message.answer(answer_buf)
@@ -991,6 +1015,8 @@ async def handle_conversation_message(
                         pass
                     last_edit = now
                     continue
+                if is_emoji_msg:
+                    continue  # keep accumulating, don't stream intermediate text
                 if now - last_edit >= ANSWER_EDIT_INTERVAL:
                     try:
                         await sent_msg.edit_text(answer_buf)
@@ -1010,6 +1036,14 @@ async def handle_conversation_message(
                     pass
             else:
                 await message.answer(t("error_generic", lang))
+            return
+
+        # Emoji-only path: show only the extracted emoji reaction, no footer.
+        if is_emoji_msg:
+            from aisynergix.ai.manager import _extract_sticker
+            _, reply_emoji = _extract_sticker(answer_buf)
+            emoji_final = reply_emoji if reply_emoji else _extract_emoji_reply(answer_buf)
+            await message.answer(emoji_final)
             return
 
         if sent_msg is None:
