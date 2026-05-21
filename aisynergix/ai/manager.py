@@ -53,6 +53,14 @@ _LANGDETECT_MAP: Dict[str, str] = {
 
 _STICKER_RE = re.compile(r'\s*\[\[STICKER:([^\]]+)\]\]\s*')
 
+# Strip leading "Name: " prefixes the model emits despite being told not to.
+_NAME_PREFIX_RE = re.compile(r'^(?:Synergix|Or[áa]culo|Oracle|Asistente|Assistant)\s*:\s*', re.IGNORECASE)
+
+
+def _strip_name_prefix(text: str) -> str:
+    """Remove leading 'Name: ' that the model emits despite system-prompt prohibitions."""
+    return _NAME_PREFIX_RE.sub('', text).lstrip()
+
 
 def _extract_sticker(response: str) -> Tuple[str, Optional[str]]:
     """Remove [[STICKER:emoji]] token from response. Returns (clean_text, emoji_or_None)."""
@@ -217,6 +225,7 @@ class AIManager:
                         )
 
             clean_response, sticker_emoji = _extract_sticker(response)
+            clean_response = _strip_name_prefix(clean_response)
             clean_response = _strip_filler(clean_response)
 
             await self._append_conversation_history(uid, "user", message)
@@ -261,6 +270,12 @@ class AIManager:
             )
 
             answer_buf = ""
+            # Buffer the first answer tokens to strip any leading "Name: " prefix
+            # before the user sees it.  15 chars is enough to contain "Synergix: ".
+            _pfx_buf = ""
+            _pfx_done = False
+            _PFX_WINDOW = 15
+
             async with _THINKER_SEM:
                 async for kind, text in self._thinker.stream_think(
                     user_message=message,
@@ -270,12 +285,26 @@ class AIManager:
                 ):
                     if kind == "answer":
                         answer_buf += text
-                    yield (kind, text)
+                        if not _pfx_done:
+                            _pfx_buf += text
+                            if len(_pfx_buf) >= _PFX_WINDOW:
+                                _pfx_done = True
+                                yield ("answer", _strip_name_prefix(_pfx_buf))
+                            # else: keep buffering, don't yield yet
+                        else:
+                            yield ("answer", text)
+                    else:
+                        yield (kind, text)
+
+            # Flush prefix buffer if the stream ended before reaching _PFX_WINDOW.
+            if not _pfx_done and _pfx_buf:
+                yield ("answer", _strip_name_prefix(_pfx_buf))
 
             # Only persist the visible answer.  Skip when the model never
             # produced one (thinking overflowed max_tokens).
             if answer_buf.strip():
                 clean_response, _ = _extract_sticker(answer_buf)
+                clean_response = _strip_name_prefix(clean_response)
                 clean_response = _strip_filler(clean_response)
                 await self._append_conversation_history(uid, "user", message)
                 await self._append_conversation_history(uid, "assistant", clean_response)
@@ -575,4 +604,5 @@ __all__ = [
     "CHALLENGE_BONUS_POINTS",
     "_extract_sticker",
     "_strip_filler",
+    "_strip_name_prefix",
 ]
