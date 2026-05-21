@@ -52,6 +52,7 @@
   "verify_failed": "❌ Firma inválida o caducada. Asegúrate de firmar exactamente el mensaje proporcionado.",
   "already_verified": "✅ Ya tienes una wallet verificada:\n<code>{address}</code>\n\n¿Deseas vincular una nueva?",
   "btn_new_wallet": "🔄 Nueva wallet",
+  "btn_continuar": "✅ Continuar",
   "btn_top_mentes": "🏆 Top Mentes",
   "top_mentes_header": "🏆 <b>Top 10 Mentes Synergix</b>\n\nLas mentes que más sabiduría han inmortalizado:\n",
   "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} pts · {contribs} aportes",

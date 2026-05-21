@@ -52,6 +52,7 @@
   "verify_failed": "❌ Assinatura inválida ou expirada. Certifique-se de assinar exatamente a mensagem fornecida.",
   "already_verified": "✅ Você já tem uma carteira verificada:\n<code>{address}</code>\n\nDeseja vincular uma nova?",
   "btn_new_wallet": "🔄 Nova carteira",
+  "btn_continuar": "✅ Continuar",
   "btn_top_mentes": "🏆 Top Mentes",
   "top_mentes_header": "🏆 <b>Top 10 Mentes Synergix</b>\n\nAs mentes que mais sabedoria imortalizaram:\n",
   "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} pts · {contribs} contribs",
