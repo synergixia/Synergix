@@ -269,6 +269,11 @@ class AIManager:
                 self._rag.query(message, target_language),
             )
 
+            # Yield memory count as the very first item so the bot can build
+            # the footer without waiting for the full stream to complete.
+            if search_results:
+                yield ("memory_count", str(len(search_results)))
+
             answer_buf = ""
             # Buffer the first answer tokens to strip any leading "Name: " prefix
             # before the user sees it.  15 chars is enough to contain "Synergix: ".

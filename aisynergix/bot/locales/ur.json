@@ -75,5 +75,6 @@
   "status_verified": "✅ والٹ تصدیق شدہ",
   "admin_lock_enabled": "🔒 ایمرجنسی لاک فعال۔ شراکتیں روک دی گئی ہیں۔",
   "admin_lock_disabled": "🔓 ایمرجنسی لاک غیر فعال۔ شراکتیں فعال ہیں۔",
-  "thinking_label": "💭 سوچ رہا ہوں…"
+  "thinking_label": "💭 سوچ رہا ہوں…",
+  "rag_memory_used": "📜 {count} لافانی یادیں یہاں گونجیں"
 }

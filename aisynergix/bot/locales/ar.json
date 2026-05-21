@@ -75,5 +75,6 @@
   "status_verified": "✅ المحفظة موثقة",
   "admin_lock_enabled": "🔒 تم تفعيل القفل الطارئ. المساهمات متوقفة.",
   "admin_lock_disabled": "🔓 تم تعطيل القفل الطارئ. المساهمات نشطة.",
-  "thinking_label": "💭 يفكّر…"
+  "thinking_label": "💭 يفكّر…",
+  "rag_memory_used": "📜 {count} ذاكرة خالدة تردّدت هنا"
 }
