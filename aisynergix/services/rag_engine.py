@@ -18,6 +18,12 @@ TOP_K_RESULTS = 10
 TEMP_INDEX_DIR = Path("/tmp/synergix_faiss")
 TEMP_INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
+# Only include RAG fragments in the prompt when the semantic similarity is
+# meaningful.  Queries like "Como te llamas" return Synergix documentation
+# with score ~0.30-0.38 — below this line the content is irrelevant and
+# causes the model to verbatim-dump the document instead of answering.
+MIN_RELEVANCE_SCORE = 0.45
+
 BRAIN_CODES: List[str] = ["prog", "tech", "cien", "know"]
 
 # Maps Judge category → brain code
@@ -362,28 +368,30 @@ class CrossLingualRAG:
         if not merged:
             return "", []
 
+        # Drop results below the relevance threshold — low-score fragments are
+        # semantically unrelated to the query and cause the model to verbatim-
+        # copy irrelevant content instead of answering the actual question.
+        relevant = [r for r in merged if r["score"] >= MIN_RELEVANCE_SCORE]
+        if not relevant:
+            return "", []
+
         context_parts = []
         total_chars = 0
-        max_chars = 3000
-        for r in merged:
-            text = r["text"]
-            score = r["score"]
-            meta = r.get("metadata", {})
-            author = meta.get("author_uid", "Anónimo")
-            quality = meta.get("quality_score", "N/A")
-            entry = (
-                f"[Sabiduría de {author[:8]} | Calidad: {quality} | "
-                f"Relevancia: {score:.2f}]\n{text}\n"
-            )
+        max_chars = 2000  # tighter cap so the model has room to reason
+        for r in relevant:
+            text = r["text"].strip()
+            # Clean format: no metadata noise that the model echoes back.
+            # The score header is kept so prompting can reference relevance.
+            entry = f"— {text}\n"
             if total_chars + len(entry) > max_chars:
                 remaining = max_chars - total_chars
-                if remaining > 50:
-                    context_parts.append(entry[:remaining] + "...")
+                if remaining > 80:
+                    context_parts.append(entry[:remaining] + "…")
                 break
             context_parts.append(entry)
             total_chars += len(entry)
 
-        return "\n".join(context_parts), merged
+        return "\n".join(context_parts), relevant
 
     async def save_brain_to_greenfield(
         self, code: str, current_version: str
@@ -524,4 +532,5 @@ __all__ = [
     "CATEGORY_TO_BRAIN",
     "EMBEDDING_DIM",
     "TOP_K_RESULTS",
+    "MIN_RELEVANCE_SCORE",
 ]
