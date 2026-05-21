@@ -10,7 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 # Reasoning models (Qwen3, DeepSeek-R1, QwQ, etc.) wrap their chain-of-thought
 # in <think>…</think>.  We strip it from non-streaming responses; for streaming
-# _ThinkStripper handles tags that are split across SSE tokens.  Qwen2.5-3B
+# _ThinkStripper handles tags that are split across SSE tokens.  Qwen2.5-Coder-3B
 # (current thinker) does not emit <think> blocks at all.
 _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
 
@@ -29,10 +29,10 @@ class _ThinkStripper:
 
     ``push`` / ``flush`` return a list of ``(kind, text)`` pairs where
     ``kind`` is ``"think"`` (reasoning trace) or ``"answer"`` (visible
-    response).  Qwen2.5-3B-Instruct does not emit ``<think>`` blocks, so
-    in practice all chunks will be tagged ``"answer"``.  The stripper stays
-    in place so that swapping in a reasoning model (Qwen3, QwQ, DeepSeek-R1,
-    etc.) requires no code changes.
+    response).  Qwen2.5-Coder-3B-Instruct does not emit ``<think>`` blocks,
+    so in practice all chunks will be tagged ``"answer"``.  The stripper
+    stays in place so that swapping in a reasoning model (Qwen3, QwQ,
+    DeepSeek-R1, etc.) requires no code changes.
     """
 
     OPEN = "<think>"
@@ -101,7 +101,9 @@ class _ThinkStripper:
 
 THINKER_HOST = os.getenv("THINKER_HOST", "http://thinker:8081")
 JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
-# Qwen2.5-3B Q4_K_M on 4 CPU threads: ~10-13 tok/s (with --no-mmap + -fa).
+# Qwen2.5-Coder-3B Q4_K_M on 4 CPU threads: ~10-13 tok/s (with --no-mmap).
+# Coder variant follows instructions more literally than the base Instruct
+# model and is far less prone to customer-service filler patterns.
 # 350 max_tokens → worst-case ~35 s; 120 s timeout leaves a wide margin
 # for the prompt-eval phase of the first uncached request.
 THINKER_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
@@ -112,12 +114,14 @@ JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 # plenty of room for the system prompt and the JSON output.
 JUDGE_MAX_INPUT_CHARS = 3000
 
-# Qwen2.5-3B-Instruct sampling — Alibaba's recommended chat defaults:
-# temp 0.7, top_p 0.8, top_k 20, repeat_penalty 1.05.
+# Qwen2.5-Coder-3B-Instruct sampling — Alibaba's recommended chat defaults
+# for the Coder family: temp 0.7, top_p 0.8, top_k 20, repeat_penalty 1.05.
+# The Coder variant is more deterministic and literal than the base Instruct,
+# which makes it follow the system-prompt prohibitions much more strictly.
 THINKER_TEMPERATURE = 0.7
 THINKER_TOP_K = 20
 # 350 tokens ≈ 250 words — matches the system prompt's target response length.
-# At ~10-13 t/s (--no-mmap, -fa, ARM NEON) worst-case latency is ~35 s.
+# At ~10-13 t/s (--no-mmap, ARM NEON) worst-case latency is ~35 s.
 THINKER_MAX_TOKENS = 350
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
@@ -533,10 +537,10 @@ class Thinker:
     ) -> AsyncGenerator[Tuple[str, str], None]:
         """Yield ``(kind, text)`` chunks where ``kind`` is ``"think"`` or ``"answer"``.
 
-        Qwen2.5-3B-Instruct does not emit a ``<think>`` block, so all chunks
-        will arrive as ``"answer"``.  The ``_ThinkStripper`` stays active so
-        that swapping in a reasoning model (Qwen3, DeepSeek-R1, etc.) works
-        without code changes.
+        Qwen2.5-Coder-3B-Instruct does not emit a ``<think>`` block, so all
+        chunks will arrive as ``"answer"``.  The ``_ThinkStripper`` stays
+        active so that swapping in a reasoning model (Qwen3, DeepSeek-R1,
+        etc.) works without code changes.
         """
         prompt = self._build_prompt(user_message, context, history, target_language)
         stripper = _ThinkStripper()
