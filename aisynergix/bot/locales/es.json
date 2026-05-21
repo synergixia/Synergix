@@ -55,7 +55,7 @@
   "btn_continuar": "✅ Continuar",
   "btn_top_mentes": "🏆 Top Mentes",
   "top_mentes_header": "🏆 <b>Top 10 Mentes Synergix</b>\n\nLas mentes que más sabiduría han inmortalizado:\n",
-  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} pts · {contribs} aportes",
+  "top_mentes_entry": "{rank_emoji} <code>{uid_hash}</code> · <b>{rank_label}</b> · {points} pts · {contribs} aportes",
   "top_mentes_empty": "🌱 Aún no hay datos del leaderboard. Sé el primero en contribuir.",
   "btn_balance": "📊 Mi Saldo",
   "btn_progress": "📈 Progreso",

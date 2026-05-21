@@ -463,6 +463,19 @@ class AIManager:
 
     async def get_user_status(self, uid: int, name: str = "") -> Dict[str, Any]:
         profile = await self._identity.get_profile(uid)
+        target_language = profile.language
+
+        # One-time recovery: if contribution_count was never persisted (bug now fixed)
+        # but the user has points, count actual aportes from Irys and patch the profile.
+        if profile.contribution_count == 0 and profile.points > 0:
+            from aisynergix.services.irys import list_aportes
+            try:
+                real_aportes = await list_aportes(profile.uid_hash, limit=500)
+                if real_aportes:
+                    profile.contribution_count = len(real_aportes)
+                    await self._identity.update_profile(uid, profile)
+            except Exception:
+                pass
 
         sorted_ranks = sorted(RANK_TABLE.items(), key=lambda x: x[1]["min_points"])
 

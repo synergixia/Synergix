@@ -639,11 +639,13 @@ async def handle_top_mentes_button(message: Message) -> None:
         emoji = medals[i] if i < 3 else f"{i + 1}."
         rank_label = _t_rank(user.get("rank", "🌱 Iniciado"), lang)
         points = user.get("points", 0)
-        contribs = user.get("total_uses_count", 0)
+        contribs = user.get("contribution_count", 0)
+        uid_hash = user.get("uid", "")
         text += t(
             "top_mentes_entry",
             lang,
             rank_emoji=emoji,
+            uid_hash=uid_hash,
             rank_label=rank_label,
             points=points,
             contribs=contribs,

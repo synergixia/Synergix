@@ -55,7 +55,7 @@
   "btn_continuar": "✅ متابعة",
   "btn_top_mentes": "🏆 أفضل العقول",
   "top_mentes_header": "🏆 <b>أفضل 10 عقول Synergix</b>\n\nالعقول التي خلّدت أكبر قدر من الحكمة:\n",
-  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} نقطة · {contribs} مساهمة",
+  "top_mentes_entry": "{rank_emoji} <code>{uid_hash}</code> · <b>{rank_label}</b> · {points} نقطة · {contribs} مساهمة",
   "top_mentes_empty": "🌱 لوحة المتصدرين غير جاهزة بعد. كن أول مساهم.",
   "btn_balance": "📊 رصيدي",
   "btn_progress": "📈 التقدم",

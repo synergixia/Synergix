@@ -55,7 +55,7 @@
   "btn_continuar": "✅ जारी रखें",
   "btn_top_mentes": "🏆 शीर्ष मन",
   "top_mentes_header": "🏆 <b>शीर्ष 10 Synergix मस्तिष्क</b>\n\nसबसे अधिक ज्ञान अमर करने वाले:\n",
-  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} अंक · {contribs} योगदान",
+  "top_mentes_entry": "{rank_emoji} <code>{uid_hash}</code> · <b>{rank_label}</b> · {points} अंक · {contribs} योगदान",
   "top_mentes_empty": "🌱 लीडरबोर्ड अभी तैयार नहीं है। पहले योगदानकर्ता बनें।",
   "btn_balance": "📊 मेरा बैलेंस",
   "btn_progress": "📈 प्रगति",
