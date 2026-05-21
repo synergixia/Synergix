@@ -77,6 +77,55 @@ def _extract_emoji_reply(text: str) -> str:
     return " ".join(deduped) if deduped else "✨"
 
 
+# Real Telegram UIDs seen during this session — used for challenge broadcast.
+# Populated on every incoming message; lost on restart (intentional: ghost protocol).
+_known_uids: set = set()
+
+# ID of the last challenge that was broadcast to users — avoids re-sending on restart.
+_last_broadcast_challenge_id: Optional[str] = None
+
+
+async def _challenge_broadcast_loop() -> None:
+    """Background task: poll Irys every 10 min for a new challenge and notify users."""
+    global _last_broadcast_challenge_id
+    from aisynergix.services.irys import load_current_challenge_from_greenfield
+    while True:
+        await asyncio.sleep(600)  # check every 10 minutes
+        try:
+            challenge = await load_current_challenge_from_greenfield()
+            if not challenge or not challenge.get("active"):
+                continue
+            challenge_id = challenge.get("id")
+            if not challenge_id or challenge_id == _last_broadcast_challenge_id:
+                continue  # no new challenge
+            _last_broadcast_challenge_id = challenge_id
+
+            uids_to_notify = list(_known_uids)
+            if not uids_to_notify:
+                logger.info("🎯 Nuevo reto [%s] detectado pero no hay UIDs conocidos aún.", challenge_id)
+                continue
+
+            ai = get_ai_manager()
+            sent = 0
+            for uid in uids_to_notify:
+                try:
+                    lang = await ai.get_language(uid)
+                    desc_raw = challenge.get("description", "")
+                    if isinstance(desc_raw, dict):
+                        desc = desc_raw.get(lang, desc_raw.get("es", ""))
+                    else:
+                        desc = str(desc_raw)
+                    msg = t("challenge_broadcast", lang, challenge_description=desc)
+                    await bot.send_message(uid, msg, parse_mode="HTML")
+                    sent += 1
+                    await asyncio.sleep(0.05)  # respect Telegram rate limit
+                except Exception:
+                    pass
+            logger.info("📢 Reto [%s] enviado a %d usuarios.", challenge_id, sent)
+        except Exception as exc:
+            logger.warning("challenge_broadcast_loop error: %s", exc)
+
+
 # Maps internal Spanish rank key → (rank locale key, benefit locale key)
 _RANK_KEY_MAP: Dict[str, tuple] = {
     "🌱 Iniciado":      ("rank_iniciado",      "benefit_iniciado"),
@@ -256,6 +305,7 @@ async def cmd_start(message: Message) -> None:
         return
 
     uid = message.from_user.id
+    _known_uids.add(uid)
 
     identity = get_identity_manager()
     ghost = get_ghost_state_manager()
@@ -781,6 +831,7 @@ async def handle_sticker_message(message: Message) -> None:
         return
 
     uid = message.from_user.id
+    _known_uids.add(uid)
     lang = await get_user_language(uid)
     sticker = message.sticker
     sticker_emoji = sticker.emoji or "✨"
@@ -841,6 +892,7 @@ async def handle_free_conversation(message: Message) -> None:
         return
 
     uid = message.from_user.id
+    _known_uids.add(uid)
     text = message.text.strip()
     lang = await get_user_language(uid)
 
@@ -1267,8 +1319,14 @@ async def on_startup():
     locked = await check_emergency_lock()
     if locked:
         logger.warning("🔒 Emergency lock ACTIVO al inicio")
-    await load_current_challenge_from_greenfield()
-    logger.info("🎯 Challenge restaurado")
+    challenge = await load_current_challenge_from_greenfield()
+    if challenge:
+        global _last_broadcast_challenge_id
+        _last_broadcast_challenge_id = challenge.get("id")
+    logger.info("🎯 Challenge restaurado (id=%s)", _last_broadcast_challenge_id)
+
+    # Start background loop that detects new challenges and notifies users
+    asyncio.create_task(_challenge_broadcast_loop())
 
     from aisynergix.services.rag_engine import get_rag_engine
     rag = await get_rag_engine()

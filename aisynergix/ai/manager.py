@@ -493,9 +493,13 @@ class AIManager:
         try:
             challenge = await get_current_challenge()
             if challenge and challenge.get("active"):
-                desc = challenge.get("description", "")
-                # Strip any Spanish "El reto es:" preamble stored in the description
-                desc = re.sub(r'^El reto es:\s*', '', desc, flags=re.IGNORECASE).strip()
+                desc_raw = challenge.get("description", "")
+                if isinstance(desc_raw, dict):
+                    # Multilingual dict — pick user's language, fall back to Spanish
+                    desc = desc_raw.get(target_language, desc_raw.get("es", ""))
+                else:
+                    # Legacy single-language string — strip Spanish preamble
+                    desc = re.sub(r'^El reto es:\s*', '', str(desc_raw), flags=re.IGNORECASE).strip()
                 tema_actual = desc[:60] + ("…" if len(desc) > 60 else "")
         except Exception:
             pass

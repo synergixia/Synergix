@@ -274,58 +274,63 @@ async def weekly_challenge():
     if is_emergency_locked():
         logger.warning("🔒 Emergency lock activo — saltando reto semanal")
         return
-    logger.info("🎯 Generando reto semanal...")
+    logger.info("🎯 Generando reto semanal multilingüe...")
 
     try:
         thinker = get_thinker()
 
-        challenge_prompt = """Genera un reto técnico semanal inspirador para la comunidad de Synergix (inteligencia colectiva descentralizada).
-El reto debe ser:
-1. Un tema concreto y accionable (ej: "Mejor estrategia DeFi 2026", "El futuro de la gobernanza descentralizada", "Cómo la IA transformará la educación en 2030")
-2. Motivador y que invite a la reflexión profunda
-3. Relacionado con tecnología, blockchain, IA, filosofía digital o sociedad futura
-
-Responde SOLO con el texto del reto, máximo 150 caracteres. Sin comillas ni formato adicional."""
-
-        challenge_text = await thinker.think(
-            user_message=challenge_prompt,
-            context="",
+        # Generate in Spanish first (best prompt language for this model)
+        challenge_prompt = (
+            "Genera un reto semanal inspirador para la comunidad de Synergix "
+            "(inteligencia colectiva descentralizada). "
+            "El reto debe ser concreto y accionable (máx. 140 caracteres), "
+            "relacionado con tecnología, blockchain, IA, filosofía o sociedad futura. "
+            "Responde SOLO con el texto del reto. Sin comillas ni formato adicional."
         )
+        challenge_text_es = await thinker.think(user_message=challenge_prompt, context="")
+        challenge_text_es = challenge_text_es.strip().replace('"', '').replace("'", "")[:200]
+        logger.info("🎯 Reto base [es]: %s", challenge_text_es)
 
-        challenge_text = challenge_text.strip().replace('"', '').replace("'", "")
-
-        if len(challenge_text) > 200:
-            challenge_text = challenge_text[:197] + "..."
+        # Translate to all other supported languages sequentially
+        # (thinker runs with --parallel 1, sequential avoids 503s)
+        translations: Dict[str, str] = {"es": challenge_text_es}
+        for lang_code, lang_name in LANG_NAMES.items():
+            if lang_code == "es":
+                continue
+            try:
+                tr = await thinker.think(
+                    user_message=(
+                        f"Translate the following text to {lang_name}. "
+                        f"Keep it under 140 characters. "
+                        f"Return only the translated text, no quotes, no explanation:\n"
+                        f"{challenge_text_es}"
+                    ),
+                    context="",
+                    target_language=lang_code,
+                )
+                translations[lang_code] = tr.strip()[:200]
+                logger.info("🌐 [%s] %s", lang_code, translations[lang_code][:70])
+            except Exception as exc:
+                logger.warning("⚠️ Traducción [%s] falló (%s) — usando español", lang_code, exc)
+                translations[lang_code] = challenge_text_es
 
         from datetime import datetime, timezone
-
         challenge_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-
         challenge_data = {
             "id": challenge_id,
-            "description": challenge_text,
+            "description": translations,          # dict {lang: text}
+            "description_default": challenge_text_es,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "bonus_points": 5,
             "active": True,
         }
-
         await save_challenge(challenge_data)
-        logger.info("🎯 Reto creado: %s", challenge_text)
+        logger.info("✅ Reto multilingüe guardado en Irys [id=%s]", challenge_id)
 
-        user_uids = await get_all_user_uids()
-        broadcast_count = 0
-        for uid_hash in user_uids:
-            try:
-                tags = await read_user_tags(uid_hash)
-                lang = tags.get("language", "es")
-                notification = t(
-                    "challenge_broadcast", lang, challenge_description=challenge_text
-                )
-                broadcast_count += 1
-            except Exception:
-                continue
-
-        logger.info("📢 Broadcast enviado a %d usuarios.", broadcast_count)
+        # Telegram notifications are sent by bot.py's background polling loop
+        # which detects the new challenge ID and broadcasts to all known UIDs
+        # in each user's language.  sync_brain.py cannot send Telegram messages
+        # directly because it only stores uid_hashes, not real Telegram UIDs.
 
     except Exception as e:
         _log_exc("❌ Error generando reto semanal", e)
