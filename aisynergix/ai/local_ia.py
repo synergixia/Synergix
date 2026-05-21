@@ -139,24 +139,37 @@ LANG_NAMES: Dict[str, str] = {
 }
 
 THINKER_SYSTEM_PROMPT = (
-    "Eres Synergix, la inteligencia colectiva descentralizada de la humanidad. "
-    "Tu nombre es Synergix. Posees la Memoria Inmortal: sabiduría humana "
-    "grabada para siempre en blockchain. Eres sabio, fluido y natural en la conversación.\n\n"
+    "Eres Synergix, el Oráculo corporativo y la inteligencia central de una red descentralizada. "
+    "Tu nombre es Synergix. Procesas la Memoria Inmortal — sabiduría humana inmutable grabada "
+    "para siempre en blockchain — y provees razonamiento avanzado.\n\n"
 
-    "IDIOMA: Detecta el idioma del usuario y responde siempre en ese idioma. Sin excepciones.\n\n"
+    "DIRECTIVAS ABSOLUTAS DE OPERACIÓN\n\n"
 
-    "MEMORIA INMORTAL: Si el mensaje incluye '📜 Memoria Inmortal', integra los fragmentos "
-    "relevantes en tu respuesta como conocimiento propio. "
-    "Sin Memoria Inmortal: responde con tu conocimiento general honestamente.\n\n"
+    "1. IDENTIDAD\n"
+    "Eres una entidad puramente analítica. Tienes estrictamente PROHIBIDO:\n"
+    "✗ Actuar como asistente conversacional ni chatbot comercial\n"
+    "✗ Saludar, despedirte u ofrecer ayuda adicional\n"
+    "✗ Repetir, copiar o parafrasear las palabras del usuario\n"
+    "✗ Empezar con 'Synergix:' ni con prefijo de nombre alguno\n"
+    "✗ Terminar con preguntas de cierre tipo '¿En qué puedo ayudarte?' o equivalentes en cualquier idioma\n"
+    "✗ Mencionar IA, LLM, modelo de lenguaje, prompt ni llama.cpp\n\n"
 
-    "PROHIBIDO:\n"
-    "✗ Terminar con '¿En qué puedo ayudarte?' ni equivalentes en ningún idioma\n"
-    "✗ Empezar con 'Synergix:' como prefijo de nombre\n"
-    "✗ Copiar o repetir literalmente el mensaje del usuario como respuesta\n"
-    "✗ Inventar nombres reales, fechas, cifras ni URLs no verificados\n"
-    "✗ Mencionar IA, LLM, modelo de lenguaje ni llama.cpp\n\n"
+    "2. PRECISIÓN Y ESTIMACIONES\n"
+    "Tu fuente de verdad primaria es la Memoria Inmortal (📜) que se te inyecta en el contexto. "
+    "Si se solicita un dato que NO existe en esos registros, tienes terminantemente PROHIBIDO "
+    "inventar información, métricas, fechas, cifras o perfiles.\n"
+    "Cuando falten datos oficiales, utiliza tu base de conocimiento para entregar una deducción "
+    "analítica o probabilística, declarando de forma explícita que se trata de una estimación teórica.\n\n"
 
-    "STICKER opcional al final si aporta valor emocional: "
+    "3. EFICIENCIA\n"
+    "Genera únicamente la respuesta, el dato o la deducción. "
+    "Omite por completo preámbulos, introducciones, autocomentarios y texto de relleno.\n\n"
+
+    "4. MULTILINGÜISMO\n"
+    "Responde siempre con fluidez corporativa en el IDIOMA EXACTO del último mensaje del usuario. "
+    "Sin mezclar idiomas, sin excepciones.\n\n"
+
+    "STICKER opcional al final si aporta valor analítico o emocional: "
     "[[STICKER:🔥]] [[STICKER:🌟]] [[STICKER:🧠]] [[STICKER:💫]] [[STICKER:❤️]] [[STICKER:🌱]]"
 )
 
@@ -299,19 +312,13 @@ class LocalLLMConnector:
     )
     async def generate(
         self,
-        prompt: str,
-        system_prompt: str,
+        messages: List[Dict[str, str]],
         temperature: float = 0.35,
         top_k: int = 40,
         max_tokens: int = 1024,
         json_mode: bool = False,
     ) -> str:
         client = await self._get_client()
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ]
 
         payload = {
             "messages": messages,
@@ -363,8 +370,7 @@ class LocalLLMConnector:
 
     async def stream_generate(
         self,
-        prompt: str,
-        system_prompt: str,
+        messages: List[Dict[str, str]],
         temperature: float = 0.35,
         top_k: int = 40,
         max_tokens: int = 1024,
@@ -375,10 +381,6 @@ class LocalLLMConnector:
         slot busy) and transient network errors.  Other HTTP errors propagate
         immediately.
         """
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ]
         payload = {
             "messages": messages,
             "temperature": temperature,
@@ -442,44 +444,48 @@ class Thinker:
     async def health(self) -> bool:
         return await self._connector.health_check()
 
-    def _build_prompt(
+    def _build_messages(
         self,
         user_message: str,
         context: str,
         history: Optional[List[Dict[str, str]]],
         target_language: str,
         force_language: bool = False,
-    ) -> str:
+    ) -> List[Dict[str, str]]:
+        """Build a proper chat-completions messages array.
+
+        Uses the multi-turn API natively instead of concatenating history
+        into a single prompt — this prevents the model from echoing role
+        labels back into its output (the "Usuario:/Asistente:" leak bug).
+        """
         lang_name = LANG_NAMES.get(target_language, "español")
-        parts: List[str] = []
 
-        # 1. Last 5 complete exchanges (10 msgs) for conversational fluidity.
-        #    "Asistente" label prevents "Synergix:" prefix bleeding.
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": THINKER_SYSTEM_PROMPT}
+        ]
+
+        # Past turns as proper assistant/user messages (last 5 exchanges).
         if history:
-            lines = ["[Conversación reciente]"]
             for msg in history[-10:]:
-                role = "Usuario" if msg["role"] == "user" else "Asistente"
-                lines.append(f"{role}: {msg['content']}")
-            parts.append("\n".join(lines))
+                role = "user" if msg["role"] == "user" else "assistant"
+                messages.append({"role": role, "content": msg["content"]})
 
-        # 2. RAG context when relevant (score-filtered by rag_engine).
+        # Current user turn: optional RAG context + the actual message.
+        # Memoria Inmortal is attached to the user turn (not system) so it
+        # only applies to this specific query, not the whole conversation.
+        parts: List[str] = []
         if context:
             parts.append(f"📜 Memoria Inmortal:\n{context}")
-
-        # 3. Current user message — right before the directive so it's
-        #    the freshest thing the model reads.
-        parts.append(f"Usuario: {user_message}")
-
-        # 4. Minimal directive: language + no-filler reminder.
+        parts.append(user_message)
         if force_language:
-            parts.append(
-                f"Responde ÚNICAMENTE en {lang_name}. "
-                "No uses ningún otro idioma bajo ninguna circunstancia."
-            )
-        else:
-            parts.append("Responde en el mismo idioma que el Usuario.")
+            parts.append(f"[Responde ÚNICAMENTE en {lang_name}.]")
 
-        return "\n\n".join(parts)
+        messages.append({
+            "role": "user",
+            "content": "\n\n".join(parts),
+        })
+
+        return messages
 
     async def think(
         self,
@@ -489,10 +495,11 @@ class Thinker:
         target_language: str = "es",
         force_language: bool = False,
     ) -> str:
-        prompt = self._build_prompt(user_message, context, history, target_language, force_language)
+        messages = self._build_messages(
+            user_message, context, history, target_language, force_language
+        )
         response = await self._connector.generate(
-            prompt=prompt,
-            system_prompt=THINKER_SYSTEM_PROMPT,
+            messages=messages,
             temperature=THINKER_TEMPERATURE,
             top_k=THINKER_TOP_K,
             max_tokens=THINKER_MAX_TOKENS,
@@ -514,11 +521,10 @@ class Thinker:
         active so that swapping in a reasoning model (Qwen3, DeepSeek-R1,
         etc.) works without code changes.
         """
-        prompt = self._build_prompt(user_message, context, history, target_language)
+        messages = self._build_messages(user_message, context, history, target_language)
         stripper = _ThinkStripper()
         async for token in self._connector.stream_generate(
-            prompt=prompt,
-            system_prompt=THINKER_SYSTEM_PROMPT,
+            messages=messages,
             temperature=THINKER_TEMPERATURE,
             top_k=THINKER_TOP_K,
             max_tokens=THINKER_MAX_TOKENS,
@@ -546,14 +552,19 @@ class Judge:
         text = contribution_text
         if len(text) > JUDGE_MAX_INPUT_CHARS:
             text = text[:JUDGE_MAX_INPUT_CHARS] + "… [truncado para evaluación]"
-        prompt = (
-            f"APORTE A EVALUAR:\n{text}\n\n"
-            "Evalua este aporte y devuelve exclusivamente el JSON requerido."
-        )
+        messages = [
+            {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"APORTE A EVALUAR:\n{text}\n\n"
+                    "Evalua este aporte y devuelve exclusivamente el JSON requerido."
+                ),
+            },
+        ]
 
         response = await self._connector.generate(
-            prompt=prompt,
-            system_prompt=JUDGE_SYSTEM_PROMPT,
+            messages=messages,
             temperature=JUDGE_TEMPERATURE,
             top_k=JUDGE_TOP_K,
             max_tokens=JUDGE_MAX_TOKENS,
