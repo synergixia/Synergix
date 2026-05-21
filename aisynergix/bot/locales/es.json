@@ -76,5 +76,17 @@
   "admin_lock_enabled": "🔒 Emergency lock ACTIVADO. Los aportes están pausados.",
   "admin_lock_disabled": "🔓 Emergency lock DESACTIVADO. Los aportes están activos.",
   "thinking_label": "💭 Analizando…",
-  "rag_memory_used": "📜 {count} memorias inmortales resonaron aquí"
+  "rag_memory_used": "📜 {count} memorias inmortales resonaron aquí",
+  "rank_iniciado": "🌱 Iniciado",
+  "rank_activo": "📈 Activo",
+  "rank_sincronizado": "🧬 Sincronizado",
+  "rank_arquitecto": "🏗️ Arquitecto",
+  "rank_mente_colmena": "🧠 Mente Colmena",
+  "rank_oraculo": "🔮 Oráculo",
+  "benefit_iniciado": "5 aportes/día",
+  "benefit_activo": "12 aportes/día + ×1.2",
+  "benefit_sincronizado": "25 aportes/día + ×1.5",
+  "benefit_arquitecto": "40 aportes/día + ×2.0",
+  "benefit_mente_colmena": "60 aportes/día + ×2.5",
+  "benefit_oraculo": "Sin límite + ×3.0"
 }

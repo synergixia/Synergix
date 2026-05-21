@@ -76,5 +76,17 @@
   "admin_lock_enabled": "🔒 Kunci darurat DIAKTIFKAN. Kontribusi dijeda.",
   "admin_lock_disabled": "🔓 Kunci darurat DINONAKTIFKAN. Kontribusi aktif.",
   "thinking_label": "💭 Berpikir…",
-  "rag_memory_used": "📜 {count} kenangan abadi beresonansi di sini"
+  "rag_memory_used": "📜 {count} kenangan abadi beresonansi di sini",
+  "rank_iniciado": "🌱 Pemula",
+  "rank_activo": "📈 Aktif",
+  "rank_sincronizado": "🧬 Tersinkronisasi",
+  "rank_arquitecto": "🏗️ Arsitek",
+  "rank_mente_colmena": "🧠 Pikiran Sarang",
+  "rank_oraculo": "🔮 Peramal",
+  "benefit_iniciado": "5 kontribusi/hari",
+  "benefit_activo": "12 kontribusi/hari + ×1.2",
+  "benefit_sincronizado": "25 kontribusi/hari + ×1.5",
+  "benefit_arquitecto": "40 kontribusi/hari + ×2.0",
+  "benefit_mente_colmena": "60 kontribusi/hari + ×2.5",
+  "benefit_oraculo": "Tak terbatas + ×3.0"
 }

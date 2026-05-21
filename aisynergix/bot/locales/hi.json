@@ -76,5 +76,17 @@
   "admin_lock_enabled": "🔒 आपातकालीन लॉक सक्षम। योगदान रोके गए।",
   "admin_lock_disabled": "🔓 आपातकालीन लॉक अक्षम। योगदान सक्रिय।",
   "thinking_label": "💭 सोच रहा हूँ…",
-  "rag_memory_used": "📜 यहाँ {count} अमर स्मृतियाँ गूँजीं"
+  "rag_memory_used": "📜 यहाँ {count} अमर स्मृतियाँ गूँजीं",
+  "rank_iniciado": "🌱 शुरुआती",
+  "rank_activo": "📈 सक्रिय",
+  "rank_sincronizado": "🧬 समन्वित",
+  "rank_arquitecto": "🏗️ वास्तुकार",
+  "rank_mente_colmena": "🧠 समूह मन",
+  "rank_oraculo": "🔮 दृष्टा",
+  "benefit_iniciado": "5 योगदान/दिन",
+  "benefit_activo": "12 योगदान/दिन + ×1.2",
+  "benefit_sincronizado": "25 योगदान/दिन + ×1.5",
+  "benefit_arquitecto": "40 योगदान/दिन + ×2.0",
+  "benefit_mente_colmena": "60 योगदान/दिन + ×2.5",
+  "benefit_oraculo": "असीमित + ×3.0"
 }

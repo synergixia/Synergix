@@ -76,5 +76,17 @@
   "admin_lock_enabled": "🔒 ایمرجنسی لاک فعال۔ شراکتیں روک دی گئی ہیں۔",
   "admin_lock_disabled": "🔓 ایمرجنسی لاک غیر فعال۔ شراکتیں فعال ہیں۔",
   "thinking_label": "💭 سوچ رہا ہوں…",
-  "rag_memory_used": "📜 {count} لافانی یادیں یہاں گونجیں"
+  "rag_memory_used": "📜 {count} لافانی یادیں یہاں گونجیں",
+  "rank_iniciado": "🌱 مبتدی",
+  "rank_activo": "📈 فعال",
+  "rank_sincronizado": "🧬 ہم آہنگ",
+  "rank_arquitecto": "🏗️ معمار",
+  "rank_mente_colmena": "🧠 ذہن کا چھتہ",
+  "rank_oraculo": "🔮 غیب دان",
+  "benefit_iniciado": "5 حصص/روز",
+  "benefit_activo": "12 حصص/روز + ×1.2",
+  "benefit_sincronizado": "25 حصص/روز + ×1.5",
+  "benefit_arquitecto": "40 حصص/روز + ×2.0",
+  "benefit_mente_colmena": "60 حصص/روز + ×2.5",
+  "benefit_oraculo": "لامحدود + ×3.0"
 }

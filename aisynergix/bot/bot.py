@@ -77,6 +77,35 @@ def _extract_emoji_reply(text: str) -> str:
     return " ".join(deduped) if deduped else "✨"
 
 
+# Maps internal Spanish rank key → (rank locale key, benefit locale key)
+_RANK_KEY_MAP: Dict[str, tuple] = {
+    "🌱 Iniciado":      ("rank_iniciado",      "benefit_iniciado"),
+    "📈 Activo":        ("rank_activo",         "benefit_activo"),
+    "🧬 Sincronizado":  ("rank_sincronizado",   "benefit_sincronizado"),
+    "🏗️ Arquitecto":   ("rank_arquitecto",     "benefit_arquitecto"),
+    "🧠 Mente Colmena": ("rank_mente_colmena",  "benefit_mente_colmena"),
+    "🔮 Oráculo":       ("rank_oraculo",        "benefit_oraculo"),
+}
+
+
+def _t_rank(rank: str, lang: str) -> str:
+    """Translate a rank key (e.g. '🌱 Iniciado') into the user's language."""
+    keys = _RANK_KEY_MAP.get(rank)
+    if not keys:
+        return rank
+    translated = t(keys[0], lang)
+    return rank if translated == keys[0] else translated  # fallback to Spanish if key missing
+
+
+def _t_benefit(rank: str, lang: str) -> str:
+    """Translate the benefit string for a rank into the user's language."""
+    keys = _RANK_KEY_MAP.get(rank)
+    if not keys:
+        return rank
+    translated = t(keys[1], lang)
+    return rank if translated == keys[1] else translated
+
+
 async def _keep_typing(chat_id: int, stop_event: asyncio.Event) -> None:
     """Refreshes the Telegram typing indicator every 4 s until stop_event is set."""
     while not stop_event.is_set():
@@ -308,7 +337,7 @@ async def handle_status_button(message: Message) -> None:
         "status_msg",
         lang,
         name=status["name"],
-        rank=status["rank"],
+        rank=_t_rank(status["rank"], lang),
         points=status["points"],
         contribuciones=status["contribuciones"],
         daily_aportes_count=status["daily_aportes_count"],
@@ -317,7 +346,7 @@ async def handle_status_button(message: Message) -> None:
         total_aportes=status["total_aportes"],
         tema_actual=status["tema_actual"],
         points_next=status["points_next"],
-        beneficio=status["beneficio"],
+        beneficio=_t_benefit(status["rank"], lang),
         multiplier=status["multiplier"],
         contribution_count=status["contribution_count"],
         language=get_lang_name(status["language"]),
@@ -493,7 +522,7 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
             "status_msg",
             lang,
             name=status["name"],
-            rank=status["rank"],
+            rank=_t_rank(status["rank"], lang),
             points=status["points"],
             contribuciones=status["contribuciones"],
             daily_aportes_count=status["daily_aportes_count"],
@@ -502,7 +531,7 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
             total_aportes=status["total_aportes"],
             tema_actual=status["tema_actual"],
             points_next=status["points_next"],
-            beneficio=status["beneficio"],
+            beneficio=_t_benefit(status["rank"], lang),
             multiplier=status["multiplier"],
             contribution_count=status["contribution_count"],
             language=get_lang_name(status["language"]),
@@ -550,7 +579,7 @@ async def handle_top_mentes_button(message: Message) -> None:
     text = t("top_mentes_header", lang) + "\n"
     for i, user in enumerate(top10):
         emoji = medals[i] if i < 3 else f"{i + 1}."
-        rank_label = user.get("rank", "🌱 Iniciado")
+        rank_label = _t_rank(user.get("rank", "🌱 Iniciado"), lang)
         points = user.get("points", 0)
         contribs = user.get("total_uses_count", 0)
         text += t(
@@ -884,7 +913,7 @@ async def handle_contribution_message(
                 quality_score=result.get("quality_score", 0),
                 points_gained=result.get("points_gained", 0),
                 new_total_points=result.get("new_total_points", 0),
-                rank=result.get("rank", "🌱 Iniciado"),
+                rank=_t_rank(result.get("rank", "🌱 Iniciado"), lang),
             )
 
             keyboard = get_main_keyboard(lang)
@@ -894,8 +923,8 @@ async def handle_contribution_message(
                 new_rank_text = t(
                     "rank_up",
                     lang,
-                    old_rank=result.get("rank", ""),
-                    new_rank=result["new_rank"],
+                    old_rank=_t_rank(result.get("rank", ""), lang),
+                    new_rank=_t_rank(result["new_rank"], lang),
                 )
                 await message.answer(new_rank_text)
 

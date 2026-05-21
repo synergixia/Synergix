@@ -76,5 +76,17 @@
   "admin_lock_enabled": "🔒 紧急锁定已启用。贡献已暂停。",
   "admin_lock_disabled": "🔓 紧急锁定已禁用。贡献已激活。",
   "thinking_label": "💭 思考中…",
-  "rag_memory_used": "📜 {count} 条永恒记忆在此共鸣"
+  "rag_memory_used": "📜 {count} 条永恒记忆在此共鸣",
+  "rank_iniciado": "🌱 新手",
+  "rank_activo": "📈 活跃者",
+  "rank_sincronizado": "🧬 同步者",
+  "rank_arquitecto": "🏗️ 架构师",
+  "rank_mente_colmena": "🧠 蜂巢思维",
+  "rank_oraculo": "🔮 先知",
+  "benefit_iniciado": "每日5次贡献",
+  "benefit_activo": "每日12次 + ×1.2",
+  "benefit_sincronizado": "每日25次 + ×1.5",
+  "benefit_arquitecto": "每日40次 + ×2.0",
+  "benefit_mente_colmena": "每日60次 + ×2.5",
+  "benefit_oraculo": "无限次 + ×3.0"
 }

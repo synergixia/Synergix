@@ -76,5 +76,17 @@
   "admin_lock_enabled": "🔒 تم تفعيل القفل الطارئ. المساهمات متوقفة.",
   "admin_lock_disabled": "🔓 تم تعطيل القفل الطارئ. المساهمات نشطة.",
   "thinking_label": "💭 يفكّر…",
-  "rag_memory_used": "📜 {count} ذاكرة خالدة تردّدت هنا"
+  "rag_memory_used": "📜 {count} ذاكرة خالدة تردّدت هنا",
+  "rank_iniciado": "🌱 مبتدئ",
+  "rank_activo": "📈 نشط",
+  "rank_sincronizado": "🧬 متزامن",
+  "rank_arquitecto": "🏗️ معماري",
+  "rank_mente_colmena": "🧠 عقل الخلية",
+  "rank_oraculo": "🔮 عراف",
+  "benefit_iniciado": "5 مساهمات/يوم",
+  "benefit_activo": "12 مساهمات/يوم + ×1.2",
+  "benefit_sincronizado": "25 مساهمات/يوم + ×1.5",
+  "benefit_arquitecto": "40 مساهمات/يوم + ×2.0",
+  "benefit_mente_colmena": "60 مساهمات/يوم + ×2.5",
+  "benefit_oraculo": "غير محدود + ×3.0"
 }

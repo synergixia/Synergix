@@ -76,5 +76,17 @@
   "admin_lock_enabled": "🔒 জরুরি লক সক্রিয়। অবদান বিরতি দেওয়া হয়েছে।",
   "admin_lock_disabled": "🔓 জরুরি লক নিষ্ক্রিয়। অবদান সক্রিয়।",
   "thinking_label": "💭 ভাবছি…",
-  "rag_memory_used": "📜 {count}টি অমর স্মৃতি এখানে অনুরণিত হয়েছে"
+  "rag_memory_used": "📜 {count}টি অমর স্মৃতি এখানে অনুরণিত হয়েছে",
+  "rank_iniciado": "🌱 শিক্ষানবিশ",
+  "rank_activo": "📈 সক্রিয়",
+  "rank_sincronizado": "🧬 সমন্বিত",
+  "rank_arquitecto": "🏗️ স্থপতি",
+  "rank_mente_colmena": "🧠 ঝাঁক মন",
+  "rank_oraculo": "🔮 দ্রষ্টা",
+  "benefit_iniciado": "5 অবদান/দিন",
+  "benefit_activo": "12 অবদান/দিন + ×1.2",
+  "benefit_sincronizado": "25 অবদান/দিন + ×1.5",
+  "benefit_arquitecto": "40 অবদান/দিন + ×2.0",
+  "benefit_mente_colmena": "60 অবদান/দিন + ×2.5",
+  "benefit_oraculo": "অসীমিত + ×3.0"
 }
