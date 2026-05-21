@@ -605,6 +605,14 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
 
 
 @dp.message(F.text == "🏆 Top Mentes")
+@dp.message(F.text == "🏆 Top Minds")
+@dp.message(F.text == "🏆 最强大脑")
+@dp.message(F.text == "🏆 शीर्ष मन")
+@dp.message(F.text == "🏆 أفضل العقول")
+@dp.message(F.text == "🏆 Top Esprits")
+@dp.message(F.text == "🏆 শীর্ষ মেধা")
+@dp.message(F.text == "🏆 Top Pikiran")
+@dp.message(F.text == "🏆 سرفہرست ذہن")
 async def handle_top_mentes_button(message: Message) -> None:
     if not message.from_user:
         return
@@ -677,7 +685,7 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
             )
         else:
             inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="✅ Continuar", callback_data="verify:start"),
+                InlineKeyboardButton(text=t("btn_continuar", lang), callback_data="verify:start"),
             ]])
             await callback.message.edit_text(t("verify_intro", lang), reply_markup=inline_kb)
     elif action == "balance":
