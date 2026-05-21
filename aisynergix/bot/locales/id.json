@@ -55,7 +55,7 @@
   "btn_continuar": "✅ Lanjutkan",
   "btn_top_mentes": "🏆 Top Pikiran",
   "top_mentes_header": "🏆 <b>10 Pemikir Synergix Teratas</b>\n\nPikiran yang telah mengabadikan kebijaksanaan terbanyak:\n",
-  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} poin · {contribs} kontribusi",
+  "top_mentes_entry": "{rank_emoji} <code>{uid_hash}</code> · <b>{rank_label}</b> · {points} poin · {contribs} kontribusi",
   "top_mentes_empty": "🌱 Leaderboard belum tersedia. Jadilah kontributor pertama.",
   "btn_balance": "📊 Saldo Saya",
   "btn_progress": "📈 Progres",

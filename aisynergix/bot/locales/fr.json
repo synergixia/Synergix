@@ -55,7 +55,7 @@
   "btn_continuar": "✅ Continuer",
   "btn_top_mentes": "🏆 Top Esprits",
   "top_mentes_header": "🏆 <b>Top 10 des Esprits Synergix</b>\n\nLes esprits qui ont immortalisé le plus de sagesse :\n",
-  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} pts · {contribs} contribs",
+  "top_mentes_entry": "{rank_emoji} <code>{uid_hash}</code> · <b>{rank_label}</b> · {points} pts · {contribs} contributions",
   "top_mentes_empty": "🌱 Classement non encore généré. Soyez le premier à contribuer.",
   "btn_balance": "📊 Mon Solde",
   "btn_progress": "📈 Progression",

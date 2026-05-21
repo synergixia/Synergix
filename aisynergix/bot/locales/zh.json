@@ -55,7 +55,7 @@
   "btn_continuar": "✅ 继续",
   "btn_top_mentes": "🏆 最强大脑",
   "top_mentes_header": "🏆 <b>Synergix 思想者前10名</b>\n\n贡献最多智慧的思想者：\n",
-  "top_mentes_entry": "{rank_emoji} <b>{rank_label}</b> · {points} 分 · {contribs} 条贡献",
+  "top_mentes_entry": "{rank_emoji} <code>{uid_hash}</code> · <b>{rank_label}</b> · {points} 分 · {contribs} 条贡献",
   "top_mentes_empty": "🌱 排行榜尚未生成。成为第一个贡献者。",
   "btn_balance": "📊 我的余额",
   "btn_progress": "📈 进度",

@@ -424,6 +424,7 @@ _USER_TAG_DEFAULTS: Dict[str, str] = {
     "fsm_state":           "idle",
     "points":              "0",
     "rank":                "🌱 Iniciado",
+    "contribution_count":  "0",
     "daily_aportes_count": "0",
     "total_uses_count":    "0",
     "language":            "es",
@@ -438,6 +439,7 @@ _PROFILE_TAG_MAP: Dict[str, str] = {
     "trust_score":         "trust-score",
     "human_verified":      "human-verified",
     "daily_aportes_count": "daily-aportes-count",
+    "contribution_count":  "contribution-count",
     "total_uses_count":    "total-uses-count",
     "last_seen_ts":        "last-seen-ts",
     "fsm_state":           "fsm-state",
@@ -599,9 +601,10 @@ async def compute_top10() -> List[Dict[str, Any]]:
         seen.add(uid)
         try:
             usuarios.append({
-                "uid":             uid,
-                "points":          int(rt.get("points", "0")),
-                "rank":            rt.get("rank", "🌱 Iniciado"),
+                "uid":              uid,
+                "points":           int(rt.get("points", "0")),
+                "rank":             rt.get("rank", "🌱 Iniciado"),
+                "contribution_count": int(rt.get("contribution-count", "0")),
                 "total_uses_count": int(rt.get("total-uses-count", "0")),
             })
         except (ValueError, TypeError):
