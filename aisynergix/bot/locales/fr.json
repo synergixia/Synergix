@@ -68,6 +68,8 @@
   "progress_unavailable": "⚠️ Impossible d'interroger la bonding curve maintenant.",
   "market_info": "📊 <b>Marché SYNERGIX</b>\n\n💰 Prix : <b>${price_usd:.8f}</b>\n📈 Variation 24h : <b>{change_24h:+.2f}%</b>\n💧 Liquidité : <b>${liquidity:,.0f}</b>\n📊 Volume 24h : <b>${volume:,.0f}</b>\n🏦 Capitalisation : <b>${mcap:,.0f}</b>\n🔁 Tx 24h : <b>{buys}</b> achats / <b>{sells}</b> ventes\n🌐 DEX : {dex}",
   "market_unavailable": "⚠️ Impossible de récupérer les données du marché. Réessayez dans quelques secondes.",
+  "bonding_curve_trade": "🚀 <b>SYNERGIX est sur la Bonding Curve Four.meme</b>\n\nFinalise ton opération directement depuis ton wallet via ce lien :\n\n🔗 {link}\n\n<i>Quand le token sera diplômé sur PancakeSwap, le trading natif sera disponible depuis le bot.</i>",
+  "market_bonding_curve": "📊 <b>SYNERGIX sur Bonding Curve</b>\n\n💧 Levé : <b>{raised:.4f} BNB</b> / <b>{target:.4f} BNB</b>\n🎯 Progression : <b>{percent:.2f}%</b>\n\n{bar}\n\n<i>Les métriques de marché complètes (prix USD, volume, liquidité) seront activées lors de la graduation sur PancakeSwap.</i>",
   "verify_address_prompt": "🔐 <b>Étape 1/2 — Adresse</b>\n\nEnvoyez l'adresse de votre wallet (format <code>0x...</code>, 42 caractères).\n\nCette adresse sera liée à votre identité Synergix.",
   "verify_invalid_address": "⚠️ Adresse invalide. Doit être <code>0x</code> + 40 caractères hexadécimaux.",
   "emergency_lock_active": "🔒 Synergix est en mode maintenance. Les contributions sont temporairement suspendues.",

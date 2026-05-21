@@ -68,6 +68,8 @@
   "progress_unavailable": "⚠️ ابھی بانڈنگ کرو کوئری نہیں ہو سکی۔",
   "market_info": "📊 <b>SYNERGIX مارکیٹ</b>\n\n💰 قیمت: <b>${price_usd:.8f}</b>\n📈 24گ تبدیلی: <b>{change_24h:+.2f}%</b>\n💧 لیکویڈیٹی: <b>${liquidity:,.0f}</b>\n📊 24گ والیوم: <b>${volume:,.0f}</b>\n🏦 مارکیٹ کیپ: <b>${mcap:,.0f}</b>\n🔁 24گ Tx: <b>{buys}</b> خریداری / <b>{sells}</b> فروخت\n🌐 DEX: {dex}",
   "market_unavailable": "⚠️ مارکیٹ ڈیٹا حاصل نہیں ہو سکا۔ چند سیکنڈ بعد دوبارہ کوشش کریں۔",
+  "bonding_curve_trade": "🚀 <b>SYNERGIX ابھی Four.meme بانڈنگ کرو پر ہے</b>\n\nنیچے دیے گئے لنک کے ذریعے براہ راست اپنے والیٹ سے لین دین مکمل کریں:\n\n🔗 {link}\n\n<i>جب ٹوکن PancakeSwap پر گریجویٹ ہوگا، بوٹ سے نیٹیو ٹریڈنگ فعال ہو جائے گی۔</i>",
+  "market_bonding_curve": "📊 <b>SYNERGIX بانڈنگ کرو پر</b>\n\n💧 جمع شدہ: <b>{raised:.4f} BNB</b> / <b>{target:.4f} BNB</b>\n🎯 پیش رفت: <b>{percent:.2f}%</b>\n\n{bar}\n\n<i>جب ٹوکن PancakeSwap پر گریجویٹ ہوگا، مارکیٹ کے مکمل میٹرکس (USD قیمت، حجم، لیکویڈیٹی) فعال ہو جائیں گے۔</i>",
   "verify_address_prompt": "🔐 <b>مرحلہ 1/2 — پتہ</b>\n\nاپنے والیٹ کا پتہ بھیجیں (<code>0x...</code> فارمیٹ، 42 حروف)۔\n\nیہ پتہ آپ کی Synergix شناخت سے منسلک ہو جائے گا۔",
   "verify_invalid_address": "⚠️ غلط پتہ۔ <code>0x</code> + 40 ہیکس حروف ہونے چاہئیں۔",
   "emergency_lock_active": "🔒 Synergix دیکھ بھال موڈ میں ہے۔ شراکتیں عارضی طور پر روک دی گئی ہیں۔",

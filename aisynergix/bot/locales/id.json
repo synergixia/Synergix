@@ -68,6 +68,8 @@
   "progress_unavailable": "⚠️ Tidak dapat mengkueri bonding curve saat ini.",
   "market_info": "📊 <b>Pasar SYNERGIX</b>\n\n💰 Harga: <b>${price_usd:.8f}</b>\n📈 Perubahan 24j: <b>{change_24h:+.2f}%</b>\n💧 Likuiditas: <b>${liquidity:,.0f}</b>\n📊 Volume 24j: <b>${volume:,.0f}</b>\n🏦 Kapitalisasi Pasar: <b>${mcap:,.0f}</b>\n🔁 Tx 24j: <b>{buys}</b> beli / <b>{sells}</b> jual\n🌐 DEX: {dex}",
   "market_unavailable": "⚠️ Tidak dapat mengambil data pasar. Coba lagi dalam beberapa detik.",
+  "bonding_curve_trade": "🚀 <b>SYNERGIX masih di Bonding Curve Four.meme</b>\n\nSelesaikan transaksi Anda langsung dari dompet Anda melalui tautan di bawah:\n\n🔗 {link}\n\n<i>Setelah token lulus ke PancakeSwap, trading native dari bot akan tersedia.</i>",
+  "market_bonding_curve": "📊 <b>SYNERGIX di Bonding Curve</b>\n\n💧 Terkumpul: <b>{raised:.4f} BNB</b> / <b>{target:.4f} BNB</b>\n🎯 Progres: <b>{percent:.2f}%</b>\n\n{bar}\n\n<i>Metrik pasar lengkap (harga USD, volume, likuiditas) akan aktif saat token lulus ke PancakeSwap.</i>",
   "verify_address_prompt": "🔐 <b>Langkah 1/2 — Alamat</b>\n\nKirim alamat dompet Anda (format <code>0x...</code>, 42 karakter).\n\nAlamat ini akan terhubung dengan identitas Synergix Anda.",
   "verify_invalid_address": "⚠️ Alamat tidak valid. Harus <code>0x</code> + 40 karakter heksadesimal.",
   "emergency_lock_active": "🔒 Synergix dalam mode pemeliharaan. Kontribusi sementara dijeda.",

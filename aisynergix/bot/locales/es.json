@@ -68,6 +68,8 @@
   "progress_unavailable": "⚠️ No se pudo consultar la bonding curve en este momento.",
   "market_info": "📊 <b>Mercado SYNERGIX</b>\n\n💰 Precio: <b>${price_usd:.8f}</b>\n📈 Cambio 24h: <b>{change_24h:+.2f}%</b>\n💧 Liquidez: <b>${liquidity:,.0f}</b>\n📊 Volumen 24h: <b>${volume:,.0f}</b>\n🏦 Market Cap: <b>${mcap:,.0f}</b>\n🔁 Tx 24h: <b>{buys}</b> compras / <b>{sells}</b> ventas\n🌐 DEX: {dex}",
   "market_unavailable": "⚠️ No se pudo obtener datos de mercado. Intenta de nuevo en unos segundos.",
+  "bonding_curve_trade": "🚀 <b>SYNERGIX está en la Bonding Curve de Four.meme</b>\n\nCompleta tu operación directamente desde tu wallet en el siguiente enlace:\n\n🔗 {link}\n\n<i>Cuando el token gradúe a PancakeSwap, podrás operar nativamente desde el bot.</i>",
+  "market_bonding_curve": "📊 <b>SYNERGIX en Bonding Curve</b>\n\n💧 Recaudado: <b>{raised:.4f} BNB</b> / <b>{target:.4f} BNB</b>\n🎯 Progreso: <b>{percent:.2f}%</b>\n\n{bar}\n\n<i>Las métricas de mercado completas (precio USD, volumen, liquidez) se activarán cuando el token gradúe a PancakeSwap.</i>",
   "verify_address_prompt": "🔐 <b>Paso 1/2 — Dirección</b>\n\nEnvía la dirección de tu wallet (formato <code>0x...</code>, 42 caracteres).\n\nEsta dirección quedará vinculada a tu identidad Synergix.",
   "verify_invalid_address": "⚠️ Dirección inválida. Debe tener el formato <code>0x</code> + 40 caracteres hexadecimales.",
   "emergency_lock_active": "🔒 Synergix está en modo de mantenimiento. Los aportes están temporalmente pausados.",

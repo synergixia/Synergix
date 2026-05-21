@@ -68,6 +68,8 @@
   "progress_unavailable": "⚠️ تعذر استعلام منحنى الترابط الآن.",
   "market_info": "📊 <b>سوق SYNERGIX</b>\n\n💰 السعر: <b>${price_usd:.8f}</b>\n📈 تغير 24 س: <b>{change_24h:+.2f}%</b>\n💧 السيولة: <b>${liquidity:,.0f}</b>\n📊 حجم 24 س: <b>${volume:,.0f}</b>\n🏦 القيمة السوقية: <b>${mcap:,.0f}</b>\n🔁 معاملات 24 س: <b>{buys}</b> شراء / <b>{sells}</b> بيع\n🌐 منصة: {dex}",
   "market_unavailable": "⚠️ تعذر جلب بيانات السوق. حاول مجدداً بعد ثوانٍ.",
+  "bonding_curve_trade": "🚀 <b>SYNERGIX لا يزال على منحنى الربط Four.meme</b>\n\nأكمل عمليتك مباشرة من محفظتك عبر الرابط أدناه:\n\n🔗 {link}\n\n<i>عندما يتخرج الرمز إلى PancakeSwap، سيتم تفعيل التداول الأصلي من البوت.</i>",
+  "market_bonding_curve": "📊 <b>SYNERGIX على منحنى الربط</b>\n\n💧 المُجمَّع: <b>{raised:.4f} BNB</b> / <b>{target:.4f} BNB</b>\n🎯 التقدم: <b>{percent:.2f}%</b>\n\n{bar}\n\n<i>سيتم تفعيل مقاييس السوق الكاملة (سعر USD، الحجم، السيولة) عند التخرج إلى PancakeSwap.</i>",
   "verify_address_prompt": "🔐 <b>الخطوة 1/2 — العنوان</b>\n\nأرسل عنوان محفظتك (تنسيق <code>0x...</code>، 42 حرفاً).\n\nسيُربط هذا العنوان بهويتك في Synergix.",
   "verify_invalid_address": "⚠️ عنوان غير صالح. يجب أن يكون <code>0x</code> + 40 حرفاً سداسياً.",
   "emergency_lock_active": "🔒 Synergix في وضع الصيانة. المساهمات متوقفة مؤقتاً.",

@@ -735,9 +735,7 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
             )
     elif action == "market":
         market = await dex_svc.get_token_market(trading_svc.SYNERGIX_TOKEN)
-        if not market:
-            await callback.message.edit_text(t("market_unavailable", lang))
-        else:
+        if market:
             dex_label = (market["dex_id"] or "PancakeSwap").replace("pancakeswap", "PancakeSwap").title()
             await callback.message.edit_text(
                 t(
@@ -753,6 +751,26 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
                     dex=dex_label,
                 )
             )
+        else:
+            # DexScreener has no data — token is likely still on the bonding curve.
+            # Fall back to four.meme curve progress so the user sees something useful.
+            progress = await fourmeme_svc.get_curve_progress(trading_svc.SYNERGIX_TOKEN)
+            if progress and not progress.get("graduated"):
+                percent = progress["percent"]
+                filled = int(percent / 5)
+                bar_chars = "█" * filled + "░" * (20 - filled)
+                await callback.message.edit_text(
+                    t(
+                        "market_bonding_curve",
+                        lang,
+                        raised=progress["raised_bnb"],
+                        target=progress["target_bnb"],
+                        percent=percent,
+                        bar=f"<code>{bar_chars}</code>",
+                    )
+                )
+            else:
+                await callback.message.edit_text(t("market_unavailable", lang))
 
     await callback.answer()
 
@@ -1200,8 +1218,11 @@ async def handle_buy_amount_message(
 
     syn_out = await trading_svc.calculate_buy_amount(bnb_in)
     if syn_out is None:
+        # No PancakeSwap pair yet — token is still on the four.meme bonding curve.
+        # Give the user the four.meme link so they can trade against the curve.
         await ghost.reset_state(uid)
-        await message.answer(t("price_unavailable", lang))
+        link = await trading_svc.get_trade_link(bnb_in, "buy")
+        await message.answer(t("bonding_curve_trade", lang, link=link))
         return
 
     bnb_usd = await trading_svc.get_bnb_usd_price()
@@ -1234,8 +1255,11 @@ async def handle_sell_amount_message(
 
     bnb_out = await trading_svc.calculate_sell_amount(syn_in)
     if bnb_out is None:
+        # No PancakeSwap pair yet — token is still on the four.meme bonding curve.
+        # Give the user the four.meme link so they can trade against the curve.
         await ghost.reset_state(uid)
-        await message.answer(t("price_unavailable", lang))
+        link = await trading_svc.get_trade_link(syn_in, "sell")
+        await message.answer(t("bonding_curve_trade", lang, link=link))
         return
 
     if bnb_out < trading_svc.MIN_SELL_BNB_EQUIV:

@@ -68,6 +68,8 @@
   "progress_unavailable": "⚠️ এই মুহূর্তে বন্ডিং কার্ভ কোয়েরি করা যায়নি।",
   "market_info": "📊 <b>SYNERGIX বাজার</b>\n\n💰 দাম: <b>${price_usd:.8f}</b>\n📈 ২৪ঘ পরিবর্তন: <b>{change_24h:+.2f}%</b>\n💧 লিকুইডিটি: <b>${liquidity:,.0f}</b>\n📊 ২৪ঘ ভলিউম: <b>${volume:,.0f}</b>\n🏦 মার্কেট ক্যাপ: <b>${mcap:,.0f}</b>\n🔁 ২৪ঘ Tx: <b>{buys}</b> কেনা / <b>{sells}</b> বিক্রি\n🌐 DEX: {dex}",
   "market_unavailable": "⚠️ বাজার ডেটা পাওয়া যায়নি। কয়েক সেকেন্ড পরে আবার চেষ্টা করুন।",
+  "bonding_curve_trade": "🚀 <b>SYNERGIX এখনো Four.meme বন্ডিং কার্ভে আছে</b>\n\nনিচের লিংকের মাধ্যমে সরাসরি আপনার ওয়ালেট থেকে লেনদেন সম্পন্ন করুন:\n\n🔗 {link}\n\n<i>টোকেন PancakeSwap এ গ্র্যাজুয়েট হলে, বট থেকে নেটিভ ট্রেডিং চালু হবে।</i>",
+  "market_bonding_curve": "📊 <b>SYNERGIX বন্ডিং কার্ভে</b>\n\n💧 সংগৃহীত: <b>{raised:.4f} BNB</b> / <b>{target:.4f} BNB</b>\n🎯 অগ্রগতি: <b>{percent:.2f}%</b>\n\n{bar}\n\n<i>PancakeSwap এ গ্র্যাজুয়েট হলে সম্পূর্ণ মার্কেট মেট্রিক্স (USD দাম, ভলিউম, লিকুইডিটি) সক্রিয় হবে।</i>",
   "verify_address_prompt": "🔐 <b>ধাপ ১/২ — ঠিকানা</b>\n\nআপনার ওয়ালেট ঠিকানা পাঠান (<code>0x...</code> ফরম্যাট, ৪২ অক্ষর)।\n\nএই ঠিকানা আপনার Synergix পরিচয়ের সাথে যুক্ত হবে।",
   "verify_invalid_address": "⚠️ অবৈধ ঠিকানা। <code>0x</code> + ৪০ হেক্স অক্ষর হতে হবে।",
   "emergency_lock_active": "🔒 Synergix রক্ষণাবেক্ষণ মোডে আছে। অবদান সাময়িকভাবে বিরতি দেওয়া হয়েছে।",
