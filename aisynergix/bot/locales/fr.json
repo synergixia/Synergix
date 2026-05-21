@@ -76,5 +76,17 @@
   "admin_lock_enabled": "🔒 Verrouillage d'urgence ACTIVÉ. Les contributions sont suspendues.",
   "admin_lock_disabled": "🔓 Verrouillage d'urgence DÉSACTIVÉ. Les contributions sont actives.",
   "thinking_label": "💭 Réflexion…",
-  "rag_memory_used": "📜 {count} mémoires immortelles ont résonné ici"
+  "rag_memory_used": "📜 {count} mémoires immortelles ont résonné ici",
+  "rank_iniciado": "🌱 Débutant",
+  "rank_activo": "📈 Actif",
+  "rank_sincronizado": "🧬 Synchronisé",
+  "rank_arquitecto": "🏗️ Architecte",
+  "rank_mente_colmena": "🧠 Esprit Ruche",
+  "rank_oraculo": "🔮 Oracle",
+  "benefit_iniciado": "5 contributions/jour",
+  "benefit_activo": "12 contributions/jour + ×1.2",
+  "benefit_sincronizado": "25 contributions/jour + ×1.5",
+  "benefit_arquitecto": "40 contributions/jour + ×2.0",
+  "benefit_mente_colmena": "60 contributions/jour + ×2.5",
+  "benefit_oraculo": "Illimité + ×3.0"
 }

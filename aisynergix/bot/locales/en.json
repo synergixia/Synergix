@@ -76,5 +76,17 @@
   "admin_lock_enabled": "🔒 Emergency lock ENABLED. Contributions are paused.",
   "admin_lock_disabled": "🔓 Emergency lock DISABLED. Contributions are active.",
   "thinking_label": "💭 Thinking…",
-  "rag_memory_used": "📜 {count} immortal memories resonated here"
+  "rag_memory_used": "📜 {count} immortal memories resonated here",
+  "rank_iniciado": "🌱 Initiate",
+  "rank_activo": "📈 Active",
+  "rank_sincronizado": "🧬 Synchronized",
+  "rank_arquitecto": "🏗️ Architect",
+  "rank_mente_colmena": "🧠 Hive Mind",
+  "rank_oraculo": "🔮 Oracle",
+  "benefit_iniciado": "5 contributions/day",
+  "benefit_activo": "12 contributions/day + ×1.2",
+  "benefit_sincronizado": "25 contributions/day + ×1.5",
+  "benefit_arquitecto": "40 contributions/day + ×2.0",
+  "benefit_mente_colmena": "60 contributions/day + ×2.5",
+  "benefit_oraculo": "Unlimited + ×3.0"
 }

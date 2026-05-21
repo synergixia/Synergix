@@ -76,5 +76,17 @@
   "admin_lock_enabled": "🔒 Bloqueio de emergência ATIVADO. As contribuições estão pausadas.",
   "admin_lock_disabled": "🔓 Bloqueio de emergência DESATIVADO. As contribuições estão ativas.",
   "thinking_label": "💭 Analisando…",
-  "rag_memory_used": "📜 {count} memórias imortais ressoaram aqui"
+  "rag_memory_used": "📜 {count} memórias imortais ressoaram aqui",
+  "rank_iniciado": "🌱 Iniciante",
+  "rank_activo": "📈 Ativo",
+  "rank_sincronizado": "🧬 Sincronizado",
+  "rank_arquitecto": "🏗️ Arquiteto",
+  "rank_mente_colmena": "🧠 Mente Colmeia",
+  "rank_oraculo": "🔮 Oráculo",
+  "benefit_iniciado": "5 contribuições/dia",
+  "benefit_activo": "12 contribuições/dia + ×1.2",
+  "benefit_sincronizado": "25 contribuições/dia + ×1.5",
+  "benefit_arquitecto": "40 contribuições/dia + ×2.0",
+  "benefit_mente_colmena": "60 contribuições/dia + ×2.5",
+  "benefit_oraculo": "Ilimitado + ×3.0"
 }
