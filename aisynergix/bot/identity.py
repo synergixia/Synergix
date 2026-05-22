@@ -188,6 +188,13 @@ class IdentityManager:
     def __init__(self):
         self._cache = UserCache(max_size=500)
 
+    def invalidate_cache(self, uid: int) -> None:
+        """Drop the cached profile so the next get_profile() re-reads from Irys.
+        Used after background writes (e.g. residual rewards) that bypass this
+        manager and would otherwise leave stale data in the in-memory cache.
+        """
+        self._cache.remove(uid)
+
     async def get_profile(self, uid: int) -> UserProfile:
         from aisynergix.services.irys import read_user_tags
 

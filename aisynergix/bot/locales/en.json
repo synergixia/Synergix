@@ -86,10 +86,10 @@
   "rank_arquitecto": "🏗️ Architect",
   "rank_mente_colmena": "🧠 Hive Mind",
   "rank_oraculo": "🔮 Oracle",
-  "benefit_iniciado": "5 contributions/day",
-  "benefit_activo": "12 contributions/day + ×1.2",
-  "benefit_sincronizado": "25 contributions/day + ×1.5",
-  "benefit_arquitecto": "40 contributions/day + ×2.0",
-  "benefit_mente_colmena": "60 contributions/day + ×2.5",
-  "benefit_oraculo": "Unlimited + ×3.0"
+  "benefit_iniciado": "{remaining} contributions left today",
+  "benefit_activo": "{remaining} contributions left today",
+  "benefit_sincronizado": "{remaining} contributions left today",
+  "benefit_arquitecto": "{remaining} contributions left today",
+  "benefit_mente_colmena": "{remaining} contributions left today",
+  "benefit_oraculo": "Unlimited (no daily cap)"
 }

@@ -86,10 +86,10 @@
   "rank_arquitecto": "🏗️ 架构师",
   "rank_mente_colmena": "🧠 蜂巢思维",
   "rank_oraculo": "🔮 先知",
-  "benefit_iniciado": "每日5次贡献",
-  "benefit_activo": "每日12次 + ×1.2",
-  "benefit_sincronizado": "每日25次 + ×1.5",
-  "benefit_arquitecto": "每日40次 + ×2.0",
-  "benefit_mente_colmena": "每日60次 + ×2.5",
-  "benefit_oraculo": "无限次 + ×3.0"
+  "benefit_iniciado": "今日剩余 {remaining} 次贡献",
+  "benefit_activo": "今日剩余 {remaining} 次贡献",
+  "benefit_sincronizado": "今日剩余 {remaining} 次贡献",
+  "benefit_arquitecto": "今日剩余 {remaining} 次贡献",
+  "benefit_mente_colmena": "今日剩余 {remaining} 次贡献",
+  "benefit_oraculo": "无限制（无每日上限）"
 }

@@ -462,6 +462,9 @@ class AIManager:
         }
 
     async def get_user_status(self, uid: int, name: str = "") -> Dict[str, Any]:
+        # Drop the cached profile so we reflect background writes (residual
+        # rewards, daily resets) that bypass IdentityManager.
+        self._identity.invalidate_cache(uid)
         profile = await self._identity.get_profile(uid)
         target_language = profile.language
 
