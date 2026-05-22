@@ -86,10 +86,10 @@
   "rank_arquitecto": "🏗️ Arquiteto",
   "rank_mente_colmena": "🧠 Mente Colmeia",
   "rank_oraculo": "🔮 Oráculo",
-  "benefit_iniciado": "5 contribuições/dia",
-  "benefit_activo": "12 contribuições/dia + ×1.2",
-  "benefit_sincronizado": "25 contribuições/dia + ×1.5",
-  "benefit_arquitecto": "40 contribuições/dia + ×2.0",
-  "benefit_mente_colmena": "60 contribuições/dia + ×2.5",
-  "benefit_oraculo": "Ilimitado + ×3.0"
+  "benefit_iniciado": "{remaining} contribuições restantes hoje",
+  "benefit_activo": "{remaining} contribuições restantes hoje",
+  "benefit_sincronizado": "{remaining} contribuições restantes hoje",
+  "benefit_arquitecto": "{remaining} contribuições restantes hoje",
+  "benefit_mente_colmena": "{remaining} contribuições restantes hoje",
+  "benefit_oraculo": "Ilimitado (sem teto diário)"
 }

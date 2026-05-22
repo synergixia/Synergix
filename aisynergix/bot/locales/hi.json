@@ -86,10 +86,10 @@
   "rank_arquitecto": "🏗️ वास्तुकार",
   "rank_mente_colmena": "🧠 समूह मन",
   "rank_oraculo": "🔮 दृष्टा",
-  "benefit_iniciado": "5 योगदान/दिन",
-  "benefit_activo": "12 योगदान/दिन + ×1.2",
-  "benefit_sincronizado": "25 योगदान/दिन + ×1.5",
-  "benefit_arquitecto": "40 योगदान/दिन + ×2.0",
-  "benefit_mente_colmena": "60 योगदान/दिन + ×2.5",
-  "benefit_oraculo": "असीमित + ×3.0"
+  "benefit_iniciado": "आज {remaining} योगदान शेष",
+  "benefit_activo": "आज {remaining} योगदान शेष",
+  "benefit_sincronizado": "आज {remaining} योगदान शेष",
+  "benefit_arquitecto": "आज {remaining} योगदान शेष",
+  "benefit_mente_colmena": "आज {remaining} योगदान शेष",
+  "benefit_oraculo": "असीमित (कोई दैनिक सीमा नहीं)"
 }

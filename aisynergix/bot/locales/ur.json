@@ -86,10 +86,10 @@
   "rank_arquitecto": "🏗️ معمار",
   "rank_mente_colmena": "🧠 ذہن کا چھتہ",
   "rank_oraculo": "🔮 غیب دان",
-  "benefit_iniciado": "5 حصص/روز",
-  "benefit_activo": "12 حصص/روز + ×1.2",
-  "benefit_sincronizado": "25 حصص/روز + ×1.5",
-  "benefit_arquitecto": "40 حصص/روز + ×2.0",
-  "benefit_mente_colmena": "60 حصص/روز + ×2.5",
-  "benefit_oraculo": "لامحدود + ×3.0"
+  "benefit_iniciado": "آج {remaining} شراکتیں باقی",
+  "benefit_activo": "آج {remaining} شراکتیں باقی",
+  "benefit_sincronizado": "آج {remaining} شراکتیں باقی",
+  "benefit_arquitecto": "آج {remaining} شراکتیں باقی",
+  "benefit_mente_colmena": "آج {remaining} شراکتیں باقی",
+  "benefit_oraculo": "لامحدود (روزانہ کوئی حد نہیں)"
 }

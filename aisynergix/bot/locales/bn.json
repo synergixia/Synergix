@@ -86,10 +86,10 @@
   "rank_arquitecto": "🏗️ স্থপতি",
   "rank_mente_colmena": "🧠 ঝাঁক মন",
   "rank_oraculo": "🔮 দ্রষ্টা",
-  "benefit_iniciado": "5 অবদান/দিন",
-  "benefit_activo": "12 অবদান/দিন + ×1.2",
-  "benefit_sincronizado": "25 অবদান/দিন + ×1.5",
-  "benefit_arquitecto": "40 অবদান/দিন + ×2.0",
-  "benefit_mente_colmena": "60 অবদান/দিন + ×2.5",
-  "benefit_oraculo": "অসীমিত + ×3.0"
+  "benefit_iniciado": "আজ {remaining} অবদান বাকি",
+  "benefit_activo": "আজ {remaining} অবদান বাকি",
+  "benefit_sincronizado": "আজ {remaining} অবদান বাকি",
+  "benefit_arquitecto": "আজ {remaining} অবদান বাকি",
+  "benefit_mente_colmena": "আজ {remaining} অবদান বাকি",
+  "benefit_oraculo": "সীমাহীন (দৈনিক সীমা নেই)"
 }

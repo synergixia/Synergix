@@ -86,10 +86,10 @@
   "rank_arquitecto": "🏗️ Architecte",
   "rank_mente_colmena": "🧠 Esprit Ruche",
   "rank_oraculo": "🔮 Oracle",
-  "benefit_iniciado": "5 contributions/jour",
-  "benefit_activo": "12 contributions/jour + ×1.2",
-  "benefit_sincronizado": "25 contributions/jour + ×1.5",
-  "benefit_arquitecto": "40 contributions/jour + ×2.0",
-  "benefit_mente_colmena": "60 contributions/jour + ×2.5",
-  "benefit_oraculo": "Illimité + ×3.0"
+  "benefit_iniciado": "{remaining} contributions restantes aujourd'hui",
+  "benefit_activo": "{remaining} contributions restantes aujourd'hui",
+  "benefit_sincronizado": "{remaining} contributions restantes aujourd'hui",
+  "benefit_arquitecto": "{remaining} contributions restantes aujourd'hui",
+  "benefit_mente_colmena": "{remaining} contributions restantes aujourd'hui",
+  "benefit_oraculo": "Illimité (aucun plafond quotidien)"
 }

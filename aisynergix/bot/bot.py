@@ -146,13 +146,21 @@ def _t_rank(rank: str, lang: str) -> str:
     return rank if translated == keys[0] else translated  # fallback to Spanish if key missing
 
 
-def _t_benefit(rank: str, lang: str) -> str:
-    """Translate the benefit string for a rank into the user's language."""
+def _t_benefit(rank: str, lang: str, remaining: int = 0) -> str:
+    """Translate the benefit string for a rank into the user's language.
+    Substitutes {remaining} with the user's remaining daily contributions so
+    the field counts down in real time as they post aportes.
+    """
     keys = _RANK_KEY_MAP.get(rank)
     if not keys:
         return rank
-    translated = t(keys[1], lang)
-    return rank if translated == keys[1] else translated
+    template = t(keys[1], lang)
+    if template == keys[1]:
+        return rank
+    try:
+        return template.format(remaining=remaining)
+    except (KeyError, IndexError, ValueError):
+        return template
 
 
 async def _keep_typing(chat_id: int, stop_event: asyncio.Event) -> None:
@@ -396,7 +404,7 @@ async def handle_status_button(message: Message) -> None:
         total_aportes=status["total_aportes"],
         tema_actual=status["tema_actual"],
         points_next=status["points_next"],
-        beneficio=_t_benefit(status["rank"], lang),
+        beneficio=_t_benefit(status["rank"], lang, status.get("remaining", 0)),
         multiplier=status["multiplier"],
         contribution_count=status["contribution_count"],
         language=get_lang_name(status["language"]),
@@ -581,7 +589,7 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
             total_aportes=status["total_aportes"],
             tema_actual=status["tema_actual"],
             points_next=status["points_next"],
-            beneficio=_t_benefit(status["rank"], lang),
+            beneficio=_t_benefit(status["rank"], lang, status.get("remaining", 0)),
             multiplier=status["multiplier"],
             contribution_count=status["contribution_count"],
             language=get_lang_name(status["language"]),
