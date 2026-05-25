@@ -183,12 +183,18 @@ def _tag_filter(tags: List[Dict[str, str]]) -> str:
 
 
 async def _query_latest(tags: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
-    """Retorna el nodo más reciente que coincida con los tags dados."""
+    """Retorna el nodo más reciente que coincida con los tags dados.
+
+    Solicita explícitamente ``order: HEIGHT_DESC`` para que Irys nos devuelva
+    primero las transacciones más nuevas — sin esto, podríamos perder la
+    versión más reciente si la cuenta tiene muchas escrituras.
+    """
     q = f"""
     {{
       transactions(
         tags: [{_tag_filter(tags)}]{_owner_filter()},
-        first: 20
+        order: HEIGHT_DESC,
+        first: 50
       ) {{ edges {{ node {{ id tags {{ name value }} timestamp }} }} }}
     }}
     """
@@ -208,11 +214,16 @@ async def _query_latest(tags: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
 async def _query_all(
     tags: List[Dict[str, str]], limit: int = 100
 ) -> List[Dict[str, Any]]:
-    """Retorna todos los nodos (DESC por timestamp) que coincidan con los tags dados."""
+    """Retorna todos los nodos (DESC por timestamp) que coincidan con los tags dados.
+
+    Solicita ``order: HEIGHT_DESC`` para evitar que Irys nos devuelva un
+    subconjunto antiguo cuando el límite es menor que el total disponible.
+    """
     q = f"""
     {{
       transactions(
         tags: [{_tag_filter(tags)}]{_owner_filter()},
+        order: HEIGHT_DESC,
         first: {limit}
       ) {{ edges {{ node {{ id tags {{ name value }} timestamp }} }} }}
     }}
