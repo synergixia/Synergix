@@ -22,6 +22,7 @@ from aisynergix.services.irys import (
     write_aporte,
     read_user_tags,
     write_user_tags,
+    list_aportes,
     get_current_challenge,
     get_system_config,
     check_ai_guard,
@@ -468,17 +469,32 @@ class AIManager:
         profile = await self._identity.get_profile(uid)
         target_language = profile.language
 
-        # One-time recovery: if contribution_count was never persisted (bug now fixed)
-        # but the user has points, count actual aportes from Irys and patch the profile.
-        if profile.contribution_count == 0 and profile.points > 0:
-            from aisynergix.services.irys import list_aportes
-            try:
-                real_aportes = await list_aportes(profile.uid_hash, limit=500)
-                if real_aportes:
-                    profile.contribution_count = len(real_aportes)
-                    await self._identity.update_profile(uid, profile)
-            except Exception:
-                pass
+        # ALWAYS read real contribution count and total_uses_count from Irys
+        # to guarantee real-time accuracy. The profile tags may lag behind
+        # because _process_residual_rewards and sync_brain write directly to
+        # Irys without updating the IdentityManager cache.
+        try:
+            # Count actual aportes on Irys (authoritative contribution count)
+            real_aportes = await list_aportes(profile.uid_hash, limit=500)
+            real_contribution_count = len(real_aportes) if real_aportes else 0
+
+            # Read fresh tags directly from Irys for points and total_uses_count
+            fresh_tags = await read_user_tags(profile.uid_hash)
+            fresh_points = int(fresh_tags.get("points", "0"))
+            fresh_total_uses = int(fresh_tags.get("total_uses_count", "0"))
+
+            # Use the maximum between cached profile and fresh Irys data
+            # (cached profile may have uncommitted increments from this session)
+            profile.points = max(profile.points, fresh_points)
+            profile.total_uses_count = max(profile.total_uses_count, fresh_total_uses)
+            profile.contribution_count = max(profile.contribution_count, real_contribution_count)
+
+            # Persist corrected values back if they changed
+            if (real_contribution_count > int(fresh_tags.get("contribution_count", "0"))
+                    or fresh_total_uses != profile.total_uses_count):
+                await self._identity.update_profile(uid, profile)
+        except Exception:
+            pass
 
         sorted_ranks = sorted(RANK_TABLE.items(), key=lambda x: x[1]["min_points"])
 
@@ -599,6 +615,11 @@ class AIManager:
                     tags["total_uses_count"] = str(int(tags.get("total_uses_count", 0)) + 1)
                     await write_user_tags(author_uid_hash, tags)
                     rewarded_authors.add(author_uid_hash)
+                    # Invalidate the IdentityManager cache for this author so
+                    # their next get_profile() reads fresh data from Irys.
+                    # We search the cache by uid_hash since we don't have the
+                    # real Telegram UID here.
+                    self._identity.invalidate_cache_by_hash(author_uid_hash)
             except Exception:
                 continue
 
