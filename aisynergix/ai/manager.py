@@ -463,65 +463,90 @@ class AIManager:
         }
 
     async def get_user_status(self, uid: int, name: str = "") -> Dict[str, Any]:
-        # Snapshot the LOCAL cache BEFORE invalidating — it may hold values
-        # written this session that Irys hasn't indexed yet (e.g. an aporte
-        # the user just submitted; Irys GraphQL has 5-30s indexing latency).
+        """Return real-time user status, with Irys as the authoritative source.
+
+        Behaviour:
+          1. Snapshot the in-process cache (may have values written this
+             session that Irys has not indexed yet — Irys GraphQL has 5-30s
+             indexing latency).
+          2. Force a fresh read from Irys GraphQL (bypassing the cache).
+          3. Count the user's actual aporte transactions on Irys; this is
+             authoritative for ``contribution_count`` and recovers from
+             any past profile-write failures.
+          4. Reconcile cache + Irys + real-aporte-count using max() so the
+             displayed values never regress.
+          5. Always write the reconciled profile back to Irys.  This is the
+             user-visible "save" — every status check ensures Irys carries
+             the latest values, repairing any past silent write failure.
+             Cost is one ~200-byte upload per status check (negligible).
+          6. Log when a write happens so silent failures become visible.
+        """
+        # Step 1: capture cache before invalidation
         cached_profile = self._identity._cache.get(uid)
         cached_points = cached_profile.points if cached_profile else 0
         cached_total_uses = cached_profile.total_uses_count if cached_profile else 0
         cached_contributions = cached_profile.contribution_count if cached_profile else 0
         cached_daily_aportes = cached_profile.daily_aportes_count if cached_profile else 0
 
-        # Force a fresh read from Irys to pick up background writes that
-        # bypassed the IdentityManager (residual rewards, sync_brain rank
-        # promotions, daily count resets).
+        # Step 2: force fresh read from Irys
         self._identity.invalidate_cache(uid)
         profile = await self._identity.get_profile(uid)
         target_language = profile.language
 
-        # Capture Irys values BEFORE applying max() so we can detect lag below.
+        # Capture Irys values BEFORE reconciliation so we can detect divergence.
         irys_points = profile.points
         irys_total_uses = profile.total_uses_count
         irys_contributions = profile.contribution_count
 
-        # ── Reconcile cache (may be ahead) and Irys (may be ahead) ──
-        # Use max() because:
-        #  * Cache is ahead when the user just made an aporte (Irys not indexed).
-        #  * Irys is ahead when residual rewards or sync_brain wrote points
-        #    directly without touching this process's cache.
-        # max() guarantees the displayed values never regress.
-        profile.points = max(profile.points, cached_points)
-        profile.total_uses_count = max(profile.total_uses_count, cached_total_uses)
-        profile.contribution_count = max(profile.contribution_count, cached_contributions)
-        profile.daily_aportes_count = max(profile.daily_aportes_count, cached_daily_aportes)
-
-        # Authoritative contribution count: count the user's aportes directly
-        # on Irys.  This catches missing increments and orphan aportes whose
-        # profile-update tx failed.  list_aportes also has Irys indexing
-        # latency, so combine with max() against the values we have.
+        # Step 3: count actual aportes on Irys (authoritative)
         try:
             real_aportes = await list_aportes(profile.uid_hash, limit=500)
             real_contribution_count = len(real_aportes) if real_aportes else 0
-            profile.contribution_count = max(
-                profile.contribution_count, real_contribution_count
+        except Exception as exc:
+            logger.warning(
+                "list_aportes falló para uid_hash=%s — usando profile.contribution_count: %s",
+                profile.uid_hash, exc,
             )
-        except Exception:
             real_contribution_count = profile.contribution_count
 
-        # Persist back to Irys ONLY when we detect real divergence (cache
-        # had values Irys doesn't, or list_aportes shows more aportes than
-        # the profile recorded).  This keeps Status checks free of Irys
-        # writes in the common case where the cache and Irys already agree.
-        irys_lagged = (
+        # Step 4: reconcile (cache may be ahead, Irys may be ahead, real
+        # aportes always wins for contribution_count)
+        profile.points = max(profile.points, cached_points)
+        profile.total_uses_count = max(profile.total_uses_count, cached_total_uses)
+        profile.contribution_count = max(
+            profile.contribution_count, cached_contributions, real_contribution_count
+        )
+        profile.daily_aportes_count = max(profile.daily_aportes_count, cached_daily_aportes)
+
+        # Step 5: always persist the reconciled profile to Irys.  The user
+        # asked for real-time Irys updates — every status check is a chance
+        # to repair stale Irys state caused by past silent write failures.
+        irys_drifted = (
             profile.points > irys_points
             or profile.total_uses_count > irys_total_uses
             or profile.contribution_count > irys_contributions
         )
-        if irys_lagged:
+        if irys_drifted:
+            logger.info(
+                "🔄 Reconciling Irys for uid_hash=%s: "
+                "points %d→%d, uses %d→%d, contribs %d→%d (real_aportes=%d)",
+                profile.uid_hash,
+                irys_points, profile.points,
+                irys_total_uses, profile.total_uses_count,
+                irys_contributions, profile.contribution_count,
+                real_contribution_count,
+            )
             try:
                 await self._identity.update_profile(uid, profile)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.error(
+                    "❌ Failed to reconcile Irys for uid_hash=%s: %s",
+                    profile.uid_hash, exc,
+                )
+        else:
+            # No divergence — refresh the cache with the canonical Irys
+            # profile so subsequent reads stay consistent without writing.
+            self._identity._cache.set(uid, profile)
 
         sorted_ranks = sorted(RANK_TABLE.items(), key=lambda x: x[1]["min_points"])
 

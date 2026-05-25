@@ -148,7 +148,7 @@ class UserCache:
     IdentityManager (p. ej. wallet_verify.py, sync_brain.py) se refleje pronto.
     """
 
-    TTL_SECONDS: int = 30
+    TTL_SECONDS: int = 300
 
     def __init__(self, max_size: int = 500):
         self._cache: Dict[int, tuple] = {}  # uid -> (profile, cached_at_ts)
@@ -226,13 +226,30 @@ class IdentityManager:
         return profile
 
     async def update_profile(self, uid: int, profile: UserProfile) -> None:
+        """Persist the profile to Irys and refresh the local cache.
+
+        Irys write errors are logged but not re-raised — losing a single
+        update is recoverable (the next get_user_status will reconcile and
+        retry the write).  Silent failures, however, are not: every error
+        appears in logs so misbehaviour can be diagnosed.
+        """
         from aisynergix.services.irys import write_user_tags
+        import logging
+        _log = logging.getLogger(__name__)
 
         uid_hash = _hash_uid(uid)
         try:
             await write_user_tags(uid_hash, profile.to_tags())
-        except Exception:
-            pass
+            _log.debug(
+                "✅ profile updated on Irys uid_hash=%s points=%d contribs=%d uses=%d",
+                uid_hash, profile.points, profile.contribution_count, profile.total_uses_count,
+            )
+        except Exception as exc:
+            _log.error(
+                "❌ Irys write failed for uid_hash=%s — local cache updated but "
+                "Irys is now stale (will retry on next reconciliation): %s",
+                uid_hash, exc, exc_info=True,
+            )
         self._cache.set(uid, profile)
 
     async def set_language(self, uid: int, lang_code: str) -> bool:
