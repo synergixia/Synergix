@@ -195,6 +195,22 @@ class IdentityManager:
         """
         self._cache.remove(uid)
 
+    def invalidate_cache_by_hash(self, uid_hash: str) -> None:
+        """Drop cached profile for a user identified by their uid_hash.
+        Used by _process_residual_rewards which only has the obfuscated hash.
+        Iterates the cache to find the matching entry (small cache, max 500).
+        """
+        # Search through the cache entries to find matching uid_hash
+        to_remove = None
+        for uid, entry in list(self._cache._cache.items()):
+            if entry is not None:
+                profile, _ = entry
+                if profile.uid_hash == uid_hash:
+                    to_remove = uid
+                    break
+        if to_remove is not None:
+            self._cache.remove(to_remove)
+
     async def get_profile(self, uid: int) -> UserProfile:
         from aisynergix.services.irys import read_user_tags
 
