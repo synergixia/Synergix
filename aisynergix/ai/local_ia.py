@@ -107,7 +107,10 @@ JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
 # 350 max_tokens → worst-case ~35 s; 120 s timeout leaves a wide margin
 # for the prompt-eval phase of the first uncached request.
 THINKER_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
-JUDGE_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
+# Judge runs Qwen2.5-1.5B-Q8 with -t 1 (1 thread).  At ~5-10 tok/s, 320
+# tokens worst-case takes ~32-64 s; 120 s timeout absorbs prompt-eval
+# spikes on long contributions and the occasional CPU contention.
+JUDGE_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
 
 # Maximum characters sent to the Judge.  Qwen2.5-1.5B has a 4096-token
 # context window in our compose config; 3000 chars ≈ ~1000 tokens leaves
@@ -122,7 +125,11 @@ THINKER_TOP_K = 40
 THINKER_MAX_TOKENS = 350
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
-JUDGE_MAX_TOKENS = 768
+# 320 tokens is plenty for the Judge JSON: 5 numeric fields + ~150-char
+# reason + ~120-char feedback fits in ~200-250 tokens.  Previously 768,
+# which let the model ramble past the JSON close-brace and trigger
+# 60 s ReadTimeouts on a 1-thread Q8 model.
+JUDGE_MAX_TOKENS = 320
 
 # Native names used when telling the model which language to respond in.
 LANG_NAMES: Dict[str, str] = {
@@ -187,7 +194,7 @@ JUDGE_SYSTEM_PROMPT = (
     "Sin markdown. Estructura exacta:\n"
     '{\n'
     '  "quality_score": <float 0.0-10.0>,\n'
-    '  "reason": "<2 oraciones mínimo en el idioma del aporte justificando la puntuación>",\n'
+    '  "reason": "<1 oración breve (máx 150 caracteres) en el idioma del aporte justificando la puntuación>",\n'
     '  "is_duplicate": <true|false>,\n'
     '  "category": "<filosofia|tecnologia|ciencia|arte|vida|espiritualidad'
     '|economia|naturaleza|sociedad|innovacion|programacion>",\n'
