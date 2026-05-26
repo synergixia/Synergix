@@ -226,75 +226,31 @@ class IdentityManager:
         return profile
 
     async def update_profile(self, uid: int, profile: UserProfile) -> None:
-        """Persist the profile to Irys with a read-modify-write merge.
+        """Persist the profile to Irys and refresh the local cache.
 
-        CRITICAL: cumulative counters (points, contribution_count,
-        total_uses_count) MUST be merged with the latest Irys state
-        before writing.  Otherwise concurrent writers — typically
-        _process_residual_rewards (which reads Irys, increments, writes
-        without touching the IdentityManager cache) — get clobbered by
-        whichever writer's local state was older.
+        Irys write errors are logged but not re-raised — losing a single
+        update is recoverable (the next get_user_status will reconcile and
+        retry the write).  Silent failures, however, are not: every error
+        appears in logs so misbehaviour can be diagnosed.
 
-        Symptom of the bug this fixes: user makes an aporte, Irys gets
-        new (points=N+10).  Another user uses one of their aportes,
-        residual reward writes (points=N+10+1=N+11) to Irys.  Then this
-        user makes another aporte: cache still has stale (points=N),
-        process_contribution computes (points=N+30), writes it.  The
-        residual reward (+1) is silently lost.
-
-        Fix: every write reads fresh Irys state and takes max() of the
-        cumulative counters, so neither writer can regress the other.
+        SAFETY GUARD: if the profile we are about to write looks like a
+        *regression* compared to whatever was last cached (points dropped
+        to 0 with no real reason, contribution_count went backwards, etc.),
+        refuse the write.  This protects users from data loss when an
+        upstream Irys-read failure produces a "fresh user" profile that
+        would otherwise overwrite their real history.
         """
-        from aisynergix.services.irys import write_user_tags, read_user_tags
+        from aisynergix.services.irys import write_user_tags
         import logging
         _log = logging.getLogger(__name__)
 
         uid_hash = _hash_uid(uid)
 
-        # ── Read-modify-write merge: pull latest Irys state, take max() ──
-        # We only merge cumulative counters that grow monotonically.
-        # Other fields (rank, fsm_state, daily_aportes_count, language,
-        # wallet_address, trust_score) keep the value the caller passed
-        # — those are owned by the calling flow, not by background writers.
-        try:
-            irys_tags = await read_user_tags(uid_hash)
-            irys_points = int(irys_tags.get("points", "0") or 0)
-            irys_contribs = int(irys_tags.get("contribution_count", "0") or 0)
-            irys_uses = int(irys_tags.get("total_uses_count", "0") or 0)
-
-            merged_points = max(profile.points, irys_points)
-            merged_contribs = max(profile.contribution_count, irys_contribs)
-            merged_uses = max(profile.total_uses_count, irys_uses)
-
-            if (merged_points != profile.points
-                    or merged_contribs != profile.contribution_count
-                    or merged_uses != profile.total_uses_count):
-                _log.info(
-                    "🔁 Merging Irys state for uid_hash=%s: "
-                    "points %d/%d→%d, contribs %d/%d→%d, uses %d/%d→%d",
-                    uid_hash,
-                    profile.points, irys_points, merged_points,
-                    profile.contribution_count, irys_contribs, merged_contribs,
-                    profile.total_uses_count, irys_uses, merged_uses,
-                )
-
-            profile.points = merged_points
-            profile.contribution_count = merged_contribs
-            profile.total_uses_count = merged_uses
-        except Exception as exc:
-            # If the read fails, fall back to writing what we have.
-            # The retry-on-next-status-check + anti-regression guard below
-            # protect against the worst-case scenarios.
-            _log.warning(
-                "Pre-write Irys read failed for uid_hash=%s — writing local "
-                "state without merge: %s", uid_hash, exc,
-            )
-
-        # ── Anti-regression safety net (cache vs new) ──
-        # If the merged profile somehow has 2+ counters going backwards
-        # vs whatever was last cached, refuse the write.  This protects
-        # against bugs that produce a "fresh user" profile that would
-        # erase real history.
+        # Anti-regression check: only triggers when the new profile is
+        # notably smaller than the cached one across multiple counters.
+        # We accept a single counter going down (e.g. daily_aportes_count
+        # reset) but refuse writes that would strip the user of their
+        # cumulative history.
         cached = self._cache._cache.get(uid)
         if cached is not None:
             old_profile, _ts = cached
