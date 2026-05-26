@@ -510,13 +510,105 @@ _PROFILE_TAG_RMAP: Dict[str, str] = {v: k for k, v in _PROFILE_TAG_MAP.items()}
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
-async def read_user_tags(uid_ofuscado: str) -> Dict[str, str]:
-    """Lee el perfil de usuario más reciente desde Irys."""
+async def read_user_pointer(uid_ofuscado: str) -> Optional[Dict[str, str]]:
+    """Lee el puntero al último ``user-profile`` sellado para este usuario.
+
+    Mirror del patrón ``brain-pointer``: el puntero es una tx pequeña con
+    ``data-type=user-profile-pointer`` que registra el ``latest-tx`` del
+    último perfil escrito.  Permite recuperar la versión vigente de forma
+    determinista vía ``_query_by_id(latest_tx)`` sin depender de la
+    ordenación por timestamp del GraphQL ni esperar a que la indexación
+    de Irys se ponga al día tras un upload reciente (latencia 5-30 s).
+
+    Devuelve los tags del puntero (incluye ``latest-tx`` y un snapshot de
+    los contadores principales) o ``None`` si no existe puntero todavía
+    (usuario nuevo o perfil escrito antes de que existiera este mecanismo).
+    """
     try:
         node = await _query_latest([
-            {"name": "data-type", "value": "user-profile"},
+            {"name": "data-type", "value": "user-profile-pointer"},
             {"name": "uid-hash",  "value": uid_ofuscado},
         ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_user_pointer %s falló: %s", uid_ofuscado, exc)
+    return None
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_user_pointer(uid_ofuscado: str, tx_id: str, tags: Dict[str, str]) -> None:
+    """Sube un puntero al ``tx_id`` del último ``user-profile`` sellado.
+
+    Incluye un snapshot de los contadores principales (``points``,
+    ``contribution-count``, ``total-uses-count``, ``last-seen-ts``) en los
+    propios tags del puntero para diagnóstico rápido sin tener que resolver
+    el tx referenciado.
+    """
+    pointer_tags = [
+        {"name": "data-type", "value": "user-profile-pointer"},
+        {"name": "uid-hash",  "value": uid_ofuscado},
+        {"name": "latest-tx", "value": tx_id},
+        {"name": "points",            "value": str(tags.get("points", "0"))},
+        {"name": "contribution-count", "value": str(tags.get("contribution_count", "0"))},
+        {"name": "total-uses-count",  "value": str(tags.get("total_uses_count", "0"))},
+        {"name": "last-seen-ts",      "value": str(tags.get("last_seen_ts", "0"))},
+        {"name": "Content-Type",      "value": "application/json"},
+    ]
+    await _upload(b"{}", pointer_tags)
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def read_user_tags(uid_ofuscado: str) -> Dict[str, str]:
+    """Lee el perfil de usuario más reciente desde Irys.
+
+    Estrategia (en orden):
+      1. ``user-profile-pointer`` → ``_query_by_id(latest-tx)``
+         Lookup determinista, inmune a la latencia de indexación GraphQL
+         para tx recientes y a posibles inconsistencias de ordenación
+         por timestamp.
+      2. Fallback ``_query_latest`` sobre ``user-profile``
+         Compatibilidad con perfiles escritos antes de que existiera el
+         puntero, o cuando el puntero apunta a un tx no resoluble.
+      3. Defaults
+         Solo si las dos rutas anteriores no devuelven nodo (usuario
+         genuinamente nuevo) o ante un fallo total de lectura.
+
+    El paso 1 resuelve el caso de "Ver estado" justo tras un sellado:
+    antes, la lectura podía devolver la versión anterior por culpa de la
+    latencia de indexación; ahora apunta directamente a la última tx.
+    """
+    try:
+        node = None
+
+        # 1) Lookup determinista vía puntero
+        pointer_tags = await read_user_pointer(uid_ofuscado)
+        if pointer_tags:
+            latest_tx = pointer_tags.get("latest-tx")
+            if latest_tx:
+                node = await _query_by_id(latest_tx)
+                if node is None:
+                    logger.warning(
+                        "user-profile-pointer apunta a tx=%s no resoluble "
+                        "para uid_hash=%s — fallback a _query_latest.",
+                        latest_tx, uid_ofuscado,
+                    )
+
+        # 2) Fallback: timestamp DESC sobre user-profile
+        if node is None:
+            node = await _query_latest([
+                {"name": "data-type", "value": "user-profile"},
+                {"name": "uid-hash",  "value": uid_ofuscado},
+            ])
+
         if node:
             raw_tags = _node_tags(node)
             result: Dict[str, str] = {}
@@ -539,7 +631,15 @@ async def read_user_tags(uid_ofuscado: str) -> Dict[str, str]:
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
 async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
-    """Sube nueva versión del perfil de usuario a Irys."""
+    """Sube nueva versión del perfil de usuario a Irys + puntero al tx-id.
+
+    Tras subir el perfil, escribe un ``user-profile-pointer`` que apunta
+    al tx recién creado.  Las lecturas posteriores (`read_user_tags`)
+    consultarán este puntero primero, evitando la dependencia del
+    ordenamiento por timestamp del GraphQL — que durante la ventana de
+    indexación (~5-30 s) puede devolver la versión anterior y producir
+    sobrescrituras con datos viejos.
+    """
     irys_tags = [
         {"name": "data-type", "value": "user-profile"},
         {"name": "uid-hash",  "value": uid_ofuscado},
@@ -552,6 +652,18 @@ async def write_user_tags(uid_ofuscado: str, tags: Dict[str, str]) -> None:
     irys_tags.append({"name": "Content-Type", "value": "application/json"})
     tx_id = await _upload(b"{}", irys_tags)
     logger.info("✅ Perfil %s actualizado en Irys. Ver dato: %s", uid_ofuscado, _gw(tx_id))
+
+    # Best-effort: actualiza el puntero al último sellado.  Si falla, el
+    # perfil sigue siendo recuperable vía el fallback _query_latest, así
+    # que NO propagamos la excepción y el caller no se entera.
+    try:
+        await write_user_pointer(uid_ofuscado, tx_id, tags)
+    except Exception as exc:
+        logger.warning(
+            "user-profile-pointer falló para %s tx=%s — perfil recuperable "
+            "vía _query_latest: %s",
+            uid_ofuscado, tx_id, exc,
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════

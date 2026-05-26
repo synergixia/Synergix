@@ -212,7 +212,9 @@ class IdentityManager:
             self._cache.remove(to_remove)
 
     async def get_profile(self, uid: int) -> UserProfile:
-        from aisynergix.services.irys import read_user_tags
+        from aisynergix.services.irys import read_user_tags, list_aportes
+        import logging
+        _log = logging.getLogger(__name__)
 
         cached = self._cache.get(uid)
         if cached:
@@ -221,6 +223,49 @@ class IdentityManager:
         uid_hash = _hash_uid(uid)
         tags = await read_user_tags(uid_hash)
         profile = UserProfile.from_tags(uid, tags)
+
+        # Detección de "lectura silenciosamente fallida": Irys puede
+        # devolver _USER_TAG_DEFAULTS tanto para usuarios genuinamente
+        # nuevos como cuando el GraphQL falla o todavía no ha indexado
+        # la última escritura.  Para distinguir ambos casos, si el perfil
+        # leído parece "todo defaults", verificamos vía list_aportes si
+        # el usuario tiene historial real en Irys.  Si lo tiene → la
+        # lectura está corrupta: NO cacheamos el perfil falso (la próxima
+        # llamada reintentará Irys) y reconstruimos contribution_count
+        # a partir de los aportes reales para que "Ver estado" muestre
+        # información mínima coherente mientras tanto.
+        looks_default = (
+            profile.points == 0
+            and profile.contribution_count == 0
+            and profile.total_uses_count == 0
+            and not profile.wallet_address
+        )
+        if looks_default:
+            try:
+                aportes = await list_aportes(uid_hash, limit=10)
+            except Exception as exc:
+                _log.warning(
+                    "get_profile: list_aportes falló para uid_hash=%s — "
+                    "no cacheo el perfil defaulted (reintentaremos): %s",
+                    uid_hash, exc,
+                )
+                # Sin confirmación, conservador: no cachear → reintento
+                # en la siguiente llamada.
+                return profile
+
+            if aportes:
+                _log.warning(
+                    "🛑 Lectura sospechosa para uid_hash=%s: perfil dice "
+                    "0 puntos/contribs/uses pero Irys tiene %d aportes. "
+                    "No se cachea el perfil; se reintentará en la próxima "
+                    "llamada.  contribution_count reconstruido a %d.",
+                    uid_hash, len(aportes), len(aportes),
+                )
+                profile.contribution_count = len(aportes)
+                # Crítico: NO llamar a self._cache.set — así forzamos
+                # que la próxima get_profile vuelva a leer Irys.
+                return profile
+            # Cero aportes → usuario genuinamente nuevo.  Seguro cachear.
 
         self._cache.set(uid, profile)
         return profile
@@ -240,20 +285,46 @@ class IdentityManager:
         upstream Irys-read failure produces a "fresh user" profile that
         would otherwise overwrite their real history.
         """
-        from aisynergix.services.irys import write_user_tags
+        from aisynergix.services.irys import write_user_tags, read_user_tags
         import logging
         _log = logging.getLogger(__name__)
 
         uid_hash = _hash_uid(uid)
 
-        # Anti-regression check: only triggers when the new profile is
-        # notably smaller than the cached one across multiple counters.
+        # Anti-regression check: triggers when the new profile is notably
+        # smaller than a known-good reference across multiple counters.
         # We accept a single counter going down (e.g. daily_aportes_count
         # reset) but refuse writes that would strip the user of their
         # cumulative history.
+        #
+        # Reference selection (in order):
+        #   a) cached profile if present (hot path)
+        #   b) fresh Irys read otherwise (cold/post-restart path)
+        #
+        # The cold path is the critical bug fix: previously this guard
+        # only fired when the cache had data, so post-restart writes
+        # bypassed the check entirely and could overwrite real Irys
+        # state with stale/defaulted profiles.
         cached = self._cache._cache.get(uid)
+        old_profile: Optional[UserProfile] = None
+        ref_source = "none"
         if cached is not None:
             old_profile, _ts = cached
+            ref_source = "cache"
+        else:
+            try:
+                ref_tags = await read_user_tags(uid_hash)
+                old_profile = UserProfile.from_tags(uid, ref_tags)
+                ref_source = "irys"
+            except Exception as exc:
+                _log.warning(
+                    "update_profile: cold-cache reference read failed for "
+                    "uid_hash=%s — anti-regression guard cannot run: %s",
+                    uid_hash, exc,
+                )
+                old_profile = None
+
+        if old_profile is not None:
             regressed_fields = 0
             if profile.points < old_profile.points:
                 regressed_fields += 1
@@ -263,16 +334,42 @@ class IdentityManager:
                 regressed_fields += 1
             if regressed_fields >= 2:
                 _log.error(
-                    "🛑 Refusing to write regressed profile for uid_hash=%s — "
-                    "would overwrite Irys data: points %d→%d, contribs %d→%d, "
-                    "uses %d→%d.  This usually means an Irys read failed and "
-                    "produced a 'fresh user' profile.  Data preserved.",
-                    uid_hash,
+                    "🛑 Refusing to write regressed profile for uid_hash=%s "
+                    "(ref=%s): points %d→%d, contribs %d→%d, uses %d→%d.  "
+                    "This usually means an Irys read failed and produced "
+                    "a 'fresh user' profile.  Data preserved.",
+                    uid_hash, ref_source,
                     old_profile.points, profile.points,
                     old_profile.contribution_count, profile.contribution_count,
                     old_profile.total_uses_count, profile.total_uses_count,
                 )
+                # Restaurar la referencia (verdad de Irys) en caché para
+                # que el siguiente acceso post-restart ya tenga el estado
+                # real, no el escrito-stale que se acaba de rechazar.
+                self._cache.set(uid, old_profile)
                 return  # Skip the write entirely; keep cache as-is.
+
+            # Salvaguarda extra: rechazar escrituras "todo ceros" cuando
+            # la referencia muestra historial real.  Cubre casos donde
+            # un solo counter sería suficiente para evitar el guard
+            # anterior pero el patrón de reset total es claramente un bug.
+            if (profile.points == 0
+                and profile.contribution_count == 0
+                and profile.total_uses_count == 0
+                and (old_profile.points > 0
+                     or old_profile.contribution_count > 0
+                     or old_profile.total_uses_count > 0)):
+                _log.error(
+                    "🛑 Refusing all-zero overwrite for uid_hash=%s "
+                    "(ref=%s): points=%d contribs=%d uses=%d.  Likely "
+                    "a stale/failed read trying to reset the user.",
+                    uid_hash, ref_source,
+                    old_profile.points,
+                    old_profile.contribution_count,
+                    old_profile.total_uses_count,
+                )
+                self._cache.set(uid, old_profile)
+                return
 
         try:
             await write_user_tags(uid_hash, profile.to_tags())
