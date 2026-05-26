@@ -219,33 +219,70 @@ async def _query_latest(tags: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
         return None
 
 
+# Irys GraphQL caps `first` at 1000 per page.  Anything larger needs
+# cursor-based pagination via the `after` argument.
+_IRYS_PAGE_MAX = 1000
+
+
 async def _query_all(
     tags: List[Dict[str, str]], limit: int = 100
 ) -> List[Dict[str, Any]]:
     """Retorna todos los nodos (DESC por timestamp) que coincidan con los tags dados.
 
-    Irys devuelve transacciones en orden DESC por bloque por defecto;
-    ordenamos localmente por timestamp DESC como respaldo. Añadir
-    explícitamente ``sort/order`` al GraphQL falla en algunas versiones
-    del schema y deja la query sin ``data``.
+    Implementa paginación basada en cursor (`after`) para soportar
+    ``limit`` mayores al máximo de Irys (1000 por página).  Irys devuelve
+    transacciones en orden DESC por bloque por defecto; ordenamos
+    localmente por timestamp DESC como respaldo.
+
+    Añadir explícitamente ``sort/order`` al GraphQL falla en algunas
+    versiones del schema y deja la query sin ``data``.
     """
-    q = f"""
-    {{
-      transactions(
-        tags: [{_tag_filter(tags)}]{_owner_filter()},
-        first: {limit}
-      ) {{ edges {{ node {{ id tags {{ name value }} timestamp }} }} }}
-    }}
-    """
-    try:
-        data = await _gql(q)
-        edges = (data.get("data") or {}).get("transactions", {}).get("edges", [])
-        nodes = [e["node"] for e in edges if e.get("node")]
-        nodes.sort(key=lambda n: n.get("timestamp", 0), reverse=True)
-        return nodes
-    except Exception as exc:
-        logger.warning("_query_all falló: %s", exc)
-        return []
+    nodes: List[Dict[str, Any]] = []
+    after_cursor: Optional[str] = None
+    remaining = max(0, int(limit))
+
+    while remaining > 0:
+        page_size = min(remaining, _IRYS_PAGE_MAX)
+        after_clause = f', after: "{after_cursor}"' if after_cursor else ""
+        q = f"""
+        {{
+          transactions(
+            tags: [{_tag_filter(tags)}]{_owner_filter()},
+            first: {page_size}{after_clause}
+          ) {{
+            pageInfo {{ hasNextPage }}
+            edges {{
+              cursor
+              node {{ id tags {{ name value }} timestamp }}
+            }}
+          }}
+        }}
+        """
+        try:
+            data = await _gql(q)
+        except Exception as exc:
+            logger.warning("_query_all falló (página): %s", exc)
+            break
+
+        tx_block = (data.get("data") or {}).get("transactions", {}) or {}
+        edges = tx_block.get("edges", []) or []
+        if not edges:
+            break
+
+        for edge in edges:
+            node = edge.get("node") if isinstance(edge, dict) else None
+            if node:
+                nodes.append(node)
+
+        remaining -= len(edges)
+        last_cursor = edges[-1].get("cursor") if isinstance(edges[-1], dict) else None
+        has_next = (tx_block.get("pageInfo") or {}).get("hasNextPage", False)
+        if not has_next or not last_cursor or len(edges) < page_size:
+            break
+        after_cursor = last_cursor
+
+    nodes.sort(key=lambda n: n.get("timestamp", 0), reverse=True)
+    return nodes
 
 
 async def _query_by_id(tx_id: str) -> Optional[Dict[str, Any]]:
