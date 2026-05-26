@@ -232,12 +232,48 @@ class IdentityManager:
         update is recoverable (the next get_user_status will reconcile and
         retry the write).  Silent failures, however, are not: every error
         appears in logs so misbehaviour can be diagnosed.
+
+        SAFETY GUARD: if the profile we are about to write looks like a
+        *regression* compared to whatever was last cached (points dropped
+        to 0 with no real reason, contribution_count went backwards, etc.),
+        refuse the write.  This protects users from data loss when an
+        upstream Irys-read failure produces a "fresh user" profile that
+        would otherwise overwrite their real history.
         """
         from aisynergix.services.irys import write_user_tags
         import logging
         _log = logging.getLogger(__name__)
 
         uid_hash = _hash_uid(uid)
+
+        # Anti-regression check: only triggers when the new profile is
+        # notably smaller than the cached one across multiple counters.
+        # We accept a single counter going down (e.g. daily_aportes_count
+        # reset) but refuse writes that would strip the user of their
+        # cumulative history.
+        cached = self._cache._cache.get(uid)
+        if cached is not None:
+            old_profile, _ts = cached
+            regressed_fields = 0
+            if profile.points < old_profile.points:
+                regressed_fields += 1
+            if profile.contribution_count < old_profile.contribution_count:
+                regressed_fields += 1
+            if profile.total_uses_count < old_profile.total_uses_count:
+                regressed_fields += 1
+            if regressed_fields >= 2:
+                _log.error(
+                    "🛑 Refusing to write regressed profile for uid_hash=%s — "
+                    "would overwrite Irys data: points %d→%d, contribs %d→%d, "
+                    "uses %d→%d.  This usually means an Irys read failed and "
+                    "produced a 'fresh user' profile.  Data preserved.",
+                    uid_hash,
+                    old_profile.points, profile.points,
+                    old_profile.contribution_count, profile.contribution_count,
+                    old_profile.total_uses_count, profile.total_uses_count,
+                )
+                return  # Skip the write entirely; keep cache as-is.
+
         try:
             await write_user_tags(uid_hash, profile.to_tags())
             _log.debug(
