@@ -59,6 +59,26 @@ CATEGORY_TO_BRAIN: Dict[str, str] = {
 _QUERY_PREFIX = ""
 _PASSAGE_PREFIX = ""
 
+
+def pick_indexable_text(tags: Dict[str, Any], raw_text: str) -> str:
+    """Choose the text to vectorize for an aporte.
+
+    Prefers the Judge-generated ``content_summary`` tag when present (the
+    PR2 path: aportes submitted after the Judge started producing summaries).
+
+    Falls back to a word-boundary truncation of the raw aporte when the tag
+    is missing or empty (pre-PR2 aportes already on Irys).  This means the
+    brains keep working without backfill while the corpus gradually
+    transitions to summary-first as new aportes arrive.
+    """
+    summary = (tags.get("content_summary") or "").strip() if tags else ""
+    if summary:
+        return summary
+    raw = (raw_text or "").strip()
+    if len(raw) <= SNIPPET_MAX_CHARS:
+        return raw
+    return raw[:SNIPPET_MAX_CHARS].rsplit(" ", 1)[0] + "…"
+
 # Shared embedding model — loaded once, reused by all 4 FAISSEngines
 _shared_model: Optional[SentenceTransformer] = None
 _model_lock: Optional[asyncio.Lock] = None
@@ -527,7 +547,9 @@ class CrossLingualRAG:
                         if code not in target:
                             continue
                         by_code[code].append({
-                            "text": texto,
+                            # Prefer Judge content_summary; fall back to a
+                            # truncated raw aporte for pre-PR2 entries.
+                            "text": pick_indexable_text(tags, texto),
                             "author_uid": tags.get("author_uid", uid),
                             "language": tags.get("lang", "es"),
                             "quality_score": float(tags.get("quality_score", 0)),
@@ -563,6 +585,7 @@ __all__ = [
     "CrossLingualRAG",
     "FAISSEngine",
     "get_rag_engine",
+    "pick_indexable_text",
     "BRAIN_CODES",
     "CATEGORY_TO_BRAIN",
     "EMBEDDING_DIM",

@@ -19,6 +19,50 @@ def _strip_thinking(text: str) -> str:
     return _THINK_RE.sub('', text).strip()
 
 
+# Hard cap on the content_summary returned by the Judge.  Mirrors
+# rag_engine.SNIPPET_MAX_CHARS so the brain receives at most this much text
+# per aporte, keeping brain-meta JSON tiny and forcing the Thinker to
+# synthesize from condensed inputs rather than copying full aportes.
+_CONTENT_SUMMARY_MAX_CHARS = 240
+
+
+def _normalize_content_summary(raw: Optional[str], fallback_text: str) -> str:
+    """Sanitize the Judge's content_summary, with a safe fallback.
+
+    The Judge may omit the field, return it empty, or wrap it in quotes /
+    prefixes despite the prompt instructions.  This function:
+      - strips surrounding whitespace and quote characters
+      - removes common preface labels ("Resumen:", "Summary:", "Content:")
+      - hard-caps to 240 chars on a word boundary, appending "…"
+      - falls back to a truncated version of the original aporte if the
+        Judge produced nothing usable, so downstream code can always rely
+        on a non-empty string
+    """
+    text = (raw or "").strip()
+    # Strip wrapping quotes (single, double, or smart quotes)
+    while text and text[0] in '"\'\u201c\u201d\u2018\u2019':
+        text = text[1:].lstrip()
+    while text and text[-1] in '"\'\u201c\u201d\u2018\u2019':
+        text = text[:-1].rstrip()
+    # Drop common preface labels the model sometimes adds
+    for prefix in ("Resumen:", "Summary:", "Content:", "Resumen denso:", "RESUMEN:"):
+        if text.lower().startswith(prefix.lower()):
+            text = text[len(prefix):].lstrip()
+            break
+
+    if not text:
+        # Fallback: truncate the original aporte at a word boundary.
+        # Better than an empty string for the brain-side indexing.
+        fb = (fallback_text or "").strip()
+        if len(fb) <= _CONTENT_SUMMARY_MAX_CHARS:
+            return fb
+        return fb[:_CONTENT_SUMMARY_MAX_CHARS].rsplit(" ", 1)[0] + "…"
+
+    if len(text) <= _CONTENT_SUMMARY_MAX_CHARS:
+        return text
+    return text[:_CONTENT_SUMMARY_MAX_CHARS].rsplit(" ", 1)[0] + "…"
+
+
 class _ThinkStripper:
     """Stateful splitter that separates a ``<think>…</think>`` reasoning trace from the visible answer.
 
@@ -125,11 +169,12 @@ THINKER_TOP_K = 40
 THINKER_MAX_TOKENS = 350
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
-# 320 tokens is plenty for the Judge JSON: 5 numeric fields + ~150-char
-# reason + ~120-char feedback fits in ~200-250 tokens.  Previously 768,
-# which let the model ramble past the JSON close-brace and trigger
-# 60 s ReadTimeouts on a 1-thread Q8 model.
-JUDGE_MAX_TOKENS = 320
+# 480 tokens covers the Judge JSON: 5 numeric fields + ~150-char reason +
+# ~120-char feedback + ~250-char content_summary fits in ~350-400 tokens
+# with margin for JSON structural overhead.  Previously 320; adding
+# content_summary (~80 tokens) required the bump to avoid the model being
+# cut off before closing the JSON object.
+JUDGE_MAX_TOKENS = 480
 
 # Native names used when telling the model which language to respond in.
 LANG_NAMES: Dict[str, str] = {
@@ -201,7 +246,11 @@ JUDGE_SYSTEM_PROMPT = (
     '  "impact_index": <float 0.0-1.0>,\n'
     '  "related_to_challenge": <false>,\n'
     '  "constructive_feedback": "<si quality_score < 6.0: consejo concreto para mejorar; '
-    'si >= 6.0: cadena vacía>"\n'
+    'si >= 6.0: cadena vacía>",\n'
+    '  "content_summary": "<destilado denso del CONTENIDO del aporte (no de tu evaluación), '
+    'máx 240 caracteres, en el mismo idioma del aporte, en tercera persona neutra '
+    '(\'se sostiene que…\', \'la idea es…\'). NO copies frases textuales. NO uses '
+    'comillas, prefijos ni metadatos. Si quality_score < 6.0 puede ser cadena vacía>"\n'
     '}\n\n'
     "CINCO DIMENSIONES (0-2 pts cada una, suma = quality_score):\n\n"
     "1. ORIGINALIDAD: ¿Perspectiva genuina y novedosa?\n"
@@ -286,6 +335,15 @@ JUDGE_JSON_SCHEMA = {
             "type": "string",
             "description": "Feedback constructivo si fue rechazado, string vacío si fue aceptado",
         },
+        "content_summary": {
+            "type": "string",
+            "description": (
+                "Destilado denso del contenido del aporte (máx 240 chars, "
+                "mismo idioma del aporte, tercera persona neutra). Se vectoriza "
+                "en los cerebros para que el Pensador sintetice en lugar de "
+                "regurgitar el aporte original."
+            ),
+        },
     },
     "required": [
         "quality_score",
@@ -295,6 +353,7 @@ JUDGE_JSON_SCHEMA = {
         "impact_index",
         "related_to_challenge",
         "constructive_feedback",
+        "content_summary",
     ],
 }
 
@@ -627,6 +686,9 @@ class Judge:
                 "impact_index": max(0.0, min(1.0, float(result.get("impact_index", 0.5)))),
                 "related_to_challenge": bool(result.get("related_to_challenge", False)),
                 "constructive_feedback": str(result.get("constructive_feedback", "")),
+                "content_summary": _normalize_content_summary(
+                    result.get("content_summary"), contribution_text
+                ),
                 "approved": float(result.get("quality_score", 5.0)) >= 6.0,
             }
         except (json.JSONDecodeError, KeyError, ValueError):
@@ -638,6 +700,7 @@ class Judge:
                 "impact_index": 0.5,
                 "related_to_challenge": False,
                 "constructive_feedback": "",
+                "content_summary": _normalize_content_summary(None, contribution_text),
                 "approved": False,
             }
 

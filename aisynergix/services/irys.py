@@ -719,6 +719,10 @@ async def read_aporte(tx_id: str) -> Tuple[str, Dict[str, str]]:
             "author_uid":   rt.get("uid-hash", ""),
             "quality_score": rt.get("quality-score", "0"),
             "lang":         rt.get("language", "es"),
+            # Judge-distilled summary stored at submission time.  Empty for
+            # pre-PR2 aportes (those will be indexed using a truncated raw
+            # text fallback in the brain-side code).
+            "content_summary": rt.get("content-summary", ""),
         }
     return texto, tags
 

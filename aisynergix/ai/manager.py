@@ -402,12 +402,18 @@ class AIManager:
 
         # Persist aporte to Irys: aisynergix/aportes/YYYY-MM/{uid_hash}_{ts}.txt
         ts = int(datetime.now(timezone.utc).timestamp())
+        content_summary = evaluation.get("content_summary", "") or ""
         aporte_tags = {
             "quality_score": str(quality_score),
             "author_uid": profile.uid_hash,
             "lang": profile.language,
             "category": evaluation.get("category", "filosofia"),
             "impact": str(evaluation.get("impact_index", 0.5)),
+            # Judge-distilled summary of the aporte (≤240 chars).  Indexed by
+            # the brains so the Thinker synthesizes from condensed inputs
+            # instead of regurgitating the original text.  Stored as Irys tag
+            # "content-summary" (write_aporte converts underscores to dashes).
+            "content_summary": content_summary,
         }
         if profile.human_verified and profile.wallet_address:
             aporte_tags["signature"] = profile.wallet_address.lower()
@@ -432,7 +438,11 @@ class AIManager:
             )
 
         await self._rag.add_contribution(
-            text=content,
+            # Index the Judge-distilled summary, not the raw aporte.  Falls
+            # back to the original text only if the Judge produced nothing
+            # usable — _normalize_content_summary already guarantees a
+            # non-empty string in the happy path.
+            text=content_summary or content,
             author_uid=profile.uid_hash,
             language=profile.language,
             quality_score=quality_score,
