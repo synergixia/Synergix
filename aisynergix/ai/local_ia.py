@@ -494,9 +494,19 @@ class Thinker:
         # Current user turn: optional RAG context + the actual message.
         # Memoria Inmortal is attached to the user turn (not system) so it
         # only applies to this specific query, not the whole conversation.
+        # The "do not copy verbatim" directive sits right next to the
+        # fragments — last-instruction bias makes it far more effective
+        # there than buried in the system prompt 800 tokens earlier.
         parts: List[str] = []
         if context:
-            parts.append(f"📜 Memoria Inmortal:\n{context}")
+            parts.append(
+                "📜 FRAGMENTOS DE LA COMUNIDAD (pistas, NO respuestas):\n"
+                f"{context}"
+                "\nINSTRUCCIÓN CRÍTICA: Estos fragmentos están deliberadamente "
+                "truncados (acaban en …). Úsalos como inspiración. NO los "
+                "completes ni los copies. Sintetiza tu propia respuesta con "
+                "tu razonamiento y tu voz."
+            )
         parts.append(user_message)
         if force_language:
             parts.append(f"[Responde ÚNICAMENTE en {lang_name}.]")
