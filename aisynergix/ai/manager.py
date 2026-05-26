@@ -584,7 +584,7 @@ class AIManager:
                 else:
                     # Legacy single-language string — strip Spanish preamble
                     desc = re.sub(r'^El reto es:\s*', '', str(desc_raw), flags=re.IGNORECASE).strip()
-                tema_actual = desc[:60] + ("…" if len(desc) > 60 else "")
+                tema_actual = desc
         except Exception:
             pass
 
