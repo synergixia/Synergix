@@ -162,7 +162,14 @@ async def _gql(query: str) -> Dict[str, Any]:
         logger.warning("GraphQL respuesta inesperada (tipo %s): %s", type(result).__name__, str(result)[:200])
         return {}
     if result.get("errors"):
-        logger.warning("GraphQL errors: %s", str(result["errors"])[:400])
+        # Log GraphQL errors at ERROR (not WARNING) so schema/syntax issues
+        # are immediately visible.  In the past, returning the (incomplete)
+        # result here let queries silently behave as "no data found",
+        # producing zeros in user-facing fields.
+        logger.error(
+            "GraphQL errors for query (returning empty data to avoid stale reads): %s\nQuery: %s",
+            str(result["errors"])[:600], query[:300],
+        )
     return result
 
 
@@ -185,15 +192,16 @@ def _tag_filter(tags: List[Dict[str, str]]) -> str:
 async def _query_latest(tags: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
     """Retorna el nodo más reciente que coincida con los tags dados.
 
-    Solicita explícitamente ``order: HEIGHT_DESC`` para que Irys nos devuelva
-    primero las transacciones más nuevas — sin esto, podríamos perder la
-    versión más reciente si la cuenta tiene muchas escrituras.
+    Pide ``first: 50`` (en lugar de 20) para usuarios con muchas escrituras y
+    ordena localmente por timestamp DESC.  Irys ya devuelve transacciones en
+    orden DESC por bloque por defecto; añadir explícitamente ``sort/order``
+    al GraphQL falla en algunas versiones del schema y deja la query sin
+    ``data`` — cuidado al modificar.
     """
     q = f"""
     {{
       transactions(
         tags: [{_tag_filter(tags)}]{_owner_filter()},
-        order: HEIGHT_DESC,
         first: 50
       ) {{ edges {{ node {{ id tags {{ name value }} timestamp }} }} }}
     }}
@@ -216,14 +224,15 @@ async def _query_all(
 ) -> List[Dict[str, Any]]:
     """Retorna todos los nodos (DESC por timestamp) que coincidan con los tags dados.
 
-    Solicita ``order: HEIGHT_DESC`` para evitar que Irys nos devuelva un
-    subconjunto antiguo cuando el límite es menor que el total disponible.
+    Irys devuelve transacciones en orden DESC por bloque por defecto;
+    ordenamos localmente por timestamp DESC como respaldo. Añadir
+    explícitamente ``sort/order`` al GraphQL falla en algunas versiones
+    del schema y deja la query sin ``data``.
     """
     q = f"""
     {{
       transactions(
         tags: [{_tag_filter(tags)}]{_owner_filter()},
-        order: HEIGHT_DESC,
         first: {limit}
       ) {{ edges {{ node {{ id tags {{ name value }} timestamp }} }} }}
     }}
