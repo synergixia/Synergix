@@ -13,7 +13,12 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from aisynergix.bot.locales import load_all_locales, t, LANG_NAMES
-from aisynergix.services.rag_engine import get_rag_engine, BRAIN_CODES, CATEGORY_TO_BRAIN
+from aisynergix.services.rag_engine import (
+    get_rag_engine,
+    BRAIN_CODES,
+    CATEGORY_TO_BRAIN,
+    pick_indexable_text,
+)
 from aisynergix.services.irys import (
     get_greenfield_client,
     get_all_user_uids,
@@ -100,7 +105,10 @@ async def federated_evolution():
                         category = tags.get("category", "filosofia")
                         code = CATEGORY_TO_BRAIN.get(category, "know")
                         new_by_code[code].append({
-                            "text": texto,
+                            # Brains index the Judge-distilled content_summary
+                            # for new aportes; falls back to a truncated raw
+                            # aporte for pre-PR2 entries that lack the tag.
+                            "text": pick_indexable_text(tags, texto),
                             "author_uid": tags.get("author_uid", uid),
                             "language": tags.get("lang", "es"),
                             "quality_score": float(tags.get("quality_score", 0)),

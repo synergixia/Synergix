@@ -24,6 +24,18 @@ TEMP_INDEX_DIR.mkdir(parents=True, exist_ok=True)
 # causes the model to verbatim-dump the document instead of answering.
 MIN_RELEVANCE_SCORE = 0.45
 
+# Upper bound on similarity: fragments scoring above this are near-exact
+# matches of the query and paradoxically the worst case — the Thinker copies
+# them verbatim instead of synthesizing.  Drop them so the model relies on
+# its own reasoning when the answer is "already in the corpus".
+NEAR_CLONE_THRESHOLD = 0.92
+
+# Per-fragment character budget when building the context block.  Truncating
+# to ~40 words conveys the idea but prevents the Thinker from regurgitating
+# the original aporte.  The trailing "…" signals the snippet is incomplete,
+# nudging the model to expand rather than copy.
+SNIPPET_MAX_CHARS = 240
+
 BRAIN_CODES: List[str] = ["prog", "tech", "cien", "know"]
 
 # Maps Judge category → brain code
@@ -46,6 +58,26 @@ CATEGORY_TO_BRAIN: Dict[str, str] = {
 # calls uniform without adding noise tokens.
 _QUERY_PREFIX = ""
 _PASSAGE_PREFIX = ""
+
+
+def pick_indexable_text(tags: Dict[str, Any], raw_text: str) -> str:
+    """Choose the text to vectorize for an aporte.
+
+    Prefers the Judge-generated ``content_summary`` tag when present (the
+    PR2 path: aportes submitted after the Judge started producing summaries).
+
+    Falls back to a word-boundary truncation of the raw aporte when the tag
+    is missing or empty (pre-PR2 aportes already on Irys).  This means the
+    brains keep working without backfill while the corpus gradually
+    transitions to summary-first as new aportes arrive.
+    """
+    summary = (tags.get("content_summary") or "").strip() if tags else ""
+    if summary:
+        return summary
+    raw = (raw_text or "").strip()
+    if len(raw) <= SNIPPET_MAX_CHARS:
+        return raw
+    return raw[:SNIPPET_MAX_CHARS].rsplit(" ", 1)[0] + "…"
 
 # Shared embedding model — loaded once, reused by all 4 FAISSEngines
 _shared_model: Optional[SentenceTransformer] = None
@@ -377,10 +409,14 @@ class CrossLingualRAG:
         if not merged:
             return "", []
 
-        # Drop results below the relevance threshold — low-score fragments are
-        # semantically unrelated to the query and cause the model to verbatim-
-        # copy irrelevant content instead of answering the actual question.
-        relevant = [r for r in merged if r["score"] >= MIN_RELEVANCE_SCORE]
+        # Drop results outside the useful range:
+        # - score < MIN_RELEVANCE_SCORE: irrelevant fragments confuse the model
+        # - score > NEAR_CLONE_THRESHOLD: near-exact matches make the model
+        #   copy verbatim instead of synthesizing
+        relevant = [
+            r for r in merged
+            if MIN_RELEVANCE_SCORE <= r["score"] <= NEAR_CLONE_THRESHOLD
+        ]
         if not relevant:
             return "", []
 
@@ -389,6 +425,11 @@ class CrossLingualRAG:
         max_chars = 2000  # tighter cap so the model has room to reason
         for r in relevant:
             text = r["text"].strip()
+            # Truncate per-fragment so the Thinker cannot reproduce the
+            # original aporte verbatim.  The trailing "…" signals the snippet
+            # is intentionally incomplete and must be expanded by the model.
+            if len(text) > SNIPPET_MAX_CHARS:
+                text = text[:SNIPPET_MAX_CHARS].rsplit(" ", 1)[0] + "…"
             # For cross-lingual fragments, add the source language so the model
             # knows to synthesize the idea in the user's language rather than
             # copying the original verbatim.
@@ -506,7 +547,9 @@ class CrossLingualRAG:
                         if code not in target:
                             continue
                         by_code[code].append({
-                            "text": texto,
+                            # Prefer Judge content_summary; fall back to a
+                            # truncated raw aporte for pre-PR2 entries.
+                            "text": pick_indexable_text(tags, texto),
                             "author_uid": tags.get("author_uid", uid),
                             "language": tags.get("lang", "es"),
                             "quality_score": float(tags.get("quality_score", 0)),
@@ -542,9 +585,12 @@ __all__ = [
     "CrossLingualRAG",
     "FAISSEngine",
     "get_rag_engine",
+    "pick_indexable_text",
     "BRAIN_CODES",
     "CATEGORY_TO_BRAIN",
     "EMBEDDING_DIM",
     "TOP_K_RESULTS",
     "MIN_RELEVANCE_SCORE",
+    "NEAR_CLONE_THRESHOLD",
+    "SNIPPET_MAX_CHARS",
 ]
