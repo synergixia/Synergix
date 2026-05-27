@@ -148,8 +148,8 @@ JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
 # Qwen2.5-Coder-3B Q4_K_M on 4 CPU threads: ~10-13 tok/s (with --no-mmap).
 # Coder variant follows instructions more literally than the base Instruct
 # model and is far less prone to customer-service filler patterns.
-# 350 max_tokens → worst-case ~35 s; 120 s timeout leaves a wide margin
-# for the prompt-eval phase of the first uncached request.
+# 800 max_tokens → worst-case ~80 s; 120 s timeout still covers prompt-eval
+# on the first uncached request with margin.
 THINKER_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
 # Judge runs Qwen2.5-1.5B-Q8 with -t 1 (1 thread).  At ~5-10 tok/s, 320
 # tokens worst-case takes ~32-64 s; 120 s timeout absorbs prompt-eval
@@ -165,8 +165,9 @@ JUDGE_MAX_INPUT_CHARS = 3000
 # temp 0.8 / top_k 40 gives more varied, less pattern-matched responses.
 THINKER_TEMPERATURE = 0.8
 THINKER_TOP_K = 40
-# 350 tokens ≈ 250 words — matches the system prompt's target response length.
-THINKER_MAX_TOKENS = 350
+# 800 tokens ≈ 600 words — fits within Telegram's 4096-char message limit
+# and gives long-form answers room to complete without mid-sentence cuts.
+THINKER_MAX_TOKENS = 800
 JUDGE_TEMPERATURE = 0.1
 JUDGE_TOP_K = 20
 # 480 tokens covers the Judge JSON: 5 numeric fields + ~150-char reason +
