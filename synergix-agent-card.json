@@ -1,0 +1,42 @@
+{
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  "name": "Synergix",
+  "description": "The world's first AI agent with permanent storage on Arweave via Irys (BNB payments). Decentralized collective intelligence — 80% of every AI response is built from community knowledge stored permanently on-chain. Features: 6-tier on-chain reputation, RAG over Irys/Arweave, weekly AI challenges, Hive Mind validation. Token: $SYNERGIX on BNB Chain.",
+  "image": "https://www.synergix.lol/logo.png",
+  "url": "https://www.synergix.lol/",
+  "services": [
+    {
+      "name": "MCP",
+      "endpoint": "https://www.synergix.lol/api/mcp",
+      "version": "2025-06-18"
+    },
+    {
+      "name": "web",
+      "endpoint": "https://www.synergix.lol/"
+    },
+    {
+      "name": "telegram",
+      "endpoint": "https://t.me/synergix_ai_bot"
+    },
+    {
+      "name": "twitter",
+      "endpoint": "https://x.com/Synergix_AI"
+    }
+  ],
+  "x402Support": false,
+  "active": true,
+  "tags": [
+    "collective-intelligence",
+    "Irys",
+    "Arweave",
+    "permaweb",
+    "immortal-storage",
+    "RAG",
+    "multilingual",
+    "decentralized-AI",
+    "on-chain-reputation",
+    "Telegram-bot",
+    "BNB-Chain",
+    "MCP"
+  ]
+}
