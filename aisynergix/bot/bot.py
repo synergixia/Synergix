@@ -1394,6 +1394,17 @@ async def main():
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
+    # Optional web API for the website (phase B).  Opt-in via
+    # SYNERGIX_WEB_API_ENABLED=true.  Runs in this same process so it
+    # shares the warm RAG index + Thinker/Judge connectors with the bot.
+    try:
+        from aisynergix import web_api
+        if web_api.is_enabled():
+            asyncio.create_task(web_api.serve())
+            logger.info("🌐 Web API task lanzada")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No se pudo iniciar el Web API (continuando sin él): %s", exc)
+
     await dp.start_polling(bot)
 
 
