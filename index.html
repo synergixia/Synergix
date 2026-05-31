@@ -980,6 +980,8 @@ body::before{
 }
 
 </style>
+<!-- Synergix Tools (live on-chain widgets) — fase A -->
+<link rel="stylesheet" href="css/synergix-tools.css">
 </head>
 <body style="background:#060608;background-color:#060608">
 
@@ -1140,6 +1142,18 @@ body::before{
   <div class="scroll-hint"><div class="scroll-arrow"></div><div class="scroll-arrow" style="opacity:.5;margin-top:-8px"></div></div>
 </section>
 
+<!-- ═══════════════════════════════════════ LIVE STATS (Synergix Tools — A3) -->
+<section class="st-section st-bg-base" id="live-stats">
+  <div class="si">
+    <div class="st-card" id="st-live-stats">
+      <div class="st-card-title">
+        <span class="st-pulse-dot"></span>
+        <span data-st-i18n="st_stats_title">Live on-chain status</span>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ═══════════════════════════════════════ WHY UNIQUE -->
 <section class="s s-dark" id="why">
   <div class="si">
@@ -1201,6 +1215,13 @@ body::before{
   </div>
 </section>
 
+<!-- ═══════════════════════════════════════ MEMORY EXPLORER (Synergix Tools — A1) -->
+<section class="st-section" id="memory-explorer">
+  <div class="si">
+    <div class="st-card" id="st-memory-explorer"></div>
+  </div>
+</section>
+
 <!-- ═══════════════════════════════════════ HOW IT WORKS -->
 <section class="s s-dark" id="how">
   <div class="si">
@@ -1259,6 +1280,13 @@ body::before{
       <div class="rk reveal" style="transition-delay:.24s"><div class="rk-top"></div><span class="rk-e">🧠</span><span class="rk-n">HIVE MIND</span><span class="rk-p">5,000 pts</span><span class="rk-m">×3.0</span><span class="rk-ml">Multiplier</span><span class="rk-d">60 · validates</span></div>
       <div class="rk oracle reveal" style="transition-delay:.3s"><div class="rk-top"></div><span class="rk-e">🔮</span><span class="rk-n">ORACLE</span><span class="rk-p">15,000 pts</span><span class="rk-m">×5.0</span><span class="rk-ml">Multiplier</span><span class="rk-d">∞ · full control</span></div>
     </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ TOP MINDS (Synergix Tools — A2) -->
+<section class="st-section st-bg-dark" id="top-minds">
+  <div class="si">
+    <div class="st-card" id="st-top-minds"></div>
   </div>
 </section>
 
@@ -1329,6 +1357,13 @@ body::before{
       <a href="https://github.com/synergixia/Synergix" class="ca gh reveal" style="transition-delay:.4s" target="_blank"><span class="ca-icon">🐙</span><div class="ca-t">GitHub</div><div class="ca-d t" data-key="ca5_d"></div><div class="ca-link">github.com/synergixia/Synergix →</div></a>
       <a href="https://bsky.app/profile/synergix.bsky.social" class="ca bs reveal" style="transition-delay:.5s" target="_blank"><span class="ca-icon">🦋</span><div class="ca-t">Bluesky</div><div class="ca-d t" data-key="ca6_d"></div><div class="ca-link">bsky.app/profile/synergix.bsky.social →</div></a>
     </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ WALLET VERIFY (Synergix Tools — A4) -->
+<section class="st-section st-bg-base" id="wallet-verify">
+  <div class="si">
+    <div class="st-card" id="st-wallet-verify"></div>
   </div>
 </section>
 
@@ -3006,5 +3041,7 @@ document.querySelectorAll('.btn-p,.btn-s,.nav-cta').forEach(btn=>{
   }
 })();
 </script>
+<!-- Synergix Tools (live on-chain widgets) — fase A -->
+<script type="module" src="js/synergix-tools.js" defer></script>
 </body>
 </html>
