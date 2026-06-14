@@ -18,7 +18,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # ── Token constants ────────────────────────────────────────────────────────
-SYNERGIX_TOKEN   = "0x6485907278c389e70c572f441ce7052da58effff"
+SYNERGIX_TOKEN   = "0xbe5df4a40ac939ef641430e86a2dce94d071e0f6"
 WBNB_ADDRESS     = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"
 ROUTER_ADDRESS   = "0x10ED43C718714eb63d5aA57B78B54704E256024E"  # PancakeSwap V2
 BSC_RPC_URL      = os.getenv("BSC_RPC_URL", "https://bsc-dataseed1.binance.org")
