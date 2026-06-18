@@ -1,0 +1,68 @@
+# ════════════════════════════════════════════════════════════════════════
+# Hybrid overlay — Hetzner (CPU) + RunPod (GPU 24 GB)
+# ════════════════════════════════════════════════════════════════════════
+#
+# Adds a Tailscale sidecar and routes the bot through it, so the bot can reach
+# the GPU Thinker/Judge on the RunPod pod over a private mesh while keeping the
+# local CPU containers (thinker-cpu, judge) as automatic fallback.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.hybrid.yml up -d
+#
+# Required in .env (see .env.example):
+#   TS_AUTHKEY=tskey-auth-...                       # Tailscale key for THIS host
+#   THINKER_HOST=http://100.x.y.z:8081              # RunPod pod's Tailscale IP
+#   JUDGE_HOST=http://100.x.y.z:8080
+#   THINKER_FALLBACK_HOST=http://thinker-cpu:8081   # local CPU fallback
+#   JUDGE_FALLBACK_HOST=http://judge:8080
+#
+# Tip: use the pod's Tailscale *IP* (100.x.y.z) rather than its MagicDNS name —
+# the bot resolves bridge names via Docker DNS, not MagicDNS, when sharing the
+# sidecar's network namespace.
+
+volumes:
+  tailscale-state:
+    name: synergix-tailscale-state
+    driver: local
+
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: synergix-tailscale
+    hostname: synergix-hetzner
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?err}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: "--accept-routes=false --hostname=synergix-hetzner"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    networks:
+      synergix-net:
+        ipv4_address: 172.28.0.40
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  bot:
+    # Join the Tailscale sidecar's network namespace. The sidecar is itself on
+    # synergix-net, so the bot still resolves thinker-cpu / judge / irys-uploader
+    # via Docker DNS *and* reaches the RunPod GPU over the tailnet.
+    network_mode: "service:tailscale"
+    networks: !reset null
+    depends_on:
+      tailscale:
+        condition: service_started
+      thinker-cpu:
+        condition: service_started
+      judge:
+        condition: service_started
+      irys-uploader:
+        condition: service_started
