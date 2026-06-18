@@ -220,6 +220,9 @@ services:
       JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
       THINKER_FALLBACK_HOST: ${THINKER_FALLBACK_HOST:-}
       JUDGE_FALLBACK_HOST: ${JUDGE_FALLBACK_HOST:-}
+      # Concurrent Thinker calls allowed. Keep at 1 for the CPU build; set to
+      # the GPU pod's --parallel (e.g. 2) in hybrid mode.
+      THINKER_MAX_CONCURRENCY: ${THINKER_MAX_CONCURRENCY:-1}
 
       # ── BSC / Trading ─────────────────────────────────────────
       BSC_RPC_URL: ${BSC_RPC_URL:-https://bsc-dataseed1.binance.org}
