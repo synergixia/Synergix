@@ -15,9 +15,11 @@ volumes:
     driver: local
 
 services:
-  thinker:
+  # Local CPU Thinker. Primary in single-box mode; becomes the automatic
+  # FALLBACK once the hybrid overlay points THINKER_HOST at the RunPod GPU.
+  thinker-cpu:
     image: ghcr.io/ggml-org/llama.cpp:server
-    container_name: synergix-thinker
+    container_name: synergix-thinker-cpu
     restart: unless-stopped
     networks:
       synergix-net:
@@ -185,7 +187,7 @@ services:
       synergix-net:
         ipv4_address: 172.28.0.20
     depends_on:
-      thinker:
+      thinker-cpu:
         condition: service_started
       judge:
         condition: service_started
@@ -204,14 +206,20 @@ services:
 
       # ── Synergix App ──────────────────────────────────────────
       SYNERGIX_TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
-      SYNERGIX_THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
+      SYNERGIX_THINKER_HOST: ${THINKER_HOST:-http://thinker-cpu:8081}
       SYNERGIX_JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
       SYNERGIX_CACHE_TTL: ${CACHE_TTL:-12}
 
       # ── Variables sin prefijo (requeridas por bot.py y local_ia.py) ──
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
-      THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
+      # Primary LLM hosts. In single-box mode these default to the local CPU
+      # containers. For the hybrid setup, set THINKER_HOST / JUDGE_HOST in .env
+      # to the RunPod GPU (its Tailscale IP) — the *_FALLBACK_HOST vars then
+      # point back at the local CPU containers for automatic failover.
+      THINKER_HOST: ${THINKER_HOST:-http://thinker-cpu:8081}
       JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
+      THINKER_FALLBACK_HOST: ${THINKER_FALLBACK_HOST:-}
+      JUDGE_FALLBACK_HOST: ${JUDGE_FALLBACK_HOST:-}
 
       # ── BSC / Trading ─────────────────────────────────────────
       BSC_RPC_URL: ${BSC_RPC_URL:-https://bsc-dataseed1.binance.org}

@@ -313,8 +313,11 @@ Synergix/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `THINKER_HOST` | `http://thinker:8081` | Thinker LLM endpoint |
-| `JUDGE_HOST` | `http://judge:8080` | Judge LLM endpoint |
+| `THINKER_HOST` | `http://thinker-cpu:8081` | Primary Thinker LLM endpoint (set to the RunPod GPU in hybrid mode) |
+| `JUDGE_HOST` | `http://judge:8080` | Primary Judge LLM endpoint (set to the RunPod GPU in hybrid mode) |
+| `THINKER_FALLBACK_HOST` | — | Optional secondary Thinker; used automatically when the primary is unreachable or returns 5xx |
+| `JUDGE_FALLBACK_HOST` | — | Optional secondary Judge; used automatically when the primary fails |
+| `TS_AUTHKEY` | — | Tailscale auth key for the Hetzner sidecar (hybrid overlay only) |
 
 ### Application
 
