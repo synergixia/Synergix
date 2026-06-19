@@ -52,6 +52,8 @@ Pick an **RTX 4090** offer, then in the template / instance config:
 | `TS_HOSTNAME` | | `synergix-gpu` | Tailnet hostname for this node |
 | `THINKER_MODEL` | | `/workspace/models/qwen2.5-14b-instruct-q4_k_m.gguf` | |
 | `JUDGE_MODEL` | | `/workspace/models/qwen2.5-1.5b-q8.gguf` | |
+| `THINKER_MODEL_URL` | | — | Direct URL (e.g. HF `resolve` link); downloaded on first boot if the file is missing |
+| `JUDGE_MODEL_URL` | | — | Same, for the Judge model |
 | `MODELS_DIR` | | `/workspace/models` | Change if your Vast disk mounts elsewhere |
 | `THINKER_CTX` | | `8192` | Thinker context window |
 | `THINKER_PARALLEL` | | `2` | Parallel slots (safe on GPU) |
@@ -59,12 +61,24 @@ Pick an **RTX 4090** offer, then in the template / instance config:
 
 ## 3. Get the models onto the instance
 
-The `.gguf` files must live under `MODELS_DIR` (default `/workspace/models`).
-SSH into the instance (Vast provides an SSH command) and download once:
+The `.gguf` files live under `MODELS_DIR` (default `/workspace/models`). Two
+options:
+
+**Option A — auto-download on first boot (recommended for Vast.ai).** Set the
+URL env vars in step 2 and `start.sh` fetches any missing model on startup, so
+the instance comes up in one shot with no manual step:
+
+```
+THINKER_MODEL_URL = https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m.gguf
+JUDGE_MODEL_URL   = https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q8_0.gguf
+```
+
+(Match `THINKER_MODEL` / `JUDGE_MODEL` filenames to the URLs if you change them.)
+
+**Option B — download manually over SSH** (Vast provides an SSH command):
 
 ```bash
 mkdir -p /workspace/models && cd /workspace/models
-# 14B Thinker (~9 GB) and 1.5B Judge (~1.7 GB) — example with huggingface-cli:
 pip install -q huggingface_hub
 huggingface-cli download Qwen/Qwen2.5-14B-Instruct-GGUF \
   qwen2.5-14b-instruct-q4_k_m.gguf --local-dir .
@@ -74,9 +88,7 @@ huggingface-cli download Qwen/Qwen2.5-1.5B-Instruct-GGUF \
 
 > **Save money:** keep the models on the instance's **persistent disk** and use
 > **Stop** (not Destroy) when idle — Stop keeps the disk so you never
-> re-download. Destroy wipes everything.
-
-Then restart the container (or the instance) so `start.sh` picks them up.
+> re-download. Destroy wipes everything (you'd re-download on the next boot).
 
 ## 4. Wire up the Hetzner side
 
