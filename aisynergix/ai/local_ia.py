@@ -153,9 +153,9 @@ JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
 def _host_chain(primary: str, fallback_env: str) -> List[str]:
     """Build the ordered ``[primary, fallback]`` host chain used for failover.
 
-    The primary is the main backend (e.g. the GPU llama.cpp on RunPod reached
-    over Tailscale); the optional fallback is a co-located CPU backend on the
-    bot host (Hetzner).  When ``<fallback_env>`` is unset the chain is just
+    The primary is the main backend (e.g. the GPU llama.cpp on a Vast.ai node
+    reached over Tailscale); the optional fallback is a co-located CPU backend
+    on the bot host (Hetzner).  When ``<fallback_env>`` is unset the chain is just
     ``[primary]`` and behaviour is identical to the previous single-host setup.
     """
     hosts = [primary]

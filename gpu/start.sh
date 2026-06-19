@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 #
-# start.sh — RunPod GPU entrypoint for the Synergix Thinker + Judge.
+# start.sh — GPU node entrypoint for the Synergix Thinker + Judge.
 #
-# Brings up Tailscale (so the Hetzner bot can reach this pod over a private,
-# encrypted mesh) and launches two llama.cpp servers on the GPU:
+# Provider-agnostic: runs on Vast.ai, RunPod, or any GPU Docker host. Brings up
+# Tailscale (so the Hetzner bot can reach this node over a private, encrypted
+# mesh) and launches two llama.cpp servers on the GPU:
 #   • Thinker  → Qwen2.5-14B-Instruct Q4_K_M  (port 8081)
 #   • Judge    → Qwen2.5-1.5B Q8               (port 8080)
 #
-# Both models fit comfortably in 24 GB of VRAM (~9 GB + ~1.7 GB).
+# Both models fit comfortably in 24 GB of VRAM (~9 GB + ~1.7 GB) — e.g. RTX 4090.
 #
 set -euo pipefail
 
-# ── Config (override via RunPod env vars) ───────────────────────────────────
+# ── Config (override via the host's env vars) ───────────────────────────────
 : "${TS_AUTHKEY:?TS_AUTHKEY is required (Tailscale auth key — use ephemeral + tagged)}"
 TS_HOSTNAME="${TS_HOSTNAME:-synergix-gpu}"
 
@@ -75,7 +76,7 @@ echo "[start] Tailscale up as '${TS_HOSTNAME}' — IP: $(tailscale ip -4 2>/dev/
 for m in "$THINKER_MODEL" "$JUDGE_MODEL"; do
     if [[ ! -f "$m" ]]; then
         echo "ERROR: model file not found: $m" >&2
-        echo "Place the .gguf files in $MODELS_DIR (use a RunPod network volume so they survive restarts)." >&2
+        echo "Place the .gguf files in $MODELS_DIR (use persistent instance storage so they survive restarts)." >&2
         exit 1
     fi
 done
@@ -104,5 +105,5 @@ if [[ "$USERSPACE" -eq 1 ]]; then
     tailscale serve --bg --tcp "$JUDGE_PORT"  "tcp://127.0.0.1:$JUDGE_PORT"  || true
 fi
 
-# Exit (and let RunPod restart the pod) if either server dies.
+# Exit (and let the host restart the container) if either server dies.
 wait -n
