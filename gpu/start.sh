@@ -20,6 +20,13 @@ MODELS_DIR="${MODELS_DIR:-/workspace/models}"
 THINKER_MODEL="${THINKER_MODEL:-$MODELS_DIR/qwen2.5-14b-instruct-q4_k_m.gguf}"
 JUDGE_MODEL="${JUDGE_MODEL:-$MODELS_DIR/qwen2.5-1.5b-q8.gguf}"
 
+# Optional direct download URLs (e.g. Hugging Face "resolve" links). When set,
+# a missing model file is fetched on first boot — this makes a fresh Vast.ai
+# instance (which has no pre-loaded volume) come up in one shot. Use Stop (not
+# Destroy) to keep the disk so later boots skip the download.
+THINKER_MODEL_URL="${THINKER_MODEL_URL:-}"
+JUDGE_MODEL_URL="${JUDGE_MODEL_URL:-}"
+
 THINKER_PORT="${THINKER_PORT:-8081}"
 JUDGE_PORT="${JUDGE_PORT:-8080}"
 
@@ -72,14 +79,29 @@ tailscale up \
 
 echo "[start] Tailscale up as '${TS_HOSTNAME}' — IP: $(tailscale ip -4 2>/dev/null || echo '?')"
 
-# ── 2. Verify models are present ─────────────────────────────────────────────
-for m in "$THINKER_MODEL" "$JUDGE_MODEL"; do
-    if [[ ! -f "$m" ]]; then
-        echo "ERROR: model file not found: $m" >&2
-        echo "Place the .gguf files in $MODELS_DIR (use persistent instance storage so they survive restarts)." >&2
+# ── 2. Ensure models are present (download on first boot if a URL is set) ────
+fetch_model() {
+    local path="$1" url="$2"
+    if [[ -f "$path" ]]; then
+        return 0
+    fi
+    if [[ -z "$url" ]]; then
+        echo "ERROR: model file not found: $path" >&2
+        echo "Either place the .gguf in $MODELS_DIR (use Stop, not Destroy, to keep it)" >&2
+        echo "or set the matching *_MODEL_URL env var so it downloads on first boot." >&2
         exit 1
     fi
-done
+    echo "[start] downloading $(basename "$path") from $url ..."
+    mkdir -p "$(dirname "$path")"
+    # Download to a temp name and rename only on success so an interrupted
+    # download never leaves a half file that looks valid on the next boot.
+    curl -fL --retry 3 --retry-delay 5 -o "$path.partial" "$url"
+    mv "$path.partial" "$path"
+    echo "[start] downloaded $(basename "$path")"
+}
+
+fetch_model "$THINKER_MODEL" "$THINKER_MODEL_URL"
+fetch_model "$JUDGE_MODEL"   "$JUDGE_MODEL_URL"
 
 # ── 3. Launch llama.cpp servers on the GPU ───────────────────────────────────
 echo "[start] launching Thinker (${THINKER_MODEL##*/}) on :${THINKER_PORT}"
