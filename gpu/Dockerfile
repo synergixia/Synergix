@@ -1,8 +1,9 @@
-# RunPod GPU image: llama.cpp (CUDA) + Tailscale + the Synergix start script.
+# GPU node image: llama.cpp (CUDA) + Tailscale + the Synergix start script.
+# Provider-agnostic — works on Vast.ai, RunPod, or any 24 GB GPU Docker host.
 #
-# Build & push to a registry RunPod can pull from, then point a RunPod GPU pod
-# (24 GB) at it.  Mount a RunPod *network volume* at /workspace so the .gguf
-# model files survive pod restarts.
+# Build & push to a registry the host can pull from, then launch it on a 24 GB
+# GPU (e.g. RTX 4090). Keep the .gguf model files on persistent instance
+# storage mounted at /workspace so they survive restarts.
 FROM ghcr.io/ggml-org/llama.cpp:server-cuda
 
 # Tailscale (static binaries via the official install script) plus the few

@@ -1,16 +1,16 @@
 # ════════════════════════════════════════════════════════════════════════
-# Hybrid overlay — Hetzner (CPU) + RunPod (GPU 24 GB)
+# Hybrid overlay — Hetzner (CPU) + GPU node (Vast.ai RTX 4090 / 24 GB)
 # ════════════════════════════════════════════════════════════════════════
 #
 # Adds a Tailscale sidecar and routes the bot through it, so the bot can reach
-# the GPU Thinker/Judge on the RunPod pod over a private mesh while keeping the
+# the GPU Thinker/Judge on the GPU node over a private mesh while keeping the
 # local CPU containers (thinker-cpu, judge) as automatic fallback.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.hybrid.yml up -d
 #
 # Required in .env (see .env.example):
 #   TS_AUTHKEY=tskey-auth-...                       # Tailscale key for THIS host
-#   THINKER_HOST=http://100.x.y.z:8081              # RunPod pod's Tailscale IP
+#   THINKER_HOST=http://100.x.y.z:8081              # GPU node's Tailscale IP
 #   JUDGE_HOST=http://100.x.y.z:8080
 #   THINKER_FALLBACK_HOST=http://thinker-cpu:8081   # local CPU fallback
 #   JUDGE_FALLBACK_HOST=http://judge:8080
@@ -54,7 +54,7 @@ services:
   bot:
     # Join the Tailscale sidecar's network namespace. The sidecar is itself on
     # synergix-net, so the bot still resolves thinker-cpu / judge / irys-uploader
-    # via Docker DNS *and* reaches the RunPod GPU over the tailnet.
+    # via Docker DNS *and* reaches the GPU node over the tailnet.
     network_mode: "service:tailscale"
     networks: !reset null
     depends_on:

@@ -313,8 +313,8 @@ Synergix/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `THINKER_HOST` | `http://thinker-cpu:8081` | Primary Thinker LLM endpoint (set to the RunPod GPU in hybrid mode) |
-| `JUDGE_HOST` | `http://judge:8080` | Primary Judge LLM endpoint (set to the RunPod GPU in hybrid mode) |
+| `THINKER_HOST` | `http://thinker-cpu:8081` | Primary Thinker LLM endpoint (set to the GPU node in hybrid mode) |
+| `JUDGE_HOST` | `http://judge:8080` | Primary Judge LLM endpoint (set to the GPU node in hybrid mode) |
 | `THINKER_FALLBACK_HOST` | — | Optional secondary Thinker; used automatically when the primary is unreachable or returns 5xx |
 | `JUDGE_FALLBACK_HOST` | — | Optional secondary Judge; used automatically when the primary fails |
 | `THINKER_MAX_CONCURRENCY` | `1` | Concurrent Thinker calls; set to the GPU pod's `--parallel` in hybrid mode |
