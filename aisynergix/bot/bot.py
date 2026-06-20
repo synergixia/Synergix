@@ -1059,9 +1059,9 @@ async def _handle_image_request(
             await message.answer(t("image_disabled", lang))
         return
 
-    # Generation is slow on CPU — tell the user up front and show the
-    # "uploading photo" chat action while we wait.
-    await message.answer(t("image_generating", lang))
+    # Temporary "generating…" notice: shown while we work, then deleted once the
+    # photo (or a failure message) is ready, so it doesn't linger in the chat.
+    notice = await message.answer(t("image_generating", lang))
     stop_action = asyncio.Event()
     action_task = asyncio.create_task(
         _keep_typing(message.chat.id, stop_action, action="upload_photo")
@@ -1071,6 +1071,12 @@ async def _handle_image_request(
     finally:
         stop_action.set()
         action_task.cancel()
+
+    # Remove the temporary notice before delivering the result.
+    try:
+        await notice.delete()
+    except Exception:
+        pass
 
     if not image:
         await message.answer(t("image_failed", lang))

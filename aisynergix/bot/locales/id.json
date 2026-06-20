@@ -92,7 +92,7 @@
   "benefit_arquitecto": "{remaining} kontribusi tersisa hari ini",
   "benefit_mente_colmena": "{remaining} kontribusi tersisa hari ini",
   "benefit_oraculo": "Tak terbatas (tanpa batas harian)",
-  "image_generating": "🎨 Membuat gambar Anda... ini bisa memakan beberapa menit di CPU. Akan saya kirim begitu siap.",
+  "image_generating": "🎨 Membuat gambar Anda... segera saya kirim.",
   "image_failed": "⚠️ Saya tidak dapat membuat gambar kali ini. Coba lagi sebentar lagi.",
   "image_cooldown": "⏳ Harap tunggu {minutes} menit sebelum meminta gambar lain.",
   "image_daily_limit": "🚫 Anda telah mencapai batas {limit} gambar untuk hari ini. Kembali besok.",
