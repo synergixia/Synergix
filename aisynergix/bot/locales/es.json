@@ -91,5 +91,10 @@
   "benefit_sincronizado": "{remaining} aportes restantes hoy",
   "benefit_arquitecto": "{remaining} aportes restantes hoy",
   "benefit_mente_colmena": "{remaining} aportes restantes hoy",
-  "benefit_oraculo": "Sin límite (aportes ilimitados)"
+  "benefit_oraculo": "Sin límite (aportes ilimitados)",
+  "image_generating": "🎨 Generando tu imagen... esto puede tardar unos minutos en CPU. Te la envío cuando esté lista.",
+  "image_failed": "⚠️ No pude generar la imagen esta vez. Inténtalo de nuevo en un momento.",
+  "image_cooldown": "⏳ Espera {minutes} min antes de pedir otra imagen.",
+  "image_daily_limit": "🚫 Has alcanzado el límite de {limit} imágenes por hoy. Vuelve mañana.",
+  "image_disabled": "🖼️ La generación de imágenes no está disponible ahora mismo."
 }

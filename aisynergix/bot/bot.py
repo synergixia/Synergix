@@ -16,6 +16,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     CallbackQuery,
     BotCommand,
+    BufferedInputFile,
 )
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -163,11 +164,13 @@ def _t_benefit(rank: str, lang: str, remaining: int = 0) -> str:
         return template
 
 
-async def _keep_typing(chat_id: int, stop_event: asyncio.Event) -> None:
-    """Refreshes the Telegram typing indicator every 4 s until stop_event is set."""
+async def _keep_typing(
+    chat_id: int, stop_event: asyncio.Event, action: str = "typing"
+) -> None:
+    """Refreshes a Telegram chat action (``typing`` or ``upload_photo``) every 4 s."""
     while not stop_event.is_set():
         try:
-            await bot.send_chat_action(chat_id=chat_id, action="typing")
+            await bot.send_chat_action(chat_id=chat_id, action=action)
         except Exception:
             pass
         # Sleep in 0.5 s slices so we can react quickly to stop_event
@@ -1035,6 +1038,52 @@ async def handle_contribution_message(
         await message.answer(t("error_generic", lang))
 
 
+async def _handle_image_request(
+    message: Message,
+    uid: int,
+    prompt: str,
+    lang: str,
+) -> None:
+    """Run the quota gate and, if allowed, generate and send one image."""
+    ai = get_ai_manager()
+
+    quota = ai.check_image_quota(uid)
+    if not quota.get("ok"):
+        reason = quota.get("reason")
+        if reason == "cooldown":
+            mins = max(1, round(quota.get("seconds", 0) / 60))
+            await message.answer(t("image_cooldown", lang, minutes=mins))
+        elif reason == "daily_limit":
+            await message.answer(t("image_daily_limit", lang, limit=quota.get("limit", 0)))
+        else:  # disabled / unknown
+            await message.answer(t("image_disabled", lang))
+        return
+
+    # Generation is slow on CPU — tell the user up front and show the
+    # "uploading photo" chat action while we wait.
+    await message.answer(t("image_generating", lang))
+    stop_action = asyncio.Event()
+    action_task = asyncio.create_task(
+        _keep_typing(message.chat.id, stop_action, action="upload_photo")
+    )
+    try:
+        image = await ai.generate_image(uid, prompt)
+    finally:
+        stop_action.set()
+        action_task.cancel()
+
+    if not image:
+        await message.answer(t("image_failed", lang))
+        return
+
+    photo = BufferedInputFile(image, filename="synergix.png")
+    try:
+        await message.answer_photo(photo)
+    except Exception as exc:
+        logger.warning("answer_photo failed uid=%s: %s", uid, exc)
+        await message.answer(t("image_failed", lang))
+
+
 async def handle_conversation_message(
     message: Message,
     uid: int,
@@ -1051,6 +1100,16 @@ async def handle_conversation_message(
     # Emoji-only message → ask the model for a single emoji reaction.
     # The full verbose response is suppressed; only emojis are extracted and shown.
     is_emoji_msg = _is_emoji_only(text)
+
+    # Image generation: the Judge classifies whether this is an explicit request
+    # to create an image.  If so, handle it here and return — never fall through
+    # to the chat Thinker.  Emoji-only messages are never image requests.
+    if not is_emoji_msg:
+        image_prompt = await ai.classify_image_request(text)
+        if image_prompt:
+            await _handle_image_request(message, uid, image_prompt, lang)
+            return
+
     ai_text = text
     if is_emoji_msg:
         ai_text = (

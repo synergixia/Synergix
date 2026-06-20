@@ -91,5 +91,10 @@
   "benefit_sincronizado": "今日剩余 {remaining} 次贡献",
   "benefit_arquitecto": "今日剩余 {remaining} 次贡献",
   "benefit_mente_colmena": "今日剩余 {remaining} 次贡献",
-  "benefit_oraculo": "无限制（无每日上限）"
+  "benefit_oraculo": "无限制（无每日上限）",
+  "image_generating": "🎨 正在生成你的图像……在 CPU 上可能需要几分钟。完成后我会发给你。",
+  "image_failed": "⚠️ 这次未能生成图像，请稍后再试。",
+  "image_cooldown": "⏳ 请等待 {minutes} 分钟后再请求新图像。",
+  "image_daily_limit": "🚫 你今天已达到 {limit} 张图像的上限，明天再来吧。",
+  "image_disabled": "🖼️ 图像生成功能目前不可用。"
 }

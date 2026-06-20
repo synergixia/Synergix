@@ -265,6 +265,9 @@ services:
       # ── Image generation (FLUX.1-schnell) ─────────────────────
       IMAGE_GEN_HOST: ${IMAGE_GEN_HOST:-http://image-gen:8084}
       IMAGE_GEN_ENABLED: ${IMAGE_GEN_ENABLED:-true}
+      # Anti-abuse: seconds between images per user, and max images per user/day.
+      IMAGE_COOLDOWN_SECONDS: ${IMAGE_COOLDOWN_SECONDS:-120}
+      IMAGE_DAILY_LIMIT: ${IMAGE_DAILY_LIMIT:-10}
 
       # ── BSC / Trading ─────────────────────────────────────────
       BSC_RPC_URL: ${BSC_RPC_URL:-https://bsc-dataseed1.binance.org}

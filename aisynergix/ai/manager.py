@@ -12,6 +12,7 @@ from aisynergix.ai.local_ia import (
     get_judge,
     get_duplicate_detector,
 )
+from aisynergix.services.image_gen import get_image_generator, IMAGE_GEN_ENABLED
 from aisynergix.services.rag_engine import get_rag_engine
 from aisynergix.bot.identity import (
     get_identity_manager,
@@ -45,6 +46,27 @@ try:
 except ValueError:
     _THINKER_CONCURRENCY = 1
 _THINKER_SEM = asyncio.Semaphore(_THINKER_CONCURRENCY)
+
+# ── Image generation throttling ──────────────────────────────────────────────
+# One image at a time globally: FLUX on CPU pins every core for minutes, so we
+# never run two at once (and never alongside another — the lock here plus the
+# server-side lock in image-gen/app.py both enforce it).
+_IMAGE_SEM = asyncio.Semaphore(1)
+try:
+    _IMAGE_COOLDOWN_S = max(0, int(os.getenv("IMAGE_COOLDOWN_SECONDS", "120")))
+except ValueError:
+    _IMAGE_COOLDOWN_S = 120
+try:
+    _IMAGE_DAILY_LIMIT = max(0, int(os.getenv("IMAGE_DAILY_LIMIT", "10")))
+except ValueError:
+    _IMAGE_DAILY_LIMIT = 10
+
+# Per-user throttle state (in-memory; resets on restart — acceptable for a
+# soft anti-abuse limit).  cooldown uses a timestamp, daily uses (date, count).
+_image_last_ts: Dict[int, float] = {}
+_image_day_count: Dict[int, Tuple[str, int]] = {}
+# UIDs with an image generation currently running — blocks stacking.
+_image_in_flight: Set[int] = set()
 
 # UIDs whose conversation request is currently being processed.
 # Prevents the same user from stacking duplicate in-flight requests.
@@ -165,6 +187,7 @@ class AIManager:
     def __init__(self):
         self._thinker = get_thinker()
         self._judge = get_judge()
+        self._image_gen = get_image_generator()
         self._duplicate_detector = get_duplicate_detector()
         self._rag = None
         self._identity = get_identity_manager()
@@ -174,6 +197,73 @@ class AIManager:
     async def _ensure_rag(self):
         if self._rag is None:
             self._rag = await get_rag_engine()
+
+    # ── Image generation ────────────────────────────────────────────────
+    async def classify_image_request(self, message: str) -> Optional[str]:
+        """
+        If ``message`` is an explicit image-generation request, return the
+        English FLUX prompt extracted by the Judge; otherwise return None so
+        the caller falls through to normal chat.
+        """
+        if not IMAGE_GEN_ENABLED:
+            return None
+        result = await self._judge.classify_image_request(message)
+        if result.get("is_image_request"):
+            prompt = (result.get("prompt") or "").strip()
+            return prompt or None
+        return None
+
+    def check_image_quota(self, uid: int) -> Dict[str, Any]:
+        """
+        Soft anti-abuse gate. Returns {"ok": True} or
+        {"ok": False, "reason": "disabled"|"cooldown"|"daily_limit", ...}.
+        """
+        if not IMAGE_GEN_ENABLED:
+            return {"ok": False, "reason": "disabled"}
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        day, count = _image_day_count.get(uid, (today, 0))
+        if day != today:
+            count = 0
+        if _IMAGE_DAILY_LIMIT and count >= _IMAGE_DAILY_LIMIT:
+            return {"ok": False, "reason": "daily_limit", "limit": _IMAGE_DAILY_LIMIT}
+
+        remaining = int(_IMAGE_COOLDOWN_S - (time.time() - _image_last_ts.get(uid, 0.0)))
+        if remaining > 0:
+            return {"ok": False, "reason": "cooldown", "seconds": remaining}
+
+        return {"ok": True}
+
+    def _record_image_success(self, uid: int) -> None:
+        """Increment the user's daily counter (called only on a successful image)."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        day, count = _image_day_count.get(uid, (today, 0))
+        if day != today:
+            count = 0
+        _image_day_count[uid] = (today, count + 1)
+
+    async def generate_image(self, uid: int, prompt: str) -> Optional[bytes]:
+        """
+        Generate one image for ``uid``. Returns PNG bytes, or None on failure /
+        if the user already has one in flight. Consumes the cooldown immediately
+        (CPU is spent regardless of outcome) but only counts toward the daily
+        limit on success.
+        """
+        if uid in _image_in_flight:
+            logger.info("uid=%s already generating an image — dropping duplicate", uid)
+            return None
+
+        _image_in_flight.add(uid)
+        # Cooldown starts now so a failing service can't be hammered.
+        _image_last_ts[uid] = time.time()
+        try:
+            async with _IMAGE_SEM:
+                image = await self._image_gen.generate(prompt)
+            if image:
+                self._record_image_success(uid)
+            return image
+        finally:
+            _image_in_flight.discard(uid)
 
     async def process_conversation(
         self,
