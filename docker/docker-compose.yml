@@ -176,9 +176,12 @@ services:
       retries: 3
       start_period: 20s
 
-  # Image generator — Stable Diffusion 1.5 on CPU via stable-diffusion.cpp.
-  # Generation still takes ~20-60 s on CPU, so the bot queues requests too.
+  # Image generator — local CPU fallback (Stable Diffusion 1.5, stable-diffusion.cpp).
+  # Disabled by default: image generation runs on a remote RunPod GPU (set
+  # IMAGE_GEN_HOST to its proxy URL). Start this only with:
+  #   docker compose --profile local-image up -d image-gen
   image-gen:
+    profiles: ["local-image"]
     build:
       context: ../image-gen
       dockerfile: Dockerfile
@@ -241,8 +244,8 @@ services:
         condition: service_started
       irys-uploader:
         condition: service_started
-      image-gen:
-        condition: service_started
+      # No image-gen dependency: it runs remotely on RunPod (or, locally, via the
+      # `local-image` profile), so the bot must not wait on it.
     # ═══════════════════════════════════════════════════════════════
     # VARIABLES DE ENTORNO — SOLO LAS QUE NECESITA CADA COMPONENTE
     # ═══════════════════════════════════════════════════════════════
@@ -269,8 +272,12 @@ services:
       THINKER_MAX_CONCURRENCY: ${THINKER_MAX_CONCURRENCY:-1}
 
       # ── Image generation (Stable Diffusion 1.5) ───────────────
+      # Point this at the RunPod proxy URL, e.g. https://<podid>-8084.proxy.runpod.net
       IMAGE_GEN_HOST: ${IMAGE_GEN_HOST:-http://image-gen:8084}
       IMAGE_GEN_ENABLED: ${IMAGE_GEN_ENABLED:-true}
+      # Shared secret sent as X-API-Key to the remote generator (must match the
+      # IMAGE_GEN_API_KEY set on the RunPod pod).
+      IMAGE_GEN_API_KEY: ${IMAGE_GEN_API_KEY:-}
       # Anti-abuse: seconds between images per user, and max images per user/day.
       IMAGE_COOLDOWN_SECONDS: ${IMAGE_COOLDOWN_SECONDS:-120}
       IMAGE_DAILY_LIMIT: ${IMAGE_DAILY_LIMIT:-10}
