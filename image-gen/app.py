@@ -16,6 +16,7 @@ Endpoints:
 """
 
 import asyncio
+import inspect
 import io
 import logging
 import os
@@ -70,6 +71,10 @@ def _load_model() -> None:
         if SD_VAE:
             kwargs["vae_path"] = SD_VAE
         _sd = StableDiffusion(**kwargs)
+        # Log the public API so the exact txt2img method/signature is visible in
+        # the logs — the binding's method name has varied across versions.
+        public = [m for m in dir(_sd) if not m.startswith("_")]
+        logger.info("StableDiffusion methods: %s", public)
         logger.info("Model loaded — ready to generate.")
     except Exception as exc:  # noqa: BLE001 — surface any load failure via /health
         _load_error = f"{type(exc).__name__}: {exc}"
@@ -98,31 +103,66 @@ class GenerateRequest(BaseModel):
     seed: int | None = None
 
 
+# Method name for txt2img has differed across stable-diffusion-cpp-python
+# versions; resolve it at runtime instead of hard-coding one.
+_TXT2IMG_CANDIDATES = (
+    "txt_to_img", "txt2img", "text_to_image", "generate_image", "generate",
+)
+
+
+def _resolve_txt2img():
+    for name in _TXT2IMG_CANDIDATES:
+        fn = getattr(_sd, name, None)
+        if callable(fn):
+            return fn
+    available = [m for m in dir(_sd) if not m.startswith("_")]
+    raise RuntimeError(f"no txt2img method on StableDiffusion; available: {available}")
+
+
 def _run_generation(req: GenerateRequest) -> bytes:
     steps = min(req.steps or DEFAULT_STEPS, MAX_STEPS)
     width = min(req.width or DEFAULT_WIDTH, MAX_DIM)
     height = min(req.height or DEFAULT_HEIGHT, MAX_DIM)
     seed = req.seed if req.seed is not None else -1
 
+    fn = _resolve_txt2img()
+    # Build the full kwarg set, then keep only those the resolved method accepts
+    # (param names also vary between versions; unknown ones fall back to defaults).
+    wanted = {
+        "prompt": req.prompt,
+        "negative_prompt": DEFAULT_NEGATIVE,
+        "cfg_scale": DEFAULT_CFG,
+        "sample_steps": steps,
+        "sample_method": DEFAULT_SAMPLER,
+        "width": width,
+        "height": height,
+        "seed": seed,
+    }
+    try:
+        params = inspect.signature(fn).parameters
+        accepts_var_kw = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        call_kwargs = (
+            wanted if accepts_var_kw
+            else {k: v for k, v in wanted.items() if k in params}
+        )
+    except (TypeError, ValueError):
+        # Signature unavailable (C binding) — pass the common kwargs as-is.
+        call_kwargs = wanted
+
     # Only one generation at a time — protects the CPU from oversubscription
     # even if two requests slip through the bot-side queue.
     with _gen_lock:
-        images = _sd.txt_to_img(
-            prompt=req.prompt,
-            negative_prompt=DEFAULT_NEGATIVE,
-            cfg_scale=DEFAULT_CFG,
-            sample_steps=steps,
-            sample_method=DEFAULT_SAMPLER,
-            width=width,
-            height=height,
-            seed=seed,
-        )
+        result = fn(**call_kwargs)
 
-    if not images:
+    # Most bindings return a list of PIL images; some return a single image.
+    image = result[0] if isinstance(result, (list, tuple)) else result
+    if image is None:
         raise RuntimeError("generator returned no image")
 
     buf = io.BytesIO()
-    images[0].save(buf, format="PNG")
+    image.save(buf, format="PNG")
     return buf.getvalue()
 
 
