@@ -10,19 +10,20 @@ LABEL org.opencontainers.image.description="Stable Diffusion XL image generator 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Build toolchain for stable-diffusion-cpp-python + OpenBLAS for faster CPU math.
+# Build toolchain for stable-diffusion-cpp-python. No OpenBLAS: on AVX-512
+# CPUs (Zen 4) ggml's native SIMD kernels are faster, and OpenBLAS spawns its
+# own thread pool that oversubscribes the cores (8 ggml threads × N BLAS
+# threads), which cripples per-iteration speed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
         git \
-        libopenblas-dev \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Build the bindings with OpenBLAS enabled for the CPU backend.
-ENV CMAKE_ARGS="-DGGML_OPENBLAS=ON"
+# Native CPU build (AVX-512 etc. auto-detected by ggml on the build host).
 RUN pip install --no-cache-dir \
         fastapi \
         "uvicorn[standard]" \

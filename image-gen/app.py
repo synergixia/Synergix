@@ -53,6 +53,18 @@ N_THREADS = int(os.getenv("IMG_THREADS", str(os.cpu_count() or 8)))
 MAX_DIM   = int(os.getenv("IMG_MAX_DIM", "1024"))
 MAX_STEPS = int(os.getenv("IMG_MAX_STEPS", "40"))
 
+
+def _envbool(name: str, default: bool) -> bool:
+    return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
+# CPU performance flags (supported by this binding). conv_direct uses direct
+# convolutions instead of im2col — faster and far less RAM (the VAE decode in
+# particular was using ~7.6 GB). flash_attn is off by default (CPU support varies).
+CONV_DIRECT     = _envbool("SD_CONV_DIRECT", True)
+VAE_CONV_DIRECT = _envbool("SD_VAE_CONV_DIRECT", True)
+FLASH_ATTN      = _envbool("SD_FLASH_ATTN", False)
+
 app = FastAPI(title="Synergix image-gen")
 
 # Loaded lazily in a background thread so the container reports healthy only
@@ -67,10 +79,22 @@ def _load_model() -> None:
     try:
         from stable_diffusion_cpp import StableDiffusion
         logger.info("Loading Stable Diffusion XL (this can take a while)…")
-        kwargs = {"model_path": SD_MODEL, "n_threads": N_THREADS}
+        base = {"model_path": SD_MODEL, "n_threads": N_THREADS}
         if SD_VAE:
-            kwargs["vae_path"] = SD_VAE
-        _sd = StableDiffusion(**kwargs)
+            base["vae_path"] = SD_VAE
+        perf = {}
+        if CONV_DIRECT:
+            perf["diffusion_conv_direct"] = True
+        if VAE_CONV_DIRECT:
+            perf["vae_conv_direct"] = True
+        if FLASH_ATTN:
+            perf["diffusion_flash_attn"] = True
+        try:
+            _sd = StableDiffusion(**base, **perf)
+        except TypeError as exc:
+            # An older/newer binding may not accept the perf kwargs — retry plain.
+            logger.warning("constructor rejected perf flags (%s); retrying without", exc)
+            _sd = StableDiffusion(**base)
         # Log the public API so the exact txt2img method/signature is visible in
         # the logs — the binding's method name has varied across versions.
         public = [m for m in dir(_sd) if not m.startswith("_")]

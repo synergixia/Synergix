@@ -192,17 +192,21 @@ services:
     environment:
       SD_MODEL: ${SD_MODEL:-/models/image/sd_xl_base_1.0.safetensors}
       SD_VAE: ${SD_VAE:-}
-      IMG_STEPS: ${IMG_STEPS:-25}
+      IMG_STEPS: ${IMG_STEPS:-20}
       IMG_WIDTH: ${IMG_WIDTH:-1024}
       IMG_HEIGHT: ${IMG_HEIGHT:-1024}
       IMG_CFG: ${IMG_CFG:-7.0}
-      IMG_THREADS: ${IMG_THREADS:-8}
+      IMG_THREADS: ${IMG_THREADS:-12}
+      # Belt-and-suspenders: keep any stray BLAS/OpenMP pool from oversubscribing
+      # cores alongside ggml's own threads.
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-1}
+      OPENBLAS_NUM_THREADS: ${OPENBLAS_NUM_THREADS:-1}
     ports:
       - "127.0.0.1:8084:8084"
     deploy:
       resources:
         limits:
-          cpus: "10.0"
+          cpus: "12.0"
           memory: "20.0G"
         reservations:
           cpus: "2.0"
