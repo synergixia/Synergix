@@ -1,11 +1,14 @@
 import os
 import re
 import json
+import logging
 import hashlib
 import asyncio
 from typing import Optional, Dict, Any, List, AsyncGenerator, Tuple
 
 import httpx
+
+logger = logging.getLogger(__name__)
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Reasoning models (Qwen3, DeepSeek-R1, QwQ, etc.) wrap their chain-of-thought
@@ -174,6 +177,32 @@ JUDGE_TOP_K = 20
 # content_summary (~80 tokens) required the bump to avoid the model being
 # cut off before closing the JSON object.
 JUDGE_MAX_TOKENS = 480
+
+# ── Image-request classifier (runs on the Judge / 1.5B) ──────────────────────
+# Detects, in any language, whether a chat message is an explicit request to
+# GENERATE/DRAW an image, and rewrites it into a vivid English prompt for FLUX.
+# Kept strict on purpose: false positives waste minutes of CPU per image.
+IMAGE_CLASSIFIER_MAX_TOKENS = 200
+IMAGE_CLASSIFIER_SYSTEM_PROMPT = (
+    "You classify whether a chat message is an explicit request to GENERATE, "
+    "DRAW, PAINT or CREATE a NEW image/picture/drawing.\n\n"
+    "Return ONLY a valid JSON object. No markdown, no text around it:\n"
+    '{\n'
+    '  "is_image_request": <true|false>,\n'
+    '  "prompt": "<if true: a vivid, detailed ENGLISH image-generation prompt '
+    "capturing the subject, style, mood and composition the user asked for; "
+    'if false: empty string>"\n'
+    '}\n\n'
+    "Rules:\n"
+    "- The message may be in ANY language; understand it, but ALWAYS write the "
+    "prompt in English.\n"
+    "- TRUE only for clear creation requests: 'draw a…', 'genera una imagen de…', "
+    "'crée une image…', 'make me a picture of…', '画一张…'.\n"
+    "- FALSE for everything else: questions, opinions, 'imagine that…' used "
+    "figuratively, requests to describe/analyze an existing image, or vague "
+    "mentions of pictures. When in doubt, FALSE.\n"
+    "- Do NOT invent a subject the user did not mention."
+)
 
 # Native names used when telling the model which language to respond in.
 LANG_NAMES: Dict[str, str] = {
@@ -661,6 +690,56 @@ class Judge:
         )
 
         return self._parse_judge_response(response, contribution_text)
+
+    async def classify_image_request(self, message: str) -> Dict[str, Any]:
+        """
+        Decide whether ``message`` asks to generate an image and, if so, extract
+        an English prompt for FLUX. Returns {"is_image_request": bool, "prompt": str}.
+        Fails closed (is_image_request=False) on any error so chat keeps working.
+        """
+        text = (message or "").strip()
+        if not text:
+            return {"is_image_request": False, "prompt": ""}
+        if len(text) > JUDGE_MAX_INPUT_CHARS:
+            text = text[:JUDGE_MAX_INPUT_CHARS]
+
+        messages = [
+            {"role": "system", "content": IMAGE_CLASSIFIER_SYSTEM_PROMPT},
+            {"role": "user", "content": f"MESSAGE:\n{text}"},
+        ]
+        try:
+            raw = await self._connector.generate(
+                messages=messages,
+                temperature=0.0,
+                top_k=JUDGE_TOP_K,
+                max_tokens=IMAGE_CLASSIFIER_MAX_TOKENS,
+                json_mode=True,
+            )
+        except Exception as exc:
+            logger.warning("image classifier call failed: %s", exc)
+            return {"is_image_request": False, "prompt": ""}
+
+        return self._parse_image_classification(raw)
+
+    @staticmethod
+    def _parse_image_classification(raw: str) -> Dict[str, Any]:
+        try:
+            clean = raw.strip()
+            if clean.startswith("```json"):
+                clean = clean[7:]
+            elif clean.startswith("```"):
+                clean = clean[3:]
+            if clean.endswith("```"):
+                clean = clean[:-3]
+            result = json.loads(clean.strip())
+            is_req = bool(result.get("is_image_request", False))
+            prompt = str(result.get("prompt", "")).strip()
+            # A request with no usable prompt is treated as "not a request".
+            if is_req and not prompt:
+                return {"is_image_request": False, "prompt": ""}
+            return {"is_image_request": is_req, "prompt": prompt}
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+            return {"is_image_request": False, "prompt": ""}
 
     def _parse_judge_response(self, raw: str, contribution_text: str) -> Dict[str, Any]:
         try:

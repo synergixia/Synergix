@@ -91,5 +91,10 @@
   "benefit_sincronizado": "{remaining} مساهمات متبقية اليوم",
   "benefit_arquitecto": "{remaining} مساهمات متبقية اليوم",
   "benefit_mente_colmena": "{remaining} مساهمات متبقية اليوم",
-  "benefit_oraculo": "غير محدود (بدون سقف يومي)"
+  "benefit_oraculo": "غير محدود (بدون سقف يومي)",
+  "image_generating": "🎨 جارٍ إنشاء صورتك... قد يستغرق ذلك بضع دقائق على المعالج. سأرسلها عندما تكون جاهزة.",
+  "image_failed": "⚠️ لم أتمكن من إنشاء الصورة هذه المرة. حاول مرة أخرى بعد قليل.",
+  "image_cooldown": "⏳ يرجى الانتظار {minutes} دقيقة قبل طلب صورة أخرى.",
+  "image_daily_limit": "🚫 لقد وصلت إلى حد {limit} صور لهذا اليوم. عُد غدًا.",
+  "image_disabled": "🖼️ إنشاء الصور غير متاح حاليًا."
 }
