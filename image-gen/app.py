@@ -63,6 +63,10 @@ def _envbool(name: str, default: bool) -> bool:
 CONV_DIRECT     = _envbool("SD_CONV_DIRECT", True)
 VAE_CONV_DIRECT = _envbool("SD_VAE_CONV_DIRECT", True)
 FLASH_ATTN      = _envbool("SD_FLASH_ATTN", False)
+# Weight type the model runs in. SD 1.5 checkpoints are often f32 on disk; running
+# q8_0 on CPU is markedly faster (optimized AVX-512 kernels, less memory traffic)
+# with no visible quality loss. Set to "f16" or "f32" to disable quantization.
+SD_WTYPE = os.getenv("SD_WTYPE", "q8_0").strip()
 
 app = FastAPI(title="Synergix image-gen")
 
@@ -73,11 +77,28 @@ _load_error: str = ""
 _gen_lock = threading.Lock()  # serialize generation — CPU does one at a time
 
 
+def _construct(StableDiffusion, base: dict, perf: dict):
+    """Construct StableDiffusion, progressively dropping optional kwargs.
+
+    Tries the full set first, then without wtype (in case a quant value is
+    unsupported), then bare — so a bad SD_WTYPE degrades gracefully instead of
+    leaving the service unhealthy.
+    """
+    perf_no_wtype = {k: v for k, v in perf.items() if k != "wtype"}
+    for variant in ({**base, **perf}, {**base, **perf_no_wtype}, base):
+        try:
+            return StableDiffusion(**variant)
+        except Exception as exc:  # noqa: BLE001 — fall back to a simpler config
+            logger.warning("construct attempt failed (%s); trying simpler config", exc)
+    # Last resort: let the bare-base error propagate to the caller.
+    return StableDiffusion(**base)
+
+
 def _load_model() -> None:
     global _sd, _load_error
     try:
         from stable_diffusion_cpp import StableDiffusion
-        logger.info("Loading Stable Diffusion 1.5…")
+        logger.info("Loading Stable Diffusion 1.5 (wtype=%s)…", SD_WTYPE)
         base = {"model_path": SD_MODEL, "n_threads": N_THREADS}
         if SD_VAE:
             base["vae_path"] = SD_VAE
@@ -88,12 +109,9 @@ def _load_model() -> None:
             perf["vae_conv_direct"] = True
         if FLASH_ATTN:
             perf["diffusion_flash_attn"] = True
-        try:
-            _sd = StableDiffusion(**base, **perf)
-        except TypeError as exc:
-            # An older/newer binding may not accept the perf kwargs — retry plain.
-            logger.warning("constructor rejected perf flags (%s); retrying without", exc)
-            _sd = StableDiffusion(**base)
+        if SD_WTYPE and SD_WTYPE.lower() not in ("", "default", "auto"):
+            perf["wtype"] = SD_WTYPE
+        _sd = _construct(StableDiffusion, base, perf)
         # Log the public API so the exact txt2img method/signature is visible in
         # the logs — the binding's method name has varied across versions.
         public = [m for m in dir(_sd) if not m.startswith("_")]

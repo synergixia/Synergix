@@ -40,4 +40,6 @@ USER synergix
 EXPOSE 8084
 
 # Single worker: the model is large and generation is serialized anyway.
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8084", "--workers", "1"]
+# `nice -n 10`: run at low CPU priority so image generation yields cores to the
+# Thinker/Judge when a chat is in flight, but still uses the whole CPU when idle.
+CMD ["nice", "-n", "10", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8084", "--workers", "1"]
