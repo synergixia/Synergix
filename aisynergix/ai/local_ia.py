@@ -3,13 +3,10 @@ import re
 import json
 import hashlib
 import asyncio
-import logging
 from typing import Optional, Dict, Any, List, AsyncGenerator, Tuple
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, RetryError
-
-logger = logging.getLogger(__name__)
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Reasoning models (Qwen3, DeepSeek-R1, QwQ, etc.) wrap their chain-of-thought
 # in <think>…</think>.  We strip it from non-streaming responses; for streaming
@@ -148,35 +145,11 @@ class _ThinkStripper:
 
 THINKER_HOST = os.getenv("THINKER_HOST", "http://thinker:8081")
 JUDGE_HOST = os.getenv("JUDGE_HOST", "http://judge:8080")
-
-
-def _host_chain(primary: str, fallback_env: str) -> List[str]:
-    """Build the ordered ``[primary, fallback]`` host chain used for failover.
-
-    The primary is the main backend (e.g. the GPU llama.cpp on a Vast.ai node
-    reached over Tailscale); the optional fallback is a co-located CPU backend
-    on the bot host (Hetzner).  When ``<fallback_env>`` is unset the chain is just
-    ``[primary]`` and behaviour is identical to the previous single-host setup.
-    """
-    hosts = [primary]
-    fallback = os.getenv(fallback_env, "").strip()
-    if fallback and fallback not in hosts:
-        hosts.append(fallback)
-    return hosts
-
-
-# Ordered failover chains.  THINKER_FALLBACK_HOST / JUDGE_FALLBACK_HOST are
-# optional; when set (e.g. a local CPU llama.cpp), requests transparently fall
-# back to them when the primary GPU host is unreachable or returns a 5xx.
-THINKER_HOSTS = _host_chain(THINKER_HOST, "THINKER_FALLBACK_HOST")
-JUDGE_HOSTS = _host_chain(JUDGE_HOST, "JUDGE_FALLBACK_HOST")
-# Qwen2.5-Coder-3B Q4_K_M on 4 CPU threads: ~10-13 tok/s (with --no-mmap).
-# Coder variant follows instructions more literally than the base Instruct
-# model and is far less prone to customer-service filler patterns.
-# 800 max_tokens → worst-case ~80 s; 120 s timeout still covers prompt-eval
-# on the first uncached request with margin.
-THINKER_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
-# Judge runs Qwen2.5-1.5B-Q8 with -t 1 (1 thread).  At ~5-10 tok/s, 320
+# Qwen2.5-7B-Instruct Q4_K_M on the Ryzen 9 7900 (12C/24T): ~6-9 tok/s.
+# 800 max_tokens → worst-case ~130 s; the 180 s timeout covers that plus
+# prompt-eval on the first uncached request with margin.
+THINKER_TIMEOUT = httpx.Timeout(180.0, connect=5.0)
+# Judge runs Qwen2.5-1.5B-Q8.  At ~5-10 tok/s, 320
 # tokens worst-case takes ~32-64 s; 120 s timeout absorbs prompt-eval
 # spikes on long contributions and the occasional CPU contention.
 JUDGE_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
@@ -186,7 +159,7 @@ JUDGE_TIMEOUT = httpx.Timeout(120.0, connect=5.0)
 # plenty of room for the system prompt and the JSON output.
 JUDGE_MAX_INPUT_CHARS = 3000
 
-# Qwen2.5-Coder-3B-Instruct sampling — higher temperature for natural conversation.
+# Thinker sampling — higher temperature for natural conversation.
 # temp 0.8 / top_k 40 gives more varied, less pattern-matched responses.
 THINKER_TEMPERATURE = 0.8
 THINKER_TOP_K = 40
@@ -540,100 +513,9 @@ class LocalLLMConnector:
         raise last_exc  # type: ignore[misc]
 
 
-def _is_failover_error(exc: Exception) -> bool:
-    """Return True when ``exc`` means the *host* is unusable and we should try
-    the next one in the chain — as opposed to a client-side error that would
-    fail identically on every host.
-
-    - Transport-level failures (connect/read/timeout, protocol errors) → fail over.
-    - HTTP 5xx (e.g. 503 model still loading, 502 bad gateway) → fail over.
-    - HTTP 4xx (bad request, etc.) → do NOT fail over; it's a request bug that
-      the fallback would reject the same way, so we surface it immediately.
-    """
-    # ``generate`` wraps the final transport error in tenacity's RetryError
-    # once a connector exhausts its own per-host retries; unwrap to inspect
-    # the real cause (tenacity here only retries transport-level failures).
-    if isinstance(exc, RetryError):
-        inner = exc.last_attempt.exception() if exc.last_attempt else None
-        return _is_failover_error(inner) if isinstance(inner, Exception) else True
-    if isinstance(exc, httpx.TransportError):
-        return True
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500
-    return False
-
-
-class FailoverConnector:
-    """Wraps an ordered chain of :class:`LocalLLMConnector` and transparently
-    fails over from the primary host to the next one when the primary is
-    unreachable or returns a server error.
-
-    Each underlying connector keeps its own per-host retry policy; this layer
-    only adds *cross-host* failover.  For streaming, failover is limited to the
-    window before the first token is emitted — once the caller has started
-    receiving the answer we cannot silently switch hosts (it would duplicate
-    output), so a mid-stream failure propagates instead.
-    """
-
-    def __init__(self, base_urls: List[str], timeout: httpx.Timeout):
-        if not base_urls:
-            raise ValueError("FailoverConnector requires at least one host")
-        self._connectors = [LocalLLMConnector(url, timeout) for url in base_urls]
-
-    async def close(self):
-        for connector in self._connectors:
-            await connector.close()
-
-    async def health_check(self) -> bool:
-        """Healthy when *any* host in the chain responds."""
-        for connector in self._connectors:
-            if await connector.health_check():
-                return True
-        return False
-
-    async def generate(self, *args, **kwargs) -> str:
-        last_exc: Optional[Exception] = None
-        last_idx = len(self._connectors) - 1
-        for idx, connector in enumerate(self._connectors):
-            try:
-                return await connector.generate(*args, **kwargs)
-            except Exception as exc:
-                if not _is_failover_error(exc) or idx == last_idx:
-                    raise
-                last_exc = exc
-                logger.warning(
-                    "Thinker/Judge host %s failed (%s) — failing over to %s",
-                    connector._base_url, exc, self._connectors[idx + 1]._base_url,
-                )
-        raise last_exc  # type: ignore[misc]
-
-    async def stream_generate(self, *args, **kwargs) -> AsyncGenerator[str, None]:
-        last_exc: Optional[Exception] = None
-        last_idx = len(self._connectors) - 1
-        for idx, connector in enumerate(self._connectors):
-            yielded = False
-            try:
-                async for token in connector.stream_generate(*args, **kwargs):
-                    yielded = True
-                    yield token
-                return
-            except Exception as exc:
-                # If tokens already reached the caller, or this is a non-failover
-                # error, or we're on the last host, propagate instead of switching.
-                if yielded or not _is_failover_error(exc) or idx == last_idx:
-                    raise
-                last_exc = exc
-                logger.warning(
-                    "Stream host %s failed before first token (%s) — failing over to %s",
-                    connector._base_url, exc, self._connectors[idx + 1]._base_url,
-                )
-        if last_exc:
-            raise last_exc
-
-
 class Thinker:
     def __init__(self):
-        self._connector = FailoverConnector(THINKER_HOSTS, THINKER_TIMEOUT)
+        self._connector = LocalLLMConnector(THINKER_HOST, THINKER_TIMEOUT)
 
     async def close(self):
         await self._connector.close()
@@ -744,7 +626,7 @@ class Thinker:
 
 class Judge:
     def __init__(self):
-        self._connector = FailoverConnector(JUDGE_HOSTS, JUDGE_TIMEOUT)
+        self._connector = LocalLLMConnector(JUDGE_HOST, JUDGE_TIMEOUT)
 
     async def close(self):
         await self._connector.close()

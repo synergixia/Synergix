@@ -15,17 +15,16 @@ volumes:
     driver: local
 
 services:
-  # Local CPU Thinker. Primary in single-box mode; becomes the automatic
-  # FALLBACK once the hybrid overlay points THINKER_HOST at the GPU node.
-  thinker-cpu:
+  # Thinker LLM — Qwen2.5-7B-Instruct Q4_K_M on CPU (Ryzen 9 7900, 12C/24T).
+  thinker:
     image: ghcr.io/ggml-org/llama.cpp:server
-    container_name: synergix-thinker-cpu
+    container_name: synergix-thinker
     restart: unless-stopped
     networks:
       synergix-net:
         ipv4_address: 172.28.0.10
     volumes:
-      - ../aisynergix/ai/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf:/models/synergix.gguf:ro
+      - ../aisynergix/ai/models/qwen2.5-7b-instruct-q4_k_m.gguf:/models/synergix.gguf:ro
       - thinker-cache:/tmp
     entrypoint: ["/app/llama-server"]
     command:
@@ -36,11 +35,11 @@ services:
       - "--port"
       - "8081"
       - "-c"
-      - "4096"
+      - "8192"
       - "-t"
-      - "4"
+      - "12"
       - "-tb"
-      - "4"
+      - "12"
       - "--no-mmap"
       - "--temp"
       - "0.7"
@@ -59,11 +58,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "4.0"
-          memory: "4.0G"
+          cpus: "12.0"
+          memory: "12.0G"
         reservations:
-          cpus: "2.0"
-          memory: "2.0G"
+          cpus: "6.0"
+          memory: "6.0G"
     security_opt:
       - no-new-privileges:true
     read_only: false
@@ -96,9 +95,9 @@ services:
       - "-c"
       - "4096"
       - "-t"
-      - "1"
+      - "6"
       - "-tb"
-      - "1"
+      - "6"
       - "--no-mmap"
       - "--temp"
       - "0.1"
@@ -113,11 +112,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: "2.5G"
+          cpus: "6.0"
+          memory: "4.0G"
         reservations:
-          cpus: "0.5"
-          memory: "1.6G"
+          cpus: "1.0"
+          memory: "2.0G"
     security_opt:
       - no-new-privileges:true
     read_only: false
@@ -187,7 +186,7 @@ services:
       synergix-net:
         ipv4_address: 172.28.0.20
     depends_on:
-      thinker-cpu:
+      thinker:
         condition: service_started
       judge:
         condition: service_started
@@ -206,22 +205,16 @@ services:
 
       # ── Synergix App ──────────────────────────────────────────
       SYNERGIX_TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
-      SYNERGIX_THINKER_HOST: ${THINKER_HOST:-http://thinker-cpu:8081}
+      SYNERGIX_THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
       SYNERGIX_JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
       SYNERGIX_CACHE_TTL: ${CACHE_TTL:-12}
 
       # ── Variables sin prefijo (requeridas por bot.py y local_ia.py) ──
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
-      # Primary LLM hosts. In single-box mode these default to the local CPU
-      # containers. For the hybrid setup, set THINKER_HOST / JUDGE_HOST in .env
-      # to the GPU node (its Tailscale IP) — the *_FALLBACK_HOST vars then
-      # point back at the local CPU containers for automatic failover.
-      THINKER_HOST: ${THINKER_HOST:-http://thinker-cpu:8081}
+      THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
       JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
-      THINKER_FALLBACK_HOST: ${THINKER_FALLBACK_HOST:-}
-      JUDGE_FALLBACK_HOST: ${JUDGE_FALLBACK_HOST:-}
-      # Concurrent Thinker calls allowed. Keep at 1 for the CPU build; set to
-      # the GPU pod's --parallel (e.g. 2) in hybrid mode.
+      # Concurrent Thinker calls allowed. Keep at 1 — the CPU build runs
+      # llama.cpp with --parallel 1, so extra requests just queue in asyncio.
       THINKER_MAX_CONCURRENCY: ${THINKER_MAX_CONCURRENCY:-1}
 
       # ── BSC / Trading ─────────────────────────────────────────
@@ -233,11 +226,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: "2.5G"
+          cpus: "4.0"
+          memory: "6.0G"
         reservations:
           cpus: "1.0"
-          memory: "1.5G"
+          memory: "2.0G"
     security_opt:
       - no-new-privileges:true
     read_only: false
