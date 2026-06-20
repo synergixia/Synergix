@@ -92,7 +92,7 @@
   "benefit_arquitecto": "{remaining} contributions restantes aujourd'hui",
   "benefit_mente_colmena": "{remaining} contributions restantes aujourd'hui",
   "benefit_oraculo": "Illimité (aucun plafond quotidien)",
-  "image_generating": "🎨 Génération de votre image... cela peut prendre quelques minutes sur CPU. Je l'envoie dès qu'elle est prête.",
+  "image_generating": "🎨 Génération de votre image... je l'envoie dans un instant.",
   "image_failed": "⚠️ Je n'ai pas pu générer l'image cette fois. Réessayez dans un instant.",
   "image_cooldown": "⏳ Veuillez attendre {minutes} min avant de demander une autre image.",
   "image_daily_limit": "🚫 Vous avez atteint la limite de {limit} images pour aujourd'hui. Revenez demain.",

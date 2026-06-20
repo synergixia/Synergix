@@ -194,7 +194,7 @@ services:
       SD_VAE: ${SD_VAE:-}
       # q8_0 runs much faster than the f32 checkpoint on CPU, same quality.
       SD_WTYPE: ${SD_WTYPE:-q8_0}
-      IMG_STEPS: ${IMG_STEPS:-16}
+      IMG_STEPS: ${IMG_STEPS:-12}
       IMG_WIDTH: ${IMG_WIDTH:-512}
       IMG_HEIGHT: ${IMG_HEIGHT:-512}
       IMG_CFG: ${IMG_CFG:-7.0}

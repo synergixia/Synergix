@@ -36,7 +36,7 @@ SD_VAE   = os.getenv("SD_VAE", "").strip()
 
 # SD 1.5 is native at 512² and needs real CFG (~7) with ~20-25 steps. Much
 # lighter than SDXL (860M UNet vs 2.6B), so far faster on CPU.
-DEFAULT_STEPS    = int(os.getenv("IMG_STEPS", "20"))
+DEFAULT_STEPS    = int(os.getenv("IMG_STEPS", "12"))
 DEFAULT_WIDTH    = int(os.getenv("IMG_WIDTH", "512"))
 DEFAULT_HEIGHT   = int(os.getenv("IMG_HEIGHT", "512"))
 DEFAULT_CFG      = float(os.getenv("IMG_CFG", "7.0"))
