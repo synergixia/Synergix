@@ -16,15 +16,23 @@ logger = logging.getLogger(__name__)
 
 IMAGE_GEN_HOST = os.getenv("IMAGE_GEN_HOST", "http://image-gen:8084")
 
+# Shared secret sent as X-API-Key. Required when the generator runs on a public
+# RunPod proxy URL; leave empty for a private docker-network service.
+IMAGE_GEN_API_KEY = os.getenv("IMAGE_GEN_API_KEY", "").strip()
+
 # Feature flag — when false the bot never offers image generation, regardless of
 # whether the service is up. Lets you ship the code but keep it dark.
 IMAGE_GEN_ENABLED = os.getenv("IMAGE_GEN_ENABLED", "true").strip().lower() in (
     "1", "true", "yes", "on",
 )
 
-# Image generation on CPU can take up to a minute or two; allow plenty of room
-# but cap the connect timeout so an unreachable service fails fast.
-_TIMEOUT = httpx.Timeout(float(os.getenv("IMAGE_GEN_TIMEOUT", "600")), connect=5.0)
+# Remote GPU generation is fast, but allow room for cold starts / queueing; cap
+# the connect timeout a bit higher than local since RunPod's proxy adds latency.
+_TIMEOUT = httpx.Timeout(float(os.getenv("IMAGE_GEN_TIMEOUT", "300")), connect=10.0)
+
+
+def _auth_headers() -> dict:
+    return {"X-API-Key": IMAGE_GEN_API_KEY} if IMAGE_GEN_API_KEY else {}
 
 
 class ImageGenConnector:
@@ -62,7 +70,9 @@ class ImageGenConnector:
             payload["seed"] = seed
         try:
             client = await self._get_client()
-            resp = await client.post(f"{self._base_url}/generate", json=payload)
+            resp = await client.post(
+                f"{self._base_url}/generate", json=payload, headers=_auth_headers()
+            )
             if resp.status_code != 200:
                 logger.warning(
                     "image-gen %s returned %d: %s",
