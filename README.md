@@ -339,6 +339,8 @@ Synergix/
 - GGUF model files placed in `aisynergix/ai/models/`:
   - `qwen2.5-7b-instruct-q4_k_m.gguf` (Thinker)
   - `qwen2.5-1.5b-q8.gguf` (Judge)
+- Stable Diffusion XL checkpoint in `aisynergix/ai/models/image/` (image generation):
+  - `sd_xl_base_1.0.safetensors` — run `./scripts/download_sdxl.sh` to fetch it
 - A BNB wallet with enough BNB on Irys to cover uploads (`scripts/irys_fund.py`)
 
 ### Steps
@@ -352,16 +354,19 @@ cd Synergix
 cp .env.example .env
 # Fill in: TELEGRAM_TOKEN, PRIVATE_KEY
 
-# 3. Fund the Irys node wallet (one-time setup)
+# 3. Download the SDXL image model (~6.9 GB, ungated)
+./scripts/download_sdxl.sh
+
+# 4. Fund the Irys node wallet (one-time setup)
 python scripts/irys_fund.py
 
-# 4. Build and start all services
+# 5. Build and start all services
 cd docker
-docker-compose up -d --build
+docker compose up -d --build
 
-# 5. Check logs
-docker-compose logs -f bot
-docker-compose logs -f irys-uploader
+# 6. Check logs
+docker compose logs -f bot
+docker compose logs -f image-gen   # first run loads SDXL into RAM (slow)
 ```
 
 ### Self-Healing on Restart
