@@ -313,12 +313,9 @@ Synergix/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `THINKER_HOST` | `http://thinker-cpu:8081` | Primary Thinker LLM endpoint (set to the GPU node in hybrid mode) |
-| `JUDGE_HOST` | `http://judge:8080` | Primary Judge LLM endpoint (set to the GPU node in hybrid mode) |
-| `THINKER_FALLBACK_HOST` | — | Optional secondary Thinker; used automatically when the primary is unreachable or returns 5xx |
-| `JUDGE_FALLBACK_HOST` | — | Optional secondary Judge; used automatically when the primary fails |
-| `THINKER_MAX_CONCURRENCY` | `1` | Concurrent Thinker calls; set to the GPU pod's `--parallel` in hybrid mode |
-| `TS_AUTHKEY` | — | Tailscale auth key for the Hetzner sidecar (hybrid overlay only) |
+| `THINKER_HOST` | `http://thinker:8081` | Thinker LLM endpoint |
+| `JUDGE_HOST` | `http://judge:8080` | Judge LLM endpoint |
+| `THINKER_MAX_CONCURRENCY` | `1` | Concurrent Thinker calls (CPU runs llama.cpp `--parallel 1`) |
 
 ### Application
 
@@ -336,7 +333,7 @@ Synergix/
 
 - Docker + Docker Compose
 - GGUF model files placed in `aisynergix/ai/models/`:
-  - `qwen2.5-coder-3b-instruct-q4_k_m.gguf` (Thinker)
+  - `qwen2.5-7b-instruct-q4_k_m.gguf` (Thinker)
   - `qwen2.5-1.5b-q8.gguf` (Judge)
 - A BNB wallet with enough BNB on Irys to cover uploads (`scripts/irys_fund.py`)
 

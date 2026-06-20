@@ -37,11 +37,9 @@ MIN_CONTRIBUTION_LENGTH = 20
 ELITE_THRESHOLD = 9.0
 LEGENDARY_THRESHOLD = 9.5
 
-# Cap concurrent thinker calls to match the backend's llama.cpp --parallel.
+# Cap concurrent thinker calls to match llama.cpp --parallel (1 on CPU).
 # Extras queue here in asyncio — no HTTP connection, no timeout risk.
-# Defaults to 1 (the CPU build). On the hybrid GPU setup, set
-# THINKER_MAX_CONCURRENCY to the pod's --parallel (e.g. 2) to use the GPU's
-# parallel slots. Invalid/blank values fall back to 1.
+# THINKER_MAX_CONCURRENCY overrides the cap; invalid/blank values fall back to 1.
 try:
     _THINKER_CONCURRENCY = max(1, int(os.getenv("THINKER_MAX_CONCURRENCY", "1")))
 except ValueError:
