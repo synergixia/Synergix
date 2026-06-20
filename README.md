@@ -322,6 +322,7 @@ Synergix/
 | `IMAGE_GEN_HOST` | `http://image-gen:8084` | Service URL (http mode: pod proxy URL or local CPU) |
 | `IMAGE_GEN_API_KEY` | _(empty)_ | Shared `X-API-Key` for http/pod mode |
 | `IMAGE_GEN_ENABLED` | `true` | Master switch for in-chat image generation |
+| `IMAGE_MAX_CONCURRENCY` | `1` | Concurrent images allowed (match RunPod max workers) |
 | `IMAGE_COOLDOWN_SECONDS` | `120` | Min seconds between images per user |
 | `IMAGE_DAILY_LIMIT` | `10` | Max images per user per day |
 

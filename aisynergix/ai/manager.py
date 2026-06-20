@@ -48,10 +48,15 @@ except ValueError:
 _THINKER_SEM = asyncio.Semaphore(_THINKER_CONCURRENCY)
 
 # ── Image generation throttling ──────────────────────────────────────────────
-# One image at a time globally: image generation on CPU pins every core, so we
-# never run two at once (and never alongside another — the lock here plus the
-# server-side lock in image-gen/app.py both enforce it).
-_IMAGE_SEM = asyncio.Semaphore(1)
+# How many images may generate at once globally. With a remote GPU (RunPod
+# Serverless) this should match the endpoint's max workers so multiple users can
+# generate in parallel; for the local CPU fallback keep it at 1 (the service-side
+# lock serializes anyway). Configurable via IMAGE_MAX_CONCURRENCY.
+try:
+    _IMAGE_CONCURRENCY = max(1, int(os.getenv("IMAGE_MAX_CONCURRENCY", "1")))
+except ValueError:
+    _IMAGE_CONCURRENCY = 1
+_IMAGE_SEM = asyncio.Semaphore(_IMAGE_CONCURRENCY)
 try:
     _IMAGE_COOLDOWN_S = max(0, int(os.getenv("IMAGE_COOLDOWN_SECONDS", "120")))
 except ValueError:

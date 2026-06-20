@@ -275,6 +275,8 @@ services:
       # Backend: "serverless" (RunPod Serverless) or "http" (pod / local CPU).
       IMAGE_GEN_MODE: ${IMAGE_GEN_MODE:-serverless}
       IMAGE_GEN_ENABLED: ${IMAGE_GEN_ENABLED:-true}
+      # Concurrent images allowed — match your RunPod endpoint's max workers.
+      IMAGE_MAX_CONCURRENCY: ${IMAGE_MAX_CONCURRENCY:-3}
       # Serverless: endpoint id + your RunPod API key (Bearer).
       RUNPOD_ENDPOINT_ID: ${RUNPOD_ENDPOINT_ID:-}
       RUNPOD_API_KEY: ${RUNPOD_API_KEY:-}
