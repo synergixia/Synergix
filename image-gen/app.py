@@ -5,9 +5,8 @@ Wraps stable-diffusion.cpp (via the `stable_diffusion_cpp` Python bindings) in
 a tiny HTTP API so the bot can request images the same way it talks to the
 Thinker/Judge llama.cpp servers.
 
-Runs Stable Diffusion XL base 1.0 on CPU. Generation is heavy (1-3 minutes per
-image on CPU), so the service serializes work with a lock and the bot is
-expected to queue requests on its side as well.
+Runs Stable Diffusion 1.5 on CPU (512px). The service serializes work with a
+lock and the bot is expected to queue requests on its side as well.
 
 Endpoints:
   GET  /health    → 200 once the model is loaded, 503 while still loading.
@@ -30,27 +29,27 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("image-gen")
 
 # ── Model config ─────────────────────────────────────────────────────────────
-# SDXL base ships as a single checkpoint (no separate text encoders like FLUX).
-# Point SD_MODEL at a .safetensors or a quantized .gguf. SD_VAE is optional —
-# leave empty to use the checkpoint's built-in VAE.
-SD_MODEL = os.getenv("SD_MODEL", "/models/image/sd_xl_base_1.0.safetensors")
+# SD 1.5 ships as a single checkpoint. Point SD_MODEL at a .safetensors or a
+# quantized .gguf. SD_VAE is optional — leave empty to use the built-in VAE.
+SD_MODEL = os.getenv("SD_MODEL", "/models/image/v1-5-pruned-emaonly.safetensors")
 SD_VAE   = os.getenv("SD_VAE", "").strip()
 
-# SDXL is native at 1024² and is NOT guidance-distilled, so it needs real CFG
-# (~7) and ~25-30 steps (unlike FLUX-schnell's cfg 1.0 / 4 steps).
-DEFAULT_STEPS    = int(os.getenv("IMG_STEPS", "25"))
-DEFAULT_WIDTH    = int(os.getenv("IMG_WIDTH", "1024"))
-DEFAULT_HEIGHT   = int(os.getenv("IMG_HEIGHT", "1024"))
+# SD 1.5 is native at 512² and needs real CFG (~7) with ~20-25 steps. Much
+# lighter than SDXL (860M UNet vs 2.6B), so far faster on CPU.
+DEFAULT_STEPS    = int(os.getenv("IMG_STEPS", "20"))
+DEFAULT_WIDTH    = int(os.getenv("IMG_WIDTH", "512"))
+DEFAULT_HEIGHT   = int(os.getenv("IMG_HEIGHT", "512"))
 DEFAULT_CFG      = float(os.getenv("IMG_CFG", "7.0"))
-DEFAULT_SAMPLER  = os.getenv("IMG_SAMPLER", "euler")
+DEFAULT_SAMPLER  = os.getenv("IMG_SAMPLER", "euler_a")
 # Applied to every image to nudge quality up; override or blank out via env.
 DEFAULT_NEGATIVE = os.getenv(
     "IMG_NEGATIVE",
     "lowres, blurry, deformed, disfigured, bad anatomy, watermark, text, signature",
 )
 N_THREADS = int(os.getenv("IMG_THREADS", str(os.cpu_count() or 8)))
-# Hard caps so a crafted request can't ask for a 4096² image and pin the CPU.
-MAX_DIM   = int(os.getenv("IMG_MAX_DIM", "1024"))
+# Hard caps so a crafted request can't pin the CPU. SD 1.5 also degrades badly
+# above ~768 (repeated subjects), so cap there.
+MAX_DIM   = int(os.getenv("IMG_MAX_DIM", "768"))
 MAX_STEPS = int(os.getenv("IMG_MAX_STEPS", "40"))
 
 
@@ -78,7 +77,7 @@ def _load_model() -> None:
     global _sd, _load_error
     try:
         from stable_diffusion_cpp import StableDiffusion
-        logger.info("Loading Stable Diffusion XL (this can take a while)…")
+        logger.info("Loading Stable Diffusion 1.5…")
         base = {"model_path": SD_MODEL, "n_threads": N_THREADS}
         if SD_VAE:
             base["vae_path"] = SD_VAE

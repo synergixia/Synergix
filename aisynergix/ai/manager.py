@@ -48,7 +48,7 @@ except ValueError:
 _THINKER_SEM = asyncio.Semaphore(_THINKER_CONCURRENCY)
 
 # ── Image generation throttling ──────────────────────────────────────────────
-# One image at a time globally: SDXL on CPU pins every core for minutes, so we
+# One image at a time globally: image generation on CPU pins every core, so we
 # never run two at once (and never alongside another — the lock here plus the
 # server-side lock in image-gen/app.py both enforce it).
 _IMAGE_SEM = asyncio.Semaphore(1)

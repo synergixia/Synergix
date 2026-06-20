@@ -176,8 +176,8 @@ services:
       retries: 3
       start_period: 20s
 
-  # Image generator — Stable Diffusion XL base 1.0 on CPU via stable-diffusion.cpp.
-  # Heavy: generation takes minutes on CPU, so the bot queues requests too.
+  # Image generator — Stable Diffusion 1.5 on CPU via stable-diffusion.cpp.
+  # Generation still takes ~20-60 s on CPU, so the bot queues requests too.
   image-gen:
     build:
       context: ../image-gen
@@ -190,12 +190,13 @@ services:
     volumes:
       - ../aisynergix/ai/models/image:/models/image:ro
     environment:
-      SD_MODEL: ${SD_MODEL:-/models/image/sd_xl_base_1.0.safetensors}
+      SD_MODEL: ${SD_MODEL:-/models/image/v1-5-pruned-emaonly.safetensors}
       SD_VAE: ${SD_VAE:-}
       IMG_STEPS: ${IMG_STEPS:-20}
-      IMG_WIDTH: ${IMG_WIDTH:-1024}
-      IMG_HEIGHT: ${IMG_HEIGHT:-1024}
+      IMG_WIDTH: ${IMG_WIDTH:-512}
+      IMG_HEIGHT: ${IMG_HEIGHT:-512}
       IMG_CFG: ${IMG_CFG:-7.0}
+      IMG_SAMPLER: ${IMG_SAMPLER:-euler_a}
       IMG_THREADS: ${IMG_THREADS:-12}
       # Belt-and-suspenders: keep any stray BLAS/OpenMP pool from oversubscribing
       # cores alongside ggml's own threads.
@@ -207,10 +208,10 @@ services:
       resources:
         limits:
           cpus: "12.0"
-          memory: "20.0G"
+          memory: "8.0G"
         reservations:
           cpus: "2.0"
-          memory: "4.0G"
+          memory: "2.0G"
     security_opt:
       - no-new-privileges:true
     read_only: false
@@ -265,7 +266,7 @@ services:
       # llama.cpp with --parallel 1, so extra requests just queue in asyncio.
       THINKER_MAX_CONCURRENCY: ${THINKER_MAX_CONCURRENCY:-1}
 
-      # ── Image generation (Stable Diffusion XL) ────────────────
+      # ── Image generation (Stable Diffusion 1.5) ───────────────
       IMAGE_GEN_HOST: ${IMAGE_GEN_HOST:-http://image-gen:8084}
       IMAGE_GEN_ENABLED: ${IMAGE_GEN_ENABLED:-true}
       # Anti-abuse: seconds between images per user, and max images per user/day.
