@@ -272,11 +272,14 @@ services:
       THINKER_MAX_CONCURRENCY: ${THINKER_MAX_CONCURRENCY:-1}
 
       # ── Image generation (Stable Diffusion 1.5) ───────────────
-      # Point this at the RunPod proxy URL, e.g. https://<podid>-8084.proxy.runpod.net
-      IMAGE_GEN_HOST: ${IMAGE_GEN_HOST:-http://image-gen:8084}
+      # Backend: "serverless" (RunPod Serverless) or "http" (pod / local CPU).
+      IMAGE_GEN_MODE: ${IMAGE_GEN_MODE:-serverless}
       IMAGE_GEN_ENABLED: ${IMAGE_GEN_ENABLED:-true}
-      # Shared secret sent as X-API-Key to the remote generator (must match the
-      # IMAGE_GEN_API_KEY set on the RunPod pod).
+      # Serverless: endpoint id + your RunPod API key (Bearer).
+      RUNPOD_ENDPOINT_ID: ${RUNPOD_ENDPOINT_ID:-}
+      RUNPOD_API_KEY: ${RUNPOD_API_KEY:-}
+      # http/pod mode only: service URL + optional X-API-Key.
+      IMAGE_GEN_HOST: ${IMAGE_GEN_HOST:-http://image-gen:8084}
       IMAGE_GEN_API_KEY: ${IMAGE_GEN_API_KEY:-}
       # Anti-abuse: seconds between images per user, and max images per user/day.
       IMAGE_COOLDOWN_SECONDS: ${IMAGE_COOLDOWN_SECONDS:-120}
