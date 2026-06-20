@@ -5,7 +5,7 @@ Wraps stable-diffusion.cpp (via the `stable_diffusion_cpp` Python bindings) in
 a tiny HTTP API so the bot can request images the same way it talks to the
 Thinker/Judge llama.cpp servers.
 
-Runs FLUX.1-schnell quantized (GGUF) on CPU. Generation is heavy (minutes per
+Runs Stable Diffusion XL base 1.0 on CPU. Generation is heavy (1-3 minutes per
 image on CPU), so the service serializes work with a lock and the bot is
 expected to queue requests on its side as well.
 
@@ -28,21 +28,29 @@ from pydantic import BaseModel
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("image-gen")
 
-# ── Model config (paths to the FLUX.1-schnell GGUF + encoders) ───────────────
-DIFFUSION_MODEL = os.getenv("FLUX_DIFFUSION_MODEL", "/models/flux/flux1-schnell-q4_k.gguf")
-CLIP_L_PATH     = os.getenv("FLUX_CLIP_L", "/models/flux/clip_l.safetensors")
-T5XXL_PATH      = os.getenv("FLUX_T5XXL", "/models/flux/t5xxl_fp16.safetensors")
-VAE_PATH        = os.getenv("FLUX_VAE", "/models/flux/ae.safetensors")
+# ── Model config ─────────────────────────────────────────────────────────────
+# SDXL base ships as a single checkpoint (no separate text encoders like FLUX).
+# Point SD_MODEL at a .safetensors or a quantized .gguf. SD_VAE is optional —
+# leave empty to use the checkpoint's built-in VAE.
+SD_MODEL = os.getenv("SD_MODEL", "/models/image/sd_xl_base_1.0.safetensors")
+SD_VAE   = os.getenv("SD_VAE", "").strip()
 
-# FLUX.1-schnell is guidance-distilled: cfg_scale 1.0 and ~4 steps.
-DEFAULT_STEPS  = int(os.getenv("IMG_STEPS", "4"))
-DEFAULT_WIDTH  = int(os.getenv("IMG_WIDTH", "768"))
-DEFAULT_HEIGHT = int(os.getenv("IMG_HEIGHT", "768"))
-DEFAULT_CFG    = float(os.getenv("IMG_CFG", "1.0"))
-N_THREADS      = int(os.getenv("IMG_THREADS", str(os.cpu_count() or 8)))
+# SDXL is native at 1024² and is NOT guidance-distilled, so it needs real CFG
+# (~7) and ~25-30 steps (unlike FLUX-schnell's cfg 1.0 / 4 steps).
+DEFAULT_STEPS    = int(os.getenv("IMG_STEPS", "25"))
+DEFAULT_WIDTH    = int(os.getenv("IMG_WIDTH", "1024"))
+DEFAULT_HEIGHT   = int(os.getenv("IMG_HEIGHT", "1024"))
+DEFAULT_CFG      = float(os.getenv("IMG_CFG", "7.0"))
+DEFAULT_SAMPLER  = os.getenv("IMG_SAMPLER", "euler")
+# Applied to every image to nudge quality up; override or blank out via env.
+DEFAULT_NEGATIVE = os.getenv(
+    "IMG_NEGATIVE",
+    "lowres, blurry, deformed, disfigured, bad anatomy, watermark, text, signature",
+)
+N_THREADS = int(os.getenv("IMG_THREADS", str(os.cpu_count() or 8)))
 # Hard caps so a crafted request can't ask for a 4096² image and pin the CPU.
 MAX_DIM   = int(os.getenv("IMG_MAX_DIM", "1024"))
-MAX_STEPS = int(os.getenv("IMG_MAX_STEPS", "8"))
+MAX_STEPS = int(os.getenv("IMG_MAX_STEPS", "40"))
 
 app = FastAPI(title="Synergix image-gen")
 
@@ -57,14 +65,11 @@ def _load_model() -> None:
     global _sd, _load_error
     try:
         from stable_diffusion_cpp import StableDiffusion
-        logger.info("Loading FLUX.1-schnell (this can take a while)…")
-        _sd = StableDiffusion(
-            diffusion_model_path=DIFFUSION_MODEL,
-            clip_l_path=CLIP_L_PATH,
-            t5xxl_path=T5XXL_PATH,
-            vae_path=VAE_PATH,
-            n_threads=N_THREADS,
-        )
+        logger.info("Loading Stable Diffusion XL (this can take a while)…")
+        kwargs = {"model_path": SD_MODEL, "n_threads": N_THREADS}
+        if SD_VAE:
+            kwargs["vae_path"] = SD_VAE
+        _sd = StableDiffusion(**kwargs)
         logger.info("Model loaded — ready to generate.")
     except Exception as exc:  # noqa: BLE001 — surface any load failure via /health
         _load_error = f"{type(exc).__name__}: {exc}"
@@ -104,8 +109,10 @@ def _run_generation(req: GenerateRequest) -> bytes:
     with _gen_lock:
         images = _sd.txt_to_img(
             prompt=req.prompt,
+            negative_prompt=DEFAULT_NEGATIVE,
             cfg_scale=DEFAULT_CFG,
             sample_steps=steps,
+            sample_method=DEFAULT_SAMPLER,
             width=width,
             height=height,
             seed=seed,

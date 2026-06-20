@@ -22,7 +22,7 @@ IMAGE_GEN_ENABLED = os.getenv("IMAGE_GEN_ENABLED", "true").strip().lower() in (
     "1", "true", "yes", "on",
 )
 
-# FLUX.1-schnell on CPU can take a few minutes per image; allow plenty of room
+# SDXL on CPU can take a few minutes per image; allow plenty of room
 # but cap the connect timeout so an unreachable service fails fast.
 _TIMEOUT = httpx.Timeout(float(os.getenv("IMAGE_GEN_TIMEOUT", "600")), connect=5.0)
 
