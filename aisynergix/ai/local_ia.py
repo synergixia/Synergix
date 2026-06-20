@@ -184,25 +184,35 @@ JUDGE_MAX_TOKENS = 480
 # image model.
 # Kept strict on purpose: false positives waste minutes of CPU per image.
 IMAGE_CLASSIFIER_MAX_TOKENS = 200
+# Few-shot, terse format. A long inline schema description tempts the small (1.5B)
+# model to copy the description verbatim into the prompt field, so we keep the
+# schema minimal and teach the behaviour with examples instead.
 IMAGE_CLASSIFIER_SYSTEM_PROMPT = (
-    "You classify whether a chat message is an explicit request to GENERATE, "
-    "DRAW, PAINT or CREATE a NEW image/picture/drawing.\n\n"
-    "Return ONLY a valid JSON object. No markdown, no text around it:\n"
-    '{\n'
-    '  "is_image_request": <true|false>,\n'
-    '  "prompt": "<if true: a vivid, detailed ENGLISH image-generation prompt '
-    "capturing the subject, style, mood and composition the user asked for; "
-    'if false: empty string>"\n'
-    '}\n\n'
-    "Rules:\n"
-    "- The message may be in ANY language; understand it, but ALWAYS write the "
-    "prompt in English.\n"
-    "- TRUE only for clear creation requests: 'draw a…', 'genera una imagen de…', "
-    "'crée une image…', 'make me a picture of…', '画一张…'.\n"
-    "- FALSE for everything else: questions, opinions, 'imagine that…' used "
-    "figuratively, requests to describe/analyze an existing image, or vague "
-    "mentions of pictures. When in doubt, FALSE.\n"
-    "- Do NOT invent a subject the user did not mention."
+    "Decide if the user's message asks to CREATE, DRAW, PAINT or GENERATE a new "
+    "image. If yes, write a short English description of WHAT TO DRAW (the subject "
+    "the user named). Understand any language, but always write the description in "
+    "English. Never copy these instructions into the description.\n\n"
+    "Reply with ONLY this JSON, nothing else:\n"
+    '{"is_image_request": true/false, "prompt": "..."}\n'
+    'If it is not an image-creation request, reply {"is_image_request": false, "prompt": ""}.\n\n'
+    "Examples:\n"
+    "User: dibújame un gato astronauta\n"
+    '{"is_image_request": true, "prompt": "an astronaut cat floating in space, detailed"}\n'
+    "User: genera una imagen de una playa al atardecer\n"
+    '{"is_image_request": true, "prompt": "a beach at sunset, warm colors, calm sea"}\n'
+    "User: 画一只龙\n"
+    '{"is_image_request": true, "prompt": "a Chinese dragon, epic, highly detailed"}\n'
+    "User: ¿qué opinas del arte moderno?\n"
+    '{"is_image_request": false, "prompt": ""}\n'
+    "User: imagina que somos ricos\n"
+    '{"is_image_request": false, "prompt": ""}'
+)
+
+# Phrases that mean the model echoed our instructions instead of writing a real
+# subject — treat such a "prompt" as invalid (not a genuine image request).
+_IMAGE_PROMPT_ECHO_MARKERS = (
+    "image-generation prompt", "image generation prompt", "if false", "if true",
+    "empty string", "what to draw", "the subject the user",
 )
 
 # Native names used when telling the model which language to respond in.
@@ -737,6 +747,12 @@ class Judge:
             prompt = str(result.get("prompt", "")).strip()
             # A request with no usable prompt is treated as "not a request".
             if is_req and not prompt:
+                return {"is_image_request": False, "prompt": ""}
+            # Guard against the small model echoing the instruction template into
+            # the prompt field instead of a real subject.
+            low = prompt.lower()
+            if is_req and any(m in low for m in _IMAGE_PROMPT_ECHO_MARKERS):
+                logger.warning("image classifier echoed template; discarding: %r", prompt[:120])
                 return {"is_image_request": False, "prompt": ""}
             return {"is_image_request": is_req, "prompt": prompt}
         except (json.JSONDecodeError, KeyError, ValueError, TypeError):
