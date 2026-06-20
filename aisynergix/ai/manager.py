@@ -48,7 +48,7 @@ except ValueError:
 _THINKER_SEM = asyncio.Semaphore(_THINKER_CONCURRENCY)
 
 # ── Image generation throttling ──────────────────────────────────────────────
-# One image at a time globally: FLUX on CPU pins every core for minutes, so we
+# One image at a time globally: SDXL on CPU pins every core for minutes, so we
 # never run two at once (and never alongside another — the lock here plus the
 # server-side lock in image-gen/app.py both enforce it).
 _IMAGE_SEM = asyncio.Semaphore(1)
@@ -202,7 +202,7 @@ class AIManager:
     async def classify_image_request(self, message: str) -> Optional[str]:
         """
         If ``message`` is an explicit image-generation request, return the
-        English FLUX prompt extracted by the Judge; otherwise return None so
+        English image prompt extracted by the Judge; otherwise return None so
         the caller falls through to normal chat.
         """
         if not IMAGE_GEN_ENABLED:

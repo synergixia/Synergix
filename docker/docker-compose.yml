@@ -176,7 +176,7 @@ services:
       retries: 3
       start_period: 20s
 
-  # Image generator — FLUX.1-schnell (GGUF) on CPU via stable-diffusion.cpp.
+  # Image generator — Stable Diffusion XL base 1.0 on CPU via stable-diffusion.cpp.
   # Heavy: generation takes minutes on CPU, so the bot queues requests too.
   image-gen:
     build:
@@ -188,15 +188,14 @@ services:
       synergix-net:
         ipv4_address: 172.28.0.12
     volumes:
-      - ../aisynergix/ai/models/flux:/models/flux:ro
+      - ../aisynergix/ai/models/image:/models/image:ro
     environment:
-      FLUX_DIFFUSION_MODEL: ${FLUX_DIFFUSION_MODEL:-/models/flux/flux1-schnell-q4_k.gguf}
-      FLUX_CLIP_L: ${FLUX_CLIP_L:-/models/flux/clip_l.safetensors}
-      FLUX_T5XXL: ${FLUX_T5XXL:-/models/flux/t5xxl_fp16.safetensors}
-      FLUX_VAE: ${FLUX_VAE:-/models/flux/ae.safetensors}
-      IMG_STEPS: ${IMG_STEPS:-4}
-      IMG_WIDTH: ${IMG_WIDTH:-768}
-      IMG_HEIGHT: ${IMG_HEIGHT:-768}
+      SD_MODEL: ${SD_MODEL:-/models/image/sd_xl_base_1.0.safetensors}
+      SD_VAE: ${SD_VAE:-}
+      IMG_STEPS: ${IMG_STEPS:-25}
+      IMG_WIDTH: ${IMG_WIDTH:-1024}
+      IMG_HEIGHT: ${IMG_HEIGHT:-1024}
+      IMG_CFG: ${IMG_CFG:-7.0}
       IMG_THREADS: ${IMG_THREADS:-8}
     ports:
       - "127.0.0.1:8084:8084"
@@ -262,7 +261,7 @@ services:
       # llama.cpp with --parallel 1, so extra requests just queue in asyncio.
       THINKER_MAX_CONCURRENCY: ${THINKER_MAX_CONCURRENCY:-1}
 
-      # ── Image generation (FLUX.1-schnell) ─────────────────────
+      # ── Image generation (Stable Diffusion XL) ────────────────
       IMAGE_GEN_HOST: ${IMAGE_GEN_HOST:-http://image-gen:8084}
       IMAGE_GEN_ENABLED: ${IMAGE_GEN_ENABLED:-true}
       # Anti-abuse: seconds between images per user, and max images per user/day.

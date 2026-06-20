@@ -316,7 +316,7 @@ Synergix/
 | `THINKER_HOST` | `http://thinker:8081` | Thinker LLM endpoint |
 | `JUDGE_HOST` | `http://judge:8080` | Judge LLM endpoint |
 | `THINKER_MAX_CONCURRENCY` | `1` | Concurrent Thinker calls (CPU runs llama.cpp `--parallel 1`) |
-| `IMAGE_GEN_HOST` | `http://image-gen:8084` | FLUX.1-schnell image generator endpoint |
+| `IMAGE_GEN_HOST` | `http://image-gen:8084` | Stable Diffusion XL image generator endpoint |
 | `IMAGE_GEN_ENABLED` | `true` | Master switch for in-chat image generation |
 | `IMAGE_COOLDOWN_SECONDS` | `120` | Min seconds between images per user |
 | `IMAGE_DAILY_LIMIT` | `10` | Max images per user per day |
