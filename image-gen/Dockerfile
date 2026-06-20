@@ -1,11 +1,11 @@
 # Synergix image-gen — stable-diffusion.cpp (CPU) behind a small FastAPI API.
 #
 # Builds the stable_diffusion_cpp Python bindings from source (compiles native
-# code, hence build-essential + cmake). Runs Stable Diffusion XL base 1.0 on CPU.
+# code, hence build-essential + cmake). Runs Stable Diffusion 1.5 on CPU.
 FROM python:3.11-slim-bookworm
 
 LABEL org.opencontainers.image.title="Synergix image-gen"
-LABEL org.opencontainers.image.description="Stable Diffusion XL image generator (stable-diffusion.cpp, CPU)"
+LABEL org.opencontainers.image.description="Stable Diffusion 1.5 image generator (stable-diffusion.cpp, CPU)"
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1

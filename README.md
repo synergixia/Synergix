@@ -316,7 +316,7 @@ Synergix/
 | `THINKER_HOST` | `http://thinker:8081` | Thinker LLM endpoint |
 | `JUDGE_HOST` | `http://judge:8080` | Judge LLM endpoint |
 | `THINKER_MAX_CONCURRENCY` | `1` | Concurrent Thinker calls (CPU runs llama.cpp `--parallel 1`) |
-| `IMAGE_GEN_HOST` | `http://image-gen:8084` | Stable Diffusion XL image generator endpoint |
+| `IMAGE_GEN_HOST` | `http://image-gen:8084` | Stable Diffusion 1.5 image generator endpoint |
 | `IMAGE_GEN_ENABLED` | `true` | Master switch for in-chat image generation |
 | `IMAGE_COOLDOWN_SECONDS` | `120` | Min seconds between images per user |
 | `IMAGE_DAILY_LIMIT` | `10` | Max images per user per day |
@@ -339,8 +339,8 @@ Synergix/
 - GGUF model files placed in `aisynergix/ai/models/`:
   - `qwen2.5-7b-instruct-q4_k_m.gguf` (Thinker)
   - `qwen2.5-1.5b-q8.gguf` (Judge)
-- Stable Diffusion XL checkpoint in `aisynergix/ai/models/image/` (image generation):
-  - `sd_xl_base_1.0.safetensors` — run `./scripts/download_sdxl.sh` to fetch it
+- Stable Diffusion 1.5 checkpoint in `aisynergix/ai/models/image/` (image generation):
+  - `v1-5-pruned-emaonly.safetensors` — run `./scripts/download_sd15.sh` to fetch it
 - A BNB wallet with enough BNB on Irys to cover uploads (`scripts/irys_fund.py`)
 
 ### Steps
@@ -354,8 +354,8 @@ cd Synergix
 cp .env.example .env
 # Fill in: TELEGRAM_TOKEN, PRIVATE_KEY
 
-# 3. Download the SDXL image model (~6.9 GB, ungated)
-./scripts/download_sdxl.sh
+# 3. Download the SD 1.5 image model (~4 GB, ungated)
+./scripts/download_sd15.sh
 
 # 4. Fund the Irys node wallet (one-time setup)
 python scripts/irys_fund.py

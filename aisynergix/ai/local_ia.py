@@ -180,7 +180,8 @@ JUDGE_MAX_TOKENS = 480
 
 # ── Image-request classifier (runs on the Judge / 1.5B) ──────────────────────
 # Detects, in any language, whether a chat message is an explicit request to
-# GENERATE/DRAW an image, and rewrites it into a vivid English prompt for SDXL.
+# GENERATE/DRAW an image, and rewrites it into a vivid English prompt for the
+# image model.
 # Kept strict on purpose: false positives waste minutes of CPU per image.
 IMAGE_CLASSIFIER_MAX_TOKENS = 200
 IMAGE_CLASSIFIER_SYSTEM_PROMPT = (
@@ -694,7 +695,7 @@ class Judge:
     async def classify_image_request(self, message: str) -> Dict[str, Any]:
         """
         Decide whether ``message`` asks to generate an image and, if so, extract
-        an English prompt for SDXL. Returns {"is_image_request": bool, "prompt": str}.
+        an English prompt for the image model. Returns {"is_image_request": bool, "prompt": str}.
         Fails closed (is_image_request=False) on any error so chat keeps working.
         """
         text = (message or "").strip()
