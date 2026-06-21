@@ -1,0 +1,29 @@
+# Synergix image-gen — RunPod Serverless worker (diffusers SDXL, CUDA).
+#
+# Build & push, then create a RunPod Serverless endpoint from this image:
+#   docker build -f Dockerfile.serverless -t <user>/synergix-image-gen-serverless .
+#   docker push <user>/synergix-image-gen-serverless
+FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
+
+LABEL org.opencontainers.image.title="Synergix image-gen (serverless)"
+LABEL org.opencontainers.image.description="Stable Diffusion XL RunPod Serverless worker (diffusers, CUDA)"
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+# Serverless network volumes mount at /runpod-volume — cache SDXL there so it is
+# not re-downloaded on every cold start.
+ENV HF_HOME=/runpod-volume/hf-cache
+
+WORKDIR /
+
+RUN pip install --no-cache-dir \
+        runpod \
+        "diffusers>=0.30" \
+        transformers \
+        accelerate \
+        safetensors \
+        pillow
+
+COPY handler.py /handler.py
+
+CMD ["python", "-u", "/handler.py"]
