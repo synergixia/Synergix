@@ -16,12 +16,19 @@ ENV HF_HOME=/runpod-volume/hf-cache
 
 WORKDIR /
 
+# Pinned, mutually-compatible versions. The latest diffusers/transformers pull in
+# a FlashAttention-3 op whose schema the base image's torch can't register
+# (RuntimeError: infer_schema ... unsupported type torch.Tensor). This known-good
+# stack predates that and works with torch 2.4.x. numpy<2 avoids torch/numpy2 ABI
+# breakage. Keep the base image's torch (built for CUDA 12.4) — do not reinstall it.
 RUN pip install --no-cache-dir \
         runpod \
-        "diffusers>=0.30" \
-        transformers \
-        accelerate \
-        safetensors \
+        "numpy<2" \
+        "diffusers==0.29.2" \
+        "transformers==4.43.4" \
+        "accelerate==0.33.0" \
+        "huggingface_hub==0.24.6" \
+        "safetensors==0.4.4" \
         pillow
 
 COPY handler.py /handler.py
