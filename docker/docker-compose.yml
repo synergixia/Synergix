@@ -176,57 +176,8 @@ services:
       retries: 3
       start_period: 20s
 
-  # Image generator — local CPU fallback (Stable Diffusion 1.5, stable-diffusion.cpp).
-  # Disabled by default: image generation runs on a remote RunPod GPU (set
-  # IMAGE_GEN_HOST to its proxy URL). Start this only with:
-  #   docker compose --profile local-image up -d image-gen
-  image-gen:
-    profiles: ["local-image"]
-    build:
-      context: ../image-gen
-      dockerfile: Dockerfile
-    container_name: synergix-image-gen
-    restart: unless-stopped
-    networks:
-      synergix-net:
-        ipv4_address: 172.28.0.12
-    volumes:
-      - ../aisynergix/ai/models/image:/models/image:ro
-    environment:
-      SD_MODEL: ${SD_MODEL:-/models/image/v1-5-pruned-emaonly.safetensors}
-      SD_VAE: ${SD_VAE:-}
-      # q8_0 runs much faster than the f32 checkpoint on CPU, same quality.
-      SD_WTYPE: ${SD_WTYPE:-q8_0}
-      IMG_STEPS: ${IMG_STEPS:-12}
-      IMG_WIDTH: ${IMG_WIDTH:-512}
-      IMG_HEIGHT: ${IMG_HEIGHT:-512}
-      IMG_CFG: ${IMG_CFG:-7.0}
-      IMG_SAMPLER: ${IMG_SAMPLER:-euler_a}
-      IMG_THREADS: ${IMG_THREADS:-12}
-      # Belt-and-suspenders: keep any stray BLAS/OpenMP pool from oversubscribing
-      # cores alongside ggml's own threads.
-      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-1}
-      OPENBLAS_NUM_THREADS: ${OPENBLAS_NUM_THREADS:-1}
-    ports:
-      - "127.0.0.1:8084:8084"
-    deploy:
-      resources:
-        limits:
-          cpus: "12.0"
-          memory: "8.0G"
-        reservations:
-          cpus: "2.0"
-          memory: "2.0G"
-    security_opt:
-      - no-new-privileges:true
-    read_only: false
-    cap_drop:
-      - ALL
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "3"
+  # Image generation is handled by Fal.ai (managed API) — there is no local
+  # image service. Configure FAL_KEY on the bot below.
 
   bot:
     build:
@@ -244,8 +195,7 @@ services:
         condition: service_started
       irys-uploader:
         condition: service_started
-      # No image-gen dependency: it runs remotely on RunPod (or, locally, via the
-      # `local-image` profile), so the bot must not wait on it.
+      # No image-gen dependency: image generation is handled by Fal.ai (external).
     # ═══════════════════════════════════════════════════════════════
     # VARIABLES DE ENTORNO — SOLO LAS QUE NECESITA CADA COMPONENTE
     # ═══════════════════════════════════════════════════════════════
@@ -271,18 +221,12 @@ services:
       # llama.cpp with --parallel 1, so extra requests just queue in asyncio.
       THINKER_MAX_CONCURRENCY: ${THINKER_MAX_CONCURRENCY:-1}
 
-      # ── Image generation (Stable Diffusion 1.5) ───────────────
-      # Backend: "serverless" (RunPod Serverless) or "http" (pod / local CPU).
-      IMAGE_GEN_MODE: ${IMAGE_GEN_MODE:-serverless}
+      # ── Image generation (Fal.ai) ─────────────────────────────
       IMAGE_GEN_ENABLED: ${IMAGE_GEN_ENABLED:-true}
-      # Concurrent images allowed — match your RunPod endpoint's max workers.
       IMAGE_MAX_CONCURRENCY: ${IMAGE_MAX_CONCURRENCY:-3}
-      # Serverless: endpoint id + your RunPod API key (Bearer).
-      RUNPOD_ENDPOINT_ID: ${RUNPOD_ENDPOINT_ID:-}
-      RUNPOD_API_KEY: ${RUNPOD_API_KEY:-}
-      # http/pod mode only: service URL + optional X-API-Key.
-      IMAGE_GEN_HOST: ${IMAGE_GEN_HOST:-http://image-gen:8084}
-      IMAGE_GEN_API_KEY: ${IMAGE_GEN_API_KEY:-}
+      # Fal.ai API key (https://fal.ai/dashboard/keys) + model id.
+      FAL_KEY: ${FAL_KEY:-}
+      FAL_MODEL: ${FAL_MODEL:-fal-ai/fast-sdxl}
       # Anti-abuse: seconds between images per user, and max images per user/day.
       IMAGE_COOLDOWN_SECONDS: ${IMAGE_COOLDOWN_SECONDS:-120}
       IMAGE_DAILY_LIMIT: ${IMAGE_DAILY_LIMIT:-10}
