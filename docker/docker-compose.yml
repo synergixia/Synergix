@@ -246,7 +246,7 @@ services:
       IMAGE_MAX_CONCURRENCY: ${IMAGE_MAX_CONCURRENCY:-3}
       # Fal.ai API key (https://fal.ai/dashboard/keys) + model id.
       FAL_KEY: ${FAL_KEY:-}
-      FAL_MODEL: ${FAL_MODEL:-fal-ai/fast-sdxl}
+      FAL_MODEL: ${FAL_MODEL:-fal-ai/flux/schnell}
 
       # ── Web search fallback (SearXNG, self-hosted) ────────────
       # Used only when immortal memory has nothing relevant.
