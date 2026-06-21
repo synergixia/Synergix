@@ -176,8 +176,26 @@ services:
       retries: 3
       start_period: 20s
 
-  # Image generation is handled by Fal.ai (managed API) — there is no local
-  # image service. Configure FAL_KEY on the bot below.
+  # Private metasearch engine (SearXNG) — the web-search fallback for the Thinker.
+  # Internal-only; the bot queries its JSON API on the docker network.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: synergix-searxng
+    restart: unless-stopped
+    networks:
+      synergix-net:
+        ipv4_address: 172.28.0.12
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   bot:
     build:
@@ -194,6 +212,8 @@ services:
       judge:
         condition: service_started
       irys-uploader:
+        condition: service_started
+      searxng:
         condition: service_started
       # No image-gen dependency: image generation is handled by Fal.ai (external).
     # ═══════════════════════════════════════════════════════════════
@@ -228,9 +248,13 @@ services:
       FAL_KEY: ${FAL_KEY:-}
       FAL_MODEL: ${FAL_MODEL:-fal-ai/fast-sdxl}
 
-      # ── Web search fallback (DuckDuckGo) ───────────────────────
+      # ── Web search fallback (SearXNG, self-hosted) ────────────
       # Used only when immortal memory has nothing relevant.
       WEB_SEARCH_ENABLED: ${WEB_SEARCH_ENABLED:-true}
+      WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-searxng}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      # Only if WEB_SEARCH_PROVIDER=brave:
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
       # Anti-abuse: seconds between images per user, and max images per user/day.
       IMAGE_COOLDOWN_SECONDS: ${IMAGE_COOLDOWN_SECONDS:-120}
       IMAGE_DAILY_LIMIT: ${IMAGE_DAILY_LIMIT:-10}

@@ -320,9 +320,12 @@ Synergix/
 | `FAL_MODEL` | `fal-ai/fast-sdxl` | Fal model id |
 | `IMAGE_GEN_ENABLED` | `true` | Master switch for in-chat image generation |
 | `IMAGE_MAX_CONCURRENCY` | `1` | Concurrent images allowed |
-| `IMAGE_MAX_CONCURRENCY` | `1` | Concurrent images allowed (match RunPod max workers) |
 | `IMAGE_COOLDOWN_SECONDS` | `120` | Min seconds between images per user |
 | `IMAGE_DAILY_LIMIT` | `10` | Max images per user per day |
+| `WEB_SEARCH_ENABLED` | `true` | Web fallback when immortal memory has no answer |
+| `WEB_SEARCH_PROVIDER` | `searxng` | `searxng` (self-hosted), `brave`, or `duckduckgo` |
+| `SEARXNG_URL` | `http://searxng:8080` | SearXNG endpoint (searxng provider) |
+| `BRAVE_API_KEY` | _(empty)_ | Brave Search API key (brave provider) |
 
 ### Application
 
