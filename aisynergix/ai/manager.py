@@ -409,6 +409,7 @@ class AIManager:
                     context=context,
                     history=history,
                     target_language=target_language,
+                    context_kind="web" if web_used else "memory",
                 ):
                     if kind == "answer":
                         answer_buf += text
