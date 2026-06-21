@@ -13,6 +13,7 @@ from aisynergix.ai.local_ia import (
     get_duplicate_detector,
 )
 from aisynergix.services.image_gen import get_image_generator, IMAGE_GEN_ENABLED
+from aisynergix.services.web_search import get_web_search
 from aisynergix.services.rag_engine import get_rag_engine
 from aisynergix.bot.identity import (
     get_identity_manager,
@@ -193,6 +194,7 @@ class AIManager:
         self._thinker = get_thinker()
         self._judge = get_judge()
         self._image_gen = get_image_generator()
+        self._web = get_web_search()
         self._duplicate_detector = get_duplicate_detector()
         self._rag = None
         self._identity = get_identity_manager()
@@ -371,10 +373,21 @@ class AIManager:
                 self._rag.query(message, target_language),
             )
 
-            # Yield memory count as the very first item so the bot can build
-            # the footer without waiting for the full stream to complete.
+            # Immortal memory first; if it has nothing relevant, fall back to the
+            # web so the Thinker answers from real sources instead of inventing.
+            web_used = False
+            if not context:
+                web_context, _ = await self._web.search_as_context(message)
+                if web_context:
+                    context = web_context
+                    web_used = True
+
+            # Yield the source indicator first so the bot can build the footer
+            # without waiting for the full stream to complete.
             if search_results:
                 yield ("memory_count", str(len(search_results)))
+            elif web_used:
+                yield ("web_used", "1")
 
             answer_buf = ""
             # Buffer the first answer tokens to strip any leading "Name: " prefix

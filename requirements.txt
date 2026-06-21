@@ -32,3 +32,6 @@ web3>=6.0.0,<8.0.0
 
 # ── Requerido por betterproto y compilación ──
 setuptools
+
+# Web search fallback (DuckDuckGo) for the Thinker
+ddgs

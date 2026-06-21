@@ -96,5 +96,6 @@
   "image_failed": "⚠️ Je n'ai pas pu générer l'image cette fois. Réessayez dans un instant.",
   "image_cooldown": "⏳ Veuillez attendre {minutes} min avant de demander une autre image.",
   "image_daily_limit": "🚫 Vous avez atteint la limite de {limit} images pour aujourd'hui. Revenez demain.",
-  "image_disabled": "🖼️ La génération d'images n'est pas disponible pour le moment."
+  "image_disabled": "🖼️ La génération d'images n'est pas disponible pour le moment.",
+  "web_search_used": "🌐 Répondu depuis internet (pas encore de mémoire immortelle là-dessus)"
 }
