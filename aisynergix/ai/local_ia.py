@@ -4,6 +4,7 @@ import json
 import logging
 import hashlib
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List, AsyncGenerator, Tuple
 
 import httpx
@@ -570,6 +571,7 @@ class Thinker:
         history: Optional[List[Dict[str, str]]],
         target_language: str,
         force_language: bool = False,
+        context_kind: str = "memory",
     ) -> List[Dict[str, str]]:
         """Build a proper chat-completions messages array.
 
@@ -596,7 +598,21 @@ class Thinker:
         # fragments — last-instruction bias makes it far more effective
         # there than buried in the system prompt 800 tokens earlier.
         parts: List[str] = []
-        if context:
+        if context and context_kind == "web":
+            # Live web results: the model must TRUST these over its (possibly
+            # outdated) training knowledge, and ground its answer in them.
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            parts.append(
+                f"🌐 RESULTADOS DE BÚSQUEDA WEB EN TIEMPO REAL (fecha de hoy: {today}):\n"
+                f"{context}"
+                "\nINSTRUCCIÓN CRÍTICA: Estos son datos actuales de internet. "
+                "Básate en ELLOS como fuente de verdad para hechos, fechas y "
+                "eventos actuales, POR ENCIMA de tu conocimiento previo (que puede "
+                "estar desactualizado). Resume la información relevante con tu voz. "
+                "Si los resultados no contienen la respuesta, dilo con honestidad "
+                "en vez de inventar."
+            )
+        elif context:
             parts.append(
                 "📜 FRAGMENTOS DE LA COMUNIDAD (pistas, NO respuestas):\n"
                 f"{context}"
@@ -623,9 +639,10 @@ class Thinker:
         history: Optional[List[Dict[str, str]]] = None,
         target_language: str = "es",
         force_language: bool = False,
+        context_kind: str = "memory",
     ) -> str:
         messages = self._build_messages(
-            user_message, context, history, target_language, force_language
+            user_message, context, history, target_language, force_language, context_kind
         )
         response = await self._connector.generate(
             messages=messages,
@@ -642,6 +659,7 @@ class Thinker:
         context: str,
         history: Optional[List[Dict[str, str]]] = None,
         target_language: str = "es",
+        context_kind: str = "memory",
     ) -> AsyncGenerator[Tuple[str, str], None]:
         """Yield ``(kind, text)`` chunks where ``kind`` is ``"think"`` or ``"answer"``.
 
@@ -650,7 +668,9 @@ class Thinker:
         active so that swapping in a reasoning model (Qwen3, DeepSeek-R1,
         etc.) works without code changes.
         """
-        messages = self._build_messages(user_message, context, history, target_language)
+        messages = self._build_messages(
+            user_message, context, history, target_language, context_kind=context_kind
+        )
         stripper = _ThinkStripper()
         async for token in self._connector.stream_generate(
             messages=messages,
