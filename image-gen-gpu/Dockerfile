@@ -16,10 +16,12 @@ ENV HF_HOME=/workspace/hf-cache
 WORKDIR /app
 
 RUN pip install --no-cache-dir \
-        "diffusers>=0.30" \
-        transformers \
-        accelerate \
-        safetensors \
+        "numpy<2" \
+        "diffusers==0.29.2" \
+        "transformers==4.43.4" \
+        "accelerate==0.33.0" \
+        "huggingface_hub==0.24.6" \
+        "safetensors==0.4.4" \
         fastapi \
         "uvicorn[standard]" \
         pillow
