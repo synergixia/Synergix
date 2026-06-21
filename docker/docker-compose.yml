@@ -253,6 +253,9 @@ services:
       WEB_SEARCH_ENABLED: ${WEB_SEARCH_ENABLED:-true}
       WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-searxng}
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      # SearXNG categories to query (general,news covers finance/crypto/sports/tech).
+      SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES:-general,news}
+      WEB_SEARCH_MAX_RESULTS: ${WEB_SEARCH_MAX_RESULTS:-8}
       # Only if WEB_SEARCH_PROVIDER=brave:
       BRAVE_API_KEY: ${BRAVE_API_KEY:-}
       # Anti-abuse: seconds between images per user, and max images per user/day.
