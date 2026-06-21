@@ -96,5 +96,6 @@
   "image_failed": "⚠️ Saya tidak dapat membuat gambar kali ini. Coba lagi sebentar lagi.",
   "image_cooldown": "⏳ Harap tunggu {minutes} menit sebelum meminta gambar lain.",
   "image_daily_limit": "🚫 Anda telah mencapai batas {limit} gambar untuk hari ini. Kembali besok.",
-  "image_disabled": "🖼️ Pembuatan gambar tidak tersedia saat ini."
+  "image_disabled": "🖼️ Pembuatan gambar tidak tersedia saat ini.",
+  "web_search_used": "🌐 Dijawab dari internet (belum ada memori abadi tentang ini)"
 }

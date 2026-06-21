@@ -96,5 +96,6 @@
   "image_failed": "⚠️ 这次未能生成图像，请稍后再试。",
   "image_cooldown": "⏳ 请等待 {minutes} 分钟后再请求新图像。",
   "image_daily_limit": "🚫 你今天已达到 {limit} 张图像的上限，明天再来吧。",
-  "image_disabled": "🖼️ 图像生成功能目前不可用。"
+  "image_disabled": "🖼️ 图像生成功能目前不可用。",
+  "web_search_used": "🌐 来自互联网的回答（尚无相关的永恒记忆）"
 }

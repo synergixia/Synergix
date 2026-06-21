@@ -227,6 +227,10 @@ services:
       # Fal.ai API key (https://fal.ai/dashboard/keys) + model id.
       FAL_KEY: ${FAL_KEY:-}
       FAL_MODEL: ${FAL_MODEL:-fal-ai/fast-sdxl}
+
+      # ── Web search fallback (DuckDuckGo) ───────────────────────
+      # Used only when immortal memory has nothing relevant.
+      WEB_SEARCH_ENABLED: ${WEB_SEARCH_ENABLED:-true}
       # Anti-abuse: seconds between images per user, and max images per user/day.
       IMAGE_COOLDOWN_SECONDS: ${IMAGE_COOLDOWN_SECONDS:-120}
       IMAGE_DAILY_LIMIT: ${IMAGE_DAILY_LIMIT:-10}

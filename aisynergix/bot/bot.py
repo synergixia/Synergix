@@ -1134,6 +1134,7 @@ async def handle_conversation_message(
     think_buf = ""
     saw_answer = False
     memory_count = 0
+    web_used = False
     last_edit = 0.0
     THINK_PREVIEW_CHARS = 800  # Telegram caps messages at 4096; show tail only
     THINK_EDIT_INTERVAL = 1.5  # safe distance from Telegram's edit rate limit
@@ -1153,6 +1154,9 @@ async def handle_conversation_message(
         async for kind, chunk in ai.stream_conversation(uid, ai_text):
             if kind == "memory_count":
                 memory_count = int(chunk)
+                continue
+            if kind == "web_used":
+                web_used = True
                 continue
 
             now = asyncio.get_event_loop().time()
@@ -1243,6 +1247,8 @@ async def handle_conversation_message(
         final_text = f"{clean}\n{sticker_emoji}" if sticker_emoji else clean
         if memory_count > 0:
             final_text += f"\n\n<i>{t('rag_memory_used', lang, count=memory_count)}</i>"
+        elif web_used:
+            final_text += f"\n\n<i>{t('web_search_used', lang)}</i>"
         try:
             await sent_msg.edit_text(final_text, parse_mode="HTML")
         except Exception:
