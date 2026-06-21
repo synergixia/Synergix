@@ -316,12 +316,10 @@ Synergix/
 | `THINKER_HOST` | `http://thinker:8081` | Thinker LLM endpoint |
 | `JUDGE_HOST` | `http://judge:8080` | Judge LLM endpoint |
 | `THINKER_MAX_CONCURRENCY` | `1` | Concurrent Thinker calls (CPU runs llama.cpp `--parallel 1`) |
-| `IMAGE_GEN_MODE` | `fal` | Image backend: `fal`, `serverless` (RunPod), or `http` (pod / CPU) |
-| `FAL_KEY` | _(empty)_ | Fal.ai API key `<id>:<secret>` (fal mode) |
-| `FAL_MODEL` | `fal-ai/fast-sdxl` | Fal model id (fal mode) |
-| `RUNPOD_ENDPOINT_ID` / `RUNPOD_API_KEY` | _(empty)_ | RunPod Serverless creds (serverless mode) |
-| `IMAGE_GEN_HOST` / `IMAGE_GEN_API_KEY` | `http://image-gen:8084` | Service URL + key (http mode) |
+| `FAL_KEY` | _(empty)_ | Fal.ai API key `<id>:<secret>` |
+| `FAL_MODEL` | `fal-ai/fast-sdxl` | Fal model id |
 | `IMAGE_GEN_ENABLED` | `true` | Master switch for in-chat image generation |
+| `IMAGE_MAX_CONCURRENCY` | `1` | Concurrent images allowed |
 | `IMAGE_MAX_CONCURRENCY` | `1` | Concurrent images allowed (match RunPod max workers) |
 | `IMAGE_COOLDOWN_SECONDS` | `120` | Min seconds between images per user |
 | `IMAGE_DAILY_LIMIT` | `10` | Max images per user per day |
@@ -357,7 +355,7 @@ cd Synergix
 
 # 2. Create .env from example
 cp .env.example .env
-# Fill in: TELEGRAM_TOKEN, PRIVATE_KEY, IMAGE_GEN_HOST, IMAGE_GEN_API_KEY
+# Fill in: TELEGRAM_TOKEN, PRIVATE_KEY, FAL_KEY
 
 # 3. Fund the Irys node wallet (one-time setup)
 python scripts/irys_fund.py
@@ -379,7 +377,6 @@ bot calls `https://fal.run/<model>` with your Fal key and downloads the result.
 1. Create a key at <https://fal.ai/dashboard/keys>.
 2. Set it in the host `.env`:
    ```
-   IMAGE_GEN_MODE=fal
    FAL_KEY=<id>:<secret>
    # FAL_MODEL=fal-ai/fast-sdxl   # default; also fal-ai/flux/schnell, fal-ai/flux/dev
    ```
@@ -393,10 +390,6 @@ curl -s https://fal.run/fal-ai/fast-sdxl \
   -d '{"prompt":"a neon dragon over a city"}'
 # -> {"images":[{"url":"https://..."}], ...}
 ```
-
-> **Alternatives:** `IMAGE_GEN_MODE=serverless` (RunPod, `image-gen-gpu/handler.py`)
-> or `IMAGE_GEN_MODE=http` (a RunPod pod, or the local CPU fallback `image-gen/`
-> started with `docker compose --profile local-image up -d image-gen`).
 
 ### Self-Healing on Restart
 
