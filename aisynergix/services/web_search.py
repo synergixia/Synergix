@@ -24,12 +24,15 @@ WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").strip().lower() in 
     "1", "true", "yes", "on",
 )
 WEB_SEARCH_PROVIDER = os.getenv("WEB_SEARCH_PROVIDER", "searxng").strip().lower()
-WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "8"))
 WEB_SEARCH_TIMEOUT = float(os.getenv("WEB_SEARCH_TIMEOUT", "8"))
-WEB_CONTEXT_MAX_CHARS = int(os.getenv("WEB_CONTEXT_MAX_CHARS", "2000"))
+WEB_CONTEXT_MAX_CHARS = int(os.getenv("WEB_CONTEXT_MAX_CHARS", "3500"))
 
 # Provider config
 SEARXNG_URL = os.getenv("SEARXNG_URL", "http://searxng:8080").rstrip("/")
+# Query these SearXNG categories. "news" pulls fresher results for current
+# events (finance, crypto/web3, sports, tech...) that "general" alone misses.
+SEARXNG_CATEGORIES = os.getenv("SEARXNG_CATEGORIES", "general,news")
 BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "").strip()
 
 
@@ -77,7 +80,12 @@ class WebSearch:
         client = await self._get_client()
         resp = await client.get(
             f"{SEARXNG_URL}/search",
-            params={"q": query, "format": "json", "safesearch": 1},
+            params={
+                "q": query,
+                "format": "json",
+                "safesearch": 1,
+                "categories": SEARXNG_CATEGORIES,
+            },
         )
         resp.raise_for_status()
         data = resp.json()
@@ -140,17 +148,35 @@ class WebSearch:
 
         parts: List[str] = []
         total = 0
-        for r in results:
+        for i, r in enumerate(results, 1):
+            title = (r.get("title") or "").strip()
             snippet = (r.get("body") or "").strip()
-            if not snippet:
+            if not title and not snippet:
                 continue
-            entry = f"— {snippet}\n"
+            source = _domain(r.get("url", ""))
+            # Title + snippet + source gives the model far more to ground on
+            # than a bare snippet.
+            head = f"{i}. {title}" if title else f"{i}."
+            entry = f"{head}\n{snippet}"
+            if source:
+                entry += f"\n(fuente: {source})"
+            entry += "\n"
             if total + len(entry) > max_chars:
                 break
             parts.append(entry)
             total += len(entry)
 
         return "\n".join(parts), results
+
+
+def _domain(url: str) -> str:
+    """Extract a bare domain (no scheme/path) for source attribution."""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc
+        return host[4:] if host.startswith("www.") else host
+    except Exception:
+        return ""
 
 
 _web_search: Optional[WebSearch] = None
