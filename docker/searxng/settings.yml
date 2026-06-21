@@ -1,0 +1,30 @@
+# Synergix SearXNG — minimal config. Merges with SearXNG's defaults
+# (use_default_settings: true), only overriding what the bot needs.
+use_default_settings: true
+
+general:
+  instance_name: "Synergix Search"
+  debug: false
+
+server:
+  # Internal-only instance (not exposed to the internet); this key just signs
+  # internal URLs. Change it if you like.
+  secret_key: "synergix-searxng-internal-key"
+  # Disable the bot-protection limiter — the only client is our own bot on the
+  # private docker network, and the limiter would otherwise block its requests.
+  limiter: false
+  image_proxy: false
+  bind_address: "0.0.0.0"
+  port: 8080
+
+search:
+  # REQUIRED: enable the JSON API so the bot can query ?format=json.
+  formats:
+    - html
+    - json
+  safe_search: 1
+  autocomplete: ""
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 10.0
