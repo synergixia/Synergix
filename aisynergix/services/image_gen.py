@@ -20,9 +20,12 @@ logger = logging.getLogger(__name__)
 
 # Fal.ai API key, format "<id>:<secret>" (https://fal.ai/dashboard/keys).
 FAL_KEY = os.getenv("FAL_KEY", "").strip()
-FAL_MODEL = os.getenv("FAL_MODEL", "fal-ai/fast-sdxl").strip().strip("/")
+FAL_MODEL = os.getenv("FAL_MODEL", "fal-ai/flux/schnell").strip().strip("/")
+# FLUX models are guidance-distilled: ~4 steps, no guidance_scale, no negative
+# prompt. SDXL-style models use ~25 steps with guidance + a negative prompt.
+_IS_FLUX = "flux" in FAL_MODEL.lower()
 FAL_IMAGE_SIZE = os.getenv("FAL_IMAGE_SIZE", "square_hd")  # 1024x1024
-FAL_STEPS = int(os.getenv("FAL_STEPS", "25"))
+FAL_STEPS = int(os.getenv("FAL_STEPS", "4" if _IS_FLUX else "25"))
 FAL_GUIDANCE = float(os.getenv("FAL_GUIDANCE", "7.5"))
 FAL_NEGATIVE = os.getenv(
     "FAL_NEGATIVE",
@@ -69,14 +72,15 @@ class ImageGenConnector:
 
         body = {
             "prompt": prompt,
-            "negative_prompt": FAL_NEGATIVE,
             "image_size": FAL_IMAGE_SIZE,
             "num_inference_steps": FAL_STEPS,
-            "guidance_scale": FAL_GUIDANCE,
             "num_images": 1,
             "enable_safety_checker": True,
-            "format": "png",
         }
+        # Only SDXL-style models accept these; FLUX schnell would reject them.
+        if not _IS_FLUX:
+            body["negative_prompt"] = FAL_NEGATIVE
+            body["guidance_scale"] = FAL_GUIDANCE
         if seed is not None:
             body["seed"] = seed
 

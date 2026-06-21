@@ -317,7 +317,7 @@ Synergix/
 | `JUDGE_HOST` | `http://judge:8080` | Judge LLM endpoint |
 | `THINKER_MAX_CONCURRENCY` | `1` | Concurrent Thinker calls (CPU runs llama.cpp `--parallel 1`) |
 | `FAL_KEY` | _(empty)_ | Fal.ai API key `<id>:<secret>` |
-| `FAL_MODEL` | `fal-ai/fast-sdxl` | Fal model id |
+| `FAL_MODEL` | `fal-ai/flux/schnell` | Fal model id |
 | `IMAGE_GEN_ENABLED` | `true` | Master switch for in-chat image generation |
 | `IMAGE_MAX_CONCURRENCY` | `1` | Concurrent images allowed |
 | `IMAGE_COOLDOWN_SECONDS` | `120` | Min seconds between images per user |
