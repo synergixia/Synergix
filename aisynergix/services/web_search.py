@@ -28,12 +28,14 @@ class WebSearch:
         if not WEB_SEARCH_ENABLED or not query.strip():
             return []
         try:
-            return await asyncio.wait_for(
+            results = await asyncio.wait_for(
                 asyncio.to_thread(self._search_sync, query, max_results),
                 timeout=WEB_SEARCH_TIMEOUT,
             )
+            logger.info("web search %r -> %d results", query[:80], len(results))
+            return results
         except Exception as exc:  # noqa: BLE001 — never let search break the chat
-            logger.warning("web search failed: %s", exc)
+            logger.warning("web search failed for %r: %s", query[:80], exc)
             return []
 
     @staticmethod

@@ -377,10 +377,17 @@ class AIManager:
             # web so the Thinker answers from real sources instead of inventing.
             web_used = False
             if not context:
-                web_context, _ = await self._web.search_as_context(message)
+                logger.info("uid=%s: no immortal-memory match — searching the web", uid)
+                web_context, web_results = await self._web.search_as_context(message)
                 if web_context:
                     context = web_context
                     web_used = True
+                    logger.info("uid=%s: web fallback used (%d results)", uid, len(web_results))
+                else:
+                    logger.info("uid=%s: web fallback found nothing — Thinker answers unaided", uid)
+            else:
+                logger.info("uid=%s: answering from immortal memory (%d fragments)",
+                            uid, len(search_results))
 
             # Yield the source indicator first so the bot can build the footer
             # without waiting for the full stream to complete.
