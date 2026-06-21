@@ -340,10 +340,8 @@ async def cmd_start(message: Message) -> None:
     await ghost.reset_state(uid)
 
     keyboard = get_main_keyboard(lang)
-    inline_kb = get_welcome_inline_keyboard(lang)
 
     await message.answer(welcome_text, reply_markup=keyboard)
-    await message.answer("⚡ ¿Qué deseas hacer?", reply_markup=inline_kb)
 
 
 @dp.message(F.text == "🔥 Contribuir")
