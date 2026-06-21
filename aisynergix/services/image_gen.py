@@ -1,16 +1,17 @@
 """
 image_gen.py — client for the Synergix image generator.
 
-Supports two backends behind one interface (the bot/manager don't care which):
+Supports several backends behind one interface (the bot/manager don't care which):
 
-  * "http"       — a FastAPI service (local CPU stable-diffusion.cpp, or a RunPod
-                   pod) exposing GET /health and POST /generate -> PNG bytes,
-                   authenticated with an optional X-API-Key header.
-  * "serverless" — a RunPod Serverless endpoint, called via the RunPod API
-                   (POST /v2/{id}/runsync) with a Bearer API key; the image comes
-                   back base64-encoded inside the job output.
+  * "fal"        — Fal.ai hosted API (default). POST https://fal.run/{model} with
+                   an `Authorization: Key <FAL_KEY>` header; the image comes back
+                   as a URL (or inline data URI) which we download to bytes.
+  * "http"       — a FastAPI service (local CPU stable-diffusion.cpp, or a pod)
+                   exposing GET /health and POST /generate -> PNG bytes.
+  * "serverless" — a RunPod Serverless endpoint (POST /v2/{id}/runsync) returning
+                   the image base64-encoded in the job output.
 
-Select with IMAGE_GEN_MODE (default "http").
+Select with IMAGE_GEN_MODE (default "fal").
 """
 
 import asyncio
@@ -23,7 +24,18 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-IMAGE_GEN_MODE = os.getenv("IMAGE_GEN_MODE", "http").strip().lower()
+IMAGE_GEN_MODE = os.getenv("IMAGE_GEN_MODE", "fal").strip().lower()
+
+# --- fal.ai mode ---
+FAL_KEY = os.getenv("FAL_KEY", "").strip()
+FAL_MODEL = os.getenv("FAL_MODEL", "fal-ai/fast-sdxl").strip().strip("/")
+FAL_IMAGE_SIZE = os.getenv("FAL_IMAGE_SIZE", "square_hd")  # 1024x1024
+FAL_STEPS = int(os.getenv("FAL_STEPS", "25"))
+FAL_GUIDANCE = float(os.getenv("FAL_GUIDANCE", "7.5"))
+FAL_NEGATIVE = os.getenv(
+    "FAL_NEGATIVE",
+    "lowres, blurry, deformed, disfigured, bad anatomy, watermark, text, signature",
+)
 
 # --- http / pod mode ---
 IMAGE_GEN_HOST = os.getenv("IMAGE_GEN_HOST", "http://image-gen:8084")
@@ -51,9 +63,10 @@ class ImageGenConnector:
     def __init__(self, timeout: httpx.Timeout = _TIMEOUT):
         self._timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
-        self._serverless = IMAGE_GEN_MODE == "serverless"
+        self._mode = IMAGE_GEN_MODE
         self._http_base = IMAGE_GEN_HOST.rstrip("/")
         self._rp_base = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}"
+        self._fal_base = f"https://fal.run/{FAL_MODEL}"
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -70,8 +83,12 @@ class ImageGenConnector:
         if not IMAGE_GEN_ENABLED:
             return False
         try:
+            if self._mode == "fal":
+                # Fal is a managed API — no per-endpoint health probe; treat it as
+                # available when a key is configured.
+                return bool(FAL_KEY)
             client = await self._get_client()
-            if self._serverless:
+            if self._mode == "serverless":
                 resp = await client.get(
                     f"{self._rp_base}/health",
                     headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
@@ -91,12 +108,49 @@ class ImageGenConnector:
         if seed is not None:
             payload["seed"] = seed
         try:
-            if self._serverless:
+            if self._mode == "fal":
+                return await self._generate_fal(payload)
+            if self._mode == "serverless":
                 return await self._generate_serverless(payload)
             return await self._generate_http(payload)
         except Exception as exc:
             logger.warning("image generation failed: %s", exc)
             return None
+
+    async def _generate_fal(self, payload: dict) -> Optional[bytes]:
+        client = await self._get_client()
+        body = {
+            "prompt": payload["prompt"],
+            "negative_prompt": FAL_NEGATIVE,
+            "image_size": FAL_IMAGE_SIZE,
+            "num_inference_steps": FAL_STEPS,
+            "guidance_scale": FAL_GUIDANCE,
+            "num_images": 1,
+            "enable_safety_checker": True,
+            "format": "png",
+        }
+        if "seed" in payload:
+            body["seed"] = payload["seed"]
+        resp = await client.post(
+            self._fal_base, json=body, headers={"Authorization": f"Key {FAL_KEY}"}
+        )
+        if resp.status_code != 200:
+            logger.warning("fal %s returned %d: %s", FAL_MODEL, resp.status_code, resp.text[:300])
+            return None
+        data = resp.json()
+        images = data.get("images") or []
+        if not images or not images[0].get("url"):
+            logger.warning("fal returned no image: %s", str(data)[:300])
+            return None
+        url = images[0]["url"]
+        if url.startswith("data:"):
+            return _decode_data_uri(url)
+        # Otherwise it's a hosted URL — download the bytes.
+        img = await client.get(url)
+        if img.status_code != 200:
+            logger.warning("failed to download fal image %s: %d", url, img.status_code)
+            return None
+        return img.content
 
     async def _generate_http(self, payload: dict) -> Optional[bytes]:
         client = await self._get_client()
@@ -141,6 +195,15 @@ class ImageGenConnector:
                            status, str(data.get("error") or data.get("output"))[:300])
             return None
         return _decode_output(data.get("output"))
+
+
+def _decode_data_uri(uri: str) -> Optional[bytes]:
+    """Decode a `data:image/...;base64,<data>` URI to raw bytes."""
+    try:
+        return base64.b64decode(uri.split(",", 1)[1])
+    except Exception as exc:
+        logger.warning("failed to decode fal data URI: %s", exc)
+        return None
 
 
 def _decode_output(output) -> Optional[bytes]:
