@@ -1,5 +1,6 @@
 import hashlib
 import time
+import asyncio
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 
@@ -187,6 +188,17 @@ class UserCache:
 class IdentityManager:
     def __init__(self):
         self._cache = UserCache(max_size=500)
+        # Per-user write locks (keyed by uid_hash) serialize all read-modify-write
+        # sequences on a profile within this process, so the author's own writes
+        # and residual-reward writes can never interleave and clobber each other.
+        self._write_locks: Dict[str, asyncio.Lock] = {}
+
+    def _lock_for(self, uid_hash: str) -> asyncio.Lock:
+        lock = self._write_locks.get(uid_hash)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._write_locks[uid_hash] = lock
+        return lock
 
     def invalidate_cache(self, uid: int) -> None:
         """Drop the cached profile so the next get_profile() re-reads from Irys.
@@ -270,7 +282,36 @@ class IdentityManager:
         self._cache.set(uid, profile)
         return profile
 
+    async def credit_residual(self, uid_hash: str) -> Optional[int]:
+        """Atomically +1 points and +1 total_uses_count for an author on Irys.
+
+        Serialized with the same per-user lock as update_profile, so a concurrent
+        author write cannot clobber the increment. Returns the new uses count, or
+        None on failure.
+        """
+        from aisynergix.services.irys import read_user_tags, write_user_tags
+        import logging
+        _log = logging.getLogger(__name__)
+        async with self._lock_for(uid_hash):
+            try:
+                tags = await read_user_tags(uid_hash)
+                old_uses = int(tags.get("total_uses_count", 0))
+                tags["points"] = str(int(tags.get("points", 0)) + 1)
+                tags["total_uses_count"] = str(old_uses + 1)
+                await write_user_tags(uid_hash, tags)
+                # Author's in-process cache (if any) is now stale — drop it.
+                self.invalidate_cache_by_hash(uid_hash)
+                return old_uses + 1
+            except Exception as exc:
+                _log.warning("credit_residual failed for uid_hash=%s: %s", uid_hash, exc)
+                return None
+
     async def update_profile(self, uid: int, profile: UserProfile) -> None:
+        """Persist the profile to Irys under the per-user write lock."""
+        async with self._lock_for(_hash_uid(uid)):
+            await self._do_update_profile(uid, profile)
+
+    async def _do_update_profile(self, uid: int, profile: UserProfile) -> None:
         """Persist the profile to Irys and refresh the local cache.
 
         Irys write errors are logged but not re-raised — losing a single
