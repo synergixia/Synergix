@@ -311,18 +311,33 @@ class IdentityManager:
         if cached is not None:
             old_profile, _ts = cached
             ref_source = "cache"
-        else:
-            try:
-                ref_tags = await read_user_tags(uid_hash)
-                old_profile = UserProfile.from_tags(uid, ref_tags)
-                ref_source = "irys"
-            except Exception as exc:
-                _log.warning(
-                    "update_profile: cold-cache reference read failed for "
-                    "uid_hash=%s — anti-regression guard cannot run: %s",
-                    uid_hash, exc,
-                )
-                old_profile = None
+
+        # Always read the latest Irys tags. Two uses:
+        #   (a) cold-cache anti-regression reference (when nothing is cached);
+        #   (b) merge counters that an EXTERNAL writer (residual rewards) bumps
+        #       directly on Irys — total_uses_count and points — so this write,
+        #       which may carry a stale cached value, never clobbers them.
+        irys_profile: Optional[UserProfile] = None
+        try:
+            ref_tags = await read_user_tags(uid_hash)
+            irys_profile = UserProfile.from_tags(uid, ref_tags)
+        except Exception as exc:
+            _log.warning(
+                "update_profile: Irys reference read failed for uid_hash=%s — "
+                "merge/guard degraded: %s",
+                uid_hash, exc,
+            )
+
+        if old_profile is None and irys_profile is not None:
+            old_profile = irys_profile
+            ref_source = "irys"
+
+        # total_uses_count is only ever incremented by residual rewards (written
+        # straight to Irys), so the author's profile is never authoritative for
+        # it — take the highest known value. Same for points (never regress).
+        if irys_profile is not None:
+            profile.total_uses_count = max(profile.total_uses_count, irys_profile.total_uses_count)
+            profile.points = max(profile.points, irys_profile.points)
 
         if old_profile is not None:
             regressed_fields = 0
