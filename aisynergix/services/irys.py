@@ -798,6 +798,11 @@ async def compute_top10() -> List[Dict[str, Any]]:
         except (ValueError, TypeError):
             continue
     usuarios.sort(key=lambda u: u["points"], reverse=True)
+    logger.info(
+        "compute_top10: %d profile nodes, %d unique users; top=%s",
+        len(profile_nodes), len(usuarios),
+        {"pts": usuarios[0]["points"], "uses": usuarios[0]["total_uses_count"]} if usuarios else None,
+    )
     return usuarios[:10]
 
 

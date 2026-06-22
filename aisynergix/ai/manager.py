@@ -782,30 +782,49 @@ class AIManager:
         search_results: List[Dict[str, Any]],
     ) -> None:
         rewarded_authors: set = set()
+        logger.info(
+            "residual rewards: evaluating %d search results", len(search_results)
+        )
 
         for result in search_results:
             author_uid_hash = result.get("metadata", {}).get("author_uid", "")
+            score = result.get("score", 0)
 
-            if not author_uid_hash or author_uid_hash in rewarded_authors:
+            if not author_uid_hash:
+                logger.info("residual: result has no author_uid — skipping (score=%.3f)", score)
                 continue
-
-            if result.get("score", 0) < 0.4:
+            if author_uid_hash in rewarded_authors:
+                continue
+            if score < 0.4:
+                logger.info(
+                    "residual: author=%s score %.3f < 0.4 — skipping",
+                    author_uid_hash[:8], score,
+                )
                 continue
 
             try:
                 tags = await read_user_tags(author_uid_hash)
                 if tags:
+                    old_uses = int(tags.get("total_uses_count", 0))
                     tags["points"] = str(int(tags.get("points", 0)) + 1)
-                    tags["total_uses_count"] = str(int(tags.get("total_uses_count", 0)) + 1)
+                    tags["total_uses_count"] = str(old_uses + 1)
                     await write_user_tags(author_uid_hash, tags)
                     rewarded_authors.add(author_uid_hash)
+                    logger.info(
+                        "✅ residual reward: author=%s uses %d→%d (score=%.3f)",
+                        author_uid_hash[:8], old_uses, old_uses + 1, score,
+                    )
                     # Invalidate the IdentityManager cache for this author so
                     # their next get_profile() reads fresh data from Irys.
-                    # We search the cache by uid_hash since we don't have the
-                    # real Telegram UID here.
                     self._identity.invalidate_cache_by_hash(author_uid_hash)
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "residual reward write failed for author=%s: %s",
+                    author_uid_hash[:8], exc,
+                )
                 continue
+
+        logger.info("residual rewards: %d author(s) credited", len(rewarded_authors))
 
     async def health_check(self) -> Dict[str, bool]:
         thinker_ok = await self._thinker.health()
