@@ -5,7 +5,7 @@
   "btn_status": "📊 অবস্থা দেখুন",
   "btn_memory": "🧠 আমার স্মৃতি",
   "btn_language": "🌐 ভাষা",
-  "status_msg": "📊 <b>Synergix সামষ্টিক বুদ্ধিমত্তা</b>\n\n📦 অমর অবদান: {total_aportes}\n🏆 চ্যালেঞ্জ: {tema_actual}\n\n── আপনার প্রভাব, {name} ──\n📈 স্কোর: {points} পয়েন্ট\n🔗 অবদান: {contribuciones}\n🔁 আপনার অবদানের ব্যবহার: {total_uses_count}\n🏅 র‍্যাঙ্ক: {rank} (পরবর্তী স্তরের জন্য {points_next} পয়েন্ট)\n💡 সুবিধা: {beneficio}\n✖️ গুণক: ×{multiplier} | 📅 দৈনিক সীমা: {daily_limit} অবদান",
+  "status_msg": "📊 <b>Synergix সামষ্টিক বুদ্ধিমত্তা</b>\n\n🏆 চ্যালেঞ্জ: {tema_actual}\n\n── আপনার প্রভাব, {name} ──\n📈 স্কোর: {points} পয়েন্ট\n🔗 অবদান: {contribuciones}\n🔁 আপনার অবদানের ব্যবহার: {total_uses_count}\n🏅 র‍্যাঙ্ক: {rank} (পরবর্তী স্তরের জন্য {points_next} পয়েন্ট)\n💡 সুবিধা: {beneficio}\n✖️ গুণক: ×{multiplier} | 📅 দৈনিক সীমা: {daily_limit} অবদান",
   "memory_header": "🧠 <b>আপনার অমর স্মৃতি</b>\n✨ <b>{count}</b> টি জ্ঞান নেটওয়ার্কে অমর হয়েছে\n\n",
   "memory_entry": "🏆 {num}. {date} [{category}] ⭐{quality}/10\n📝 {summary}",
   "memory_footer": "\n📈 স্কোর: <b>{points}</b> pts | অবদান: <b>{total}</b>",

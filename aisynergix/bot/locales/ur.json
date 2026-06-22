@@ -5,7 +5,7 @@
   "btn_status": "📊 حالت دیکھیں",
   "btn_memory": "🧠 میری یادداشت",
   "btn_language": "🌐 زبان",
-  "status_msg": "📊 <b>Synergix اجتماعی ذہانت</b>\n\n📦 لازوال حصے: {total_aportes}\n🏆 چیلنج: {tema_actual}\n\n── آپ کا اثر، {name} ──\n📈 اسکور: {points} پوائنٹس\n🔗 حصے: {contribuciones}\n🔁 آپ کے حصوں کے استعمال: {total_uses_count}\n🏅 رینک: {rank} (اگلے درجے کے لیے {points_next} پوائنٹس)\n💡 فائدہ: {beneficio}\n✖️ ضرب: ×{multiplier} | 📅 روزانہ حد: {daily_limit} حصے",
+  "status_msg": "📊 <b>Synergix اجتماعی ذہانت</b>\n\n🏆 چیلنج: {tema_actual}\n\n── آپ کا اثر، {name} ──\n📈 اسکور: {points} پوائنٹس\n🔗 حصے: {contribuciones}\n🔁 آپ کے حصوں کے استعمال: {total_uses_count}\n🏅 رینک: {rank} (اگلے درجے کے لیے {points_next} پوائنٹس)\n💡 فائدہ: {beneficio}\n✖️ ضرب: ×{multiplier} | 📅 روزانہ حد: {daily_limit} حصے",
   "memory_header": "🧠 <b>آپ کی لافانی یادداشت</b>\n✨ <b>{count}</b> حکمتیں نیٹ ورک پر امر ہو گئیں\n\n",
   "memory_entry": "🏆 {num}. {date} [{category}] ⭐{quality}/10\n📝 {summary}",
   "memory_footer": "\n📈 سکور: <b>{points}</b> pts | شراکتیں: <b>{total}</b>",

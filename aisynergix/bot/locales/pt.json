@@ -5,7 +5,7 @@
   "btn_status": "📊 Ver estado",
   "btn_memory": "🧠 Minha memória",
   "btn_language": "🌐 Idioma",
-  "status_msg": "📊 <b>Synergix Inteligência Coletiva</b>\n\n📦 Contribuições Imortais: {total_aportes}\n🏆 Desafio: {tema_actual}\n\n── Seu Impacto, {name} ──\n📈 Pontuação: {points} pts\n🔗 Contribuições: {contribuciones}\n🔁 Usos das suas contribuições: {total_uses_count}\n🏅 Rank: {rank} ({points_next} pts para o próximo nível)\n💡 Benefício: {beneficio}\n✖️ Multiplicador: ×{multiplier} | 📅 Limite diário: {daily_limit} contribuições",
+  "status_msg": "📊 <b>Synergix Inteligência Coletiva</b>\n\n🏆 Desafio: {tema_actual}\n\n── Seu Impacto, {name} ──\n📈 Pontuação: {points} pts\n🔗 Contribuições: {contribuciones}\n🔁 Usos das suas contribuições: {total_uses_count}\n🏅 Rank: {rank} ({points_next} pts para o próximo nível)\n💡 Benefício: {beneficio}\n✖️ Multiplicador: ×{multiplier} | 📅 Limite diário: {daily_limit} contribuições",
   "memory_header": "🧠 <b>Sua memória imortal</b>\n✨ <b>{count}</b> sabedorias imortalizadas na rede\n\n",
   "memory_entry": "🏆 {num}. {date} [{category}] ⭐{quality}/10\n📝 {summary}",
   "memory_footer": "\n📈 Score: <b>{points}</b> pts | Contribuições: <b>{total}</b>",

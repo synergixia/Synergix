@@ -5,7 +5,7 @@
   "btn_status": "📊 Lihat Status",
   "btn_memory": "🧠 Memori Saya",
   "btn_language": "🌐 Bahasa",
-  "status_msg": "📊 <b>Synergix Kecerdasan Kolektif</b>\n\n📦 Kontribusi Abadi: {total_aportes}\n🏆 Tantangan: {tema_actual}\n\n── Dampak Anda, {name} ──\n📈 Skor: {points} poin\n🔗 Kontribusi: {contribuciones}\n🔁 Penggunaan kontribusi Anda: {total_uses_count}\n🏅 Peringkat: {rank} ({points_next} poin untuk level berikutnya)\n💡 Manfaat: {beneficio}\n✖️ Pengali: ×{multiplier} | 📅 Batas harian: {daily_limit} kontribusi",
+  "status_msg": "📊 <b>Synergix Kecerdasan Kolektif</b>\n\n🏆 Tantangan: {tema_actual}\n\n── Dampak Anda, {name} ──\n📈 Skor: {points} poin\n🔗 Kontribusi: {contribuciones}\n🔁 Penggunaan kontribusi Anda: {total_uses_count}\n🏅 Peringkat: {rank} ({points_next} poin untuk level berikutnya)\n💡 Manfaat: {beneficio}\n✖️ Pengali: ×{multiplier} | 📅 Batas harian: {daily_limit} kontribusi",
   "memory_header": "🧠 <b>Memori Abadi Anda</b>\n✨ <b>{count}</b> kebijaksanaan diabadikan di jaringan\n\n",
   "memory_entry": "🏆 {num}. {date} [{category}] ⭐{quality}/10\n📝 {summary}",
   "memory_footer": "\n📈 Skor: <b>{points}</b> pts | Kontribusi: <b>{total}</b>",

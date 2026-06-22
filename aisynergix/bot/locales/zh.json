@@ -5,7 +5,7 @@
   "btn_status": "📊 查看状态",
   "btn_memory": "🧠 我的记忆",
   "btn_language": "🌐 语言",
-  "status_msg": "📊 <b>Synergix 集体智能</b>\n\n📦 永恒贡献: {total_aportes}\n🏆 挑战: {tema_actual}\n\n── 你的影响力，{name} ──\n📈 积分: {points} 分\n🔗 贡献数: {contribuciones}\n🔁 你的贡献被使用次数: {total_uses_count}\n🏅 等级: {rank}（还需 {points_next} 分升级）\n💡 权益: {beneficio}\n✖️ 倍增器: ×{multiplier} | 📅 每日上限: {daily_limit} 次",
+  "status_msg": "📊 <b>Synergix 集体智能</b>\n\n🏆 挑战: {tema_actual}\n\n── 你的影响力，{name} ──\n📈 积分: {points} 分\n🔗 贡献数: {contribuciones}\n🔁 你的贡献被使用次数: {total_uses_count}\n🏅 等级: {rank}（还需 {points_next} 分升级）\n💡 权益: {beneficio}\n✖️ 倍增器: ×{multiplier} | 📅 每日上限: {daily_limit} 次",
   "memory_header": "🧠 <b>你的不朽记忆</b>\n✨ <b>{count}</b> 条智慧已在网络上永存\n\n",
   "memory_entry": "🏆 {num}. {date} [{category}] ⭐{quality}/10\n📝 {summary}",
   "memory_footer": "\n📈 积分：<b>{points}</b> pts | 贡献次数：<b>{total}</b>",
