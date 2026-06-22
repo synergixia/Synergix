@@ -487,8 +487,7 @@ class AIManager:
         trust_increment = cfg.get("trust_score_increment", 0.1)
 
         if self._duplicate_detector.check_and_add(content):
-            profile.update_trust_score(-trust_decrement)
-            await self._identity.update_profile(uid, profile)
+            await self._identity.apply_deltas(uid, trust_delta=-trust_decrement)
             return {
                 "status": "duplicate",
                 "message_key": "contribution_duplicate",
@@ -498,8 +497,7 @@ class AIManager:
         evaluation = await self._judge.evaluate(content)
 
         if not evaluation["approved"]:
-            profile.update_trust_score(-trust_decrement)
-            await self._identity.update_profile(uid, profile)
+            await self._identity.apply_deltas(uid, trust_delta=-trust_decrement)
             return {
                 "status": "rejected",
                 "message_key": "contribution_rejected",
@@ -527,10 +525,6 @@ class AIManager:
             points_gained += CHALLENGE_BONUS_POINTS
         else:
             challenge = None
-
-        profile.add_points(points_gained)
-        profile.increment_contribution()
-        profile.update_trust_score(trust_increment)
 
         # Persist aporte to Irys: aisynergix/aportes/YYYY-MM/{uid_hash}_{ts}.txt
         ts = int(datetime.now(timezone.utc).timestamp())
@@ -582,8 +576,17 @@ class AIManager:
             category=evaluation.get("category", "filosofia"),
         )
 
-        new_rank = await self._identity.check_and_update_rank(uid, profile)
-        await self._identity.update_profile(uid, profile)
+        # Seal the reward atomically as deltas on the latest Irys value (never an
+        # absolute from a stale snapshot) so points/contributions always persist.
+        old_rank = profile.rank
+        profile = await self._identity.apply_deltas(
+            uid,
+            points=points_gained,
+            contribution=1,
+            daily=1,
+            trust_delta=trust_increment,
+        )
+        new_rank = profile.rank if profile.rank != old_rank else None
 
         return {
             "status": "success",

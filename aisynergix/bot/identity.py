@@ -311,6 +311,72 @@ class IdentityManager:
         async with self._lock_for(_hash_uid(uid)):
             await self._do_update_profile(uid, profile)
 
+    async def apply_deltas(
+        self,
+        uid: int,
+        *,
+        points: int = 0,
+        contribution: int = 0,
+        daily: int = 0,
+        uses: int = 0,
+        trust_delta: float = 0.0,
+        language: Optional[str] = None,
+    ) -> UserProfile:
+        """Atomically apply INCREMENTS to a profile and seal it on Irys.
+
+        The correct way to grow a counter shared by several writers: read the
+        latest known value (max of Irys + our last-written cache, to survive
+        Irys's 5-30 s index lag between rapid writes) and ADD the delta — never
+        write an absolute value computed from a possibly-stale snapshot, which is
+        what made point/uses increments silently fail to seal. Serialized per
+        user with the same lock as update_profile. Returns the updated profile.
+        """
+        from aisynergix.services.irys import read_user_tags, write_user_tags
+        import logging
+        _log = logging.getLogger(__name__)
+        uid_hash = _hash_uid(uid)
+
+        async with self._lock_for(uid_hash):
+            cached = self._cache._cache.get(uid)
+            cprof = cached[0] if cached else None
+            try:
+                tags = await read_user_tags(uid_hash)
+                profile = UserProfile.from_tags(uid, tags)
+            except Exception as exc:
+                # Read failed — fall back to the cached profile as the base so the
+                # increment is never lost. If there's no cache either, abort.
+                _log.error("apply_deltas read failed uid_hash=%s: %s", uid_hash, exc)
+                if cprof is None:
+                    return await self.get_profile(uid)
+                import copy
+                profile = copy.copy(cprof)
+
+            # Base each counter on the highest known value (Irys may lag our own
+            # very recent writes, which live in the cache; the cache may lag a
+            # residual reward written straight to Irys).
+
+            def _base(field: str) -> int:
+                irys_v = getattr(profile, field)
+                return max(irys_v, getattr(cprof, field)) if cprof else irys_v
+
+            profile.points = _base("points") + points
+            profile.contribution_count = _base("contribution_count") + contribution
+            profile.daily_aportes_count = _base("daily_aportes_count") + daily
+            profile.total_uses_count = _base("total_uses_count") + uses
+            if trust_delta:
+                profile.update_trust_score(trust_delta)
+            if language:
+                profile.set_language(language)
+            profile.calculate_rank()
+            profile.last_seen_ts = time.time()
+
+            try:
+                await write_user_tags(uid_hash, profile.to_tags())
+            except Exception as exc:
+                _log.error("apply_deltas write failed uid_hash=%s: %s", uid_hash, exc)
+            self._cache.set(uid, profile)
+            return profile
+
     async def _do_update_profile(self, uid: int, profile: UserProfile) -> None:
         """Persist the profile to Irys and refresh the local cache.
 
@@ -373,12 +439,14 @@ class IdentityManager:
             old_profile = irys_profile
             ref_source = "irys"
 
-        # total_uses_count is only ever incremented by residual rewards (written
-        # straight to Irys), so the author's profile is never authoritative for
-        # it — take the highest known value. Same for points (never regress).
+        # Counters are owned by the increment writers (apply_deltas /
+        # credit_residual). A plain profile write (fsm_state, language, etc.)
+        # must never regress them, so preserve the highest known value.
         if irys_profile is not None:
-            profile.total_uses_count = max(profile.total_uses_count, irys_profile.total_uses_count)
             profile.points = max(profile.points, irys_profile.points)
+            profile.total_uses_count = max(profile.total_uses_count, irys_profile.total_uses_count)
+            profile.contribution_count = max(profile.contribution_count, irys_profile.contribution_count)
+            profile.daily_aportes_count = max(profile.daily_aportes_count, irys_profile.daily_aportes_count)
 
         if old_profile is not None:
             regressed_fields = 0
