@@ -748,40 +748,6 @@ class AIManager:
             "human_verified": profile.human_verified,
         }
 
-    async def get_top10(self) -> List[Dict[str, Any]]:
-        """Leaderboard, overlaying in-process cached profiles over the Irys read.
-
-        compute_top10 reads each user's latest profile from Irys, but Irys
-        GraphQL lags indexing by 5-30 s, so a just-updated user shows stale
-        points there (while 'Ver estado' looks fresh because it merges the
-        in-process cache). Here we overlay the IdentityManager's cached profiles
-        — the freshest known values — so active users rank in real time.
-        """
-        from aisynergix.services.irys import compute_top10
-        base = await compute_top10()
-        by_hash: Dict[str, Dict[str, Any]] = {u["uid"]: dict(u) for u in base}
-
-        for entry in list(self._identity._cache._cache.values()):
-            prof = entry[0]
-            h = getattr(prof, "uid_hash", "")
-            if not h:
-                continue
-            cur = by_hash.get(h)
-            by_hash[h] = {
-                "uid": h,
-                "points": max(prof.points, cur["points"] if cur else 0),
-                "rank": prof.rank,
-                "contribution_count": max(
-                    prof.contribution_count, cur["contribution_count"] if cur else 0
-                ),
-                "total_uses_count": max(
-                    prof.total_uses_count, cur["total_uses_count"] if cur else 0
-                ),
-            }
-
-        merged = sorted(by_hash.values(), key=lambda u: u["points"], reverse=True)
-        return merged[:10]
-
     async def set_language(self, uid: int, lang_code: str) -> Tuple[bool, str]:
         success = await self._identity.set_language(uid, lang_code)
         if success:
