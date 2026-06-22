@@ -760,47 +760,49 @@ def get_top10_cached() -> List[Dict[str, Any]]:
 
 
 async def compute_top10() -> List[Dict[str, Any]]:
-    """Calcula top10 leyendo todos los perfiles desde Irys."""
-    # Run both queries in parallel: profiles + all aportes (needed to backfill
-    # contribution-count for profiles written before the tag was added).
-    profile_nodes, aporte_nodes = await asyncio.gather(
-        _query_all([{"name": "data-type", "value": "user-profile"}], limit=1000),
-        _query_all([{"name": "data-type", "value": "aporte"}], limit=5000),
-    )
+    """Top10 by points, reading each user's authoritative latest profile.
 
-    # Build on-chain aporte count per user (authoritative for all users).
+    Profiles are append-only on Irys: every update creates a new transaction, so
+    a naive ``_query_all(user-profile)`` scan is capped at the most recent N
+    transactions and, as write volume grows, stops covering every user's latest
+    state (the leaderboard "freezes"). Instead we enumerate users from their
+    APORTE transactions (written once each, far fewer) and read each user's
+    latest profile via its pointer — correct regardless of profile-write volume.
+    """
+    aporte_nodes = await _query_all([{"name": "data-type", "value": "aporte"}], limit=5000)
+
     aporte_counts: dict = {}
     for node in aporte_nodes:
         uid = _node_tags(node).get("uid-hash", "")
         if uid:
             aporte_counts[uid] = aporte_counts.get(uid, 0) + 1
 
-    seen: Set[str] = set()
+    uids = list(aporte_counts.keys())
+    # Read each user's latest profile concurrently (pointer-based, authoritative).
+    profiles = await asyncio.gather(
+        *[read_user_tags(uid) for uid in uids], return_exceptions=True
+    )
+
     usuarios: List[Dict[str, Any]] = []
-    for node in profile_nodes:
-        rt = _node_tags(node)
-        uid = rt.get("uid-hash", "")
-        if not uid or uid in seen:
+    for uid, tags in zip(uids, profiles):
+        if not isinstance(tags, dict):
             continue
-        seen.add(uid)
         try:
-            # Use the real on-chain aporte count; fall back to stored tag only if
-            # we somehow missed the aportes query (shouldn't happen in practice).
-            real_count = aporte_counts.get(uid, 0)
-            stored_count = int(rt.get("contribution-count", "0"))
+            stored_count = int(tags.get("contribution_count", "0"))
             usuarios.append({
-                "uid":               uid,
-                "points":            int(rt.get("points", "0")),
-                "rank":              rt.get("rank", "🌱 Iniciado"),
-                "contribution_count": max(real_count, stored_count),
-                "total_uses_count":  int(rt.get("total-uses-count", "0")),
+                "uid":                uid,
+                "points":             int(tags.get("points", "0")),
+                "rank":               tags.get("rank", "🌱 Iniciado"),
+                "contribution_count": max(aporte_counts.get(uid, 0), stored_count),
+                "total_uses_count":   int(tags.get("total_uses_count", "0")),
             })
         except (ValueError, TypeError):
             continue
+
     usuarios.sort(key=lambda u: u["points"], reverse=True)
     logger.info(
-        "compute_top10: %d profile nodes, %d unique users; top=%s",
-        len(profile_nodes), len(usuarios),
+        "compute_top10: %d contributing users; top=%s",
+        len(usuarios),
         {"pts": usuarios[0]["points"], "uses": usuarios[0]["total_uses_count"]} if usuarios else None,
     )
     return usuarios[:10]
