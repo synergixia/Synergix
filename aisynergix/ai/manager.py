@@ -605,42 +605,27 @@ class AIManager:
         }
 
     async def get_user_status(self, uid: int, name: str = "") -> Dict[str, Any]:
-        """Return real-time user status, with Irys as the authoritative source.
+        """Return user status read purely from Irys (the single source of truth).
 
-        Behaviour:
-          1. Snapshot the in-process cache (may have values written this
-             session that Irys has not indexed yet — Irys GraphQL has 5-30s
-             indexing latency).
-          2. Force a fresh read from Irys GraphQL (bypassing the cache).
-          3. Count the user's actual aporte transactions on Irys; this is
-             authoritative for ``contribution_count`` and recovers from
-             any past profile-write failures.
-          4. Reconcile cache + Irys + real-aporte-count using max() so the
-             displayed values never regress.
-          5. Always write the reconciled profile back to Irys.  This is the
-             user-visible "save" — every status check ensures Irys carries
-             the latest values, repairing any past silent write failure.
-             Cost is one ~200-byte upload per status check (negligible).
-          6. Log when a write happens so silent failures become visible.
+        Reads the latest profile straight from Irys (no in-process cache), and
+        backfills contribution_count from the authoritative on-chain aporte count.
+        Never writes — points/uses are persisted by their dedicated writers
+        (process_contribution / credit_residual). Because Irys GraphQL indexing
+        lags ~5-30 s, a just-updated value may take a few seconds to appear here;
+        this is the cost of treating Irys as the sole source of truth.
         """
-        # Step 1: capture cache before invalidation
-        cached_profile = self._identity._cache.get(uid)
-        cached_points = cached_profile.points if cached_profile else 0
-        cached_total_uses = cached_profile.total_uses_count if cached_profile else 0
-        cached_contributions = cached_profile.contribution_count if cached_profile else 0
-        cached_daily_aportes = cached_profile.daily_aportes_count if cached_profile else 0
-
-        # Step 2: force fresh read from Irys
+        # Irys is the single source of truth: read straight from Irys, bypassing
+        # the in-process cache entirely (no cache snapshot, no merge).
         self._identity.invalidate_cache(uid)
         profile = await self._identity.get_profile(uid)
         target_language = profile.language
 
-        # Capture Irys values BEFORE reconciliation so we can detect divergence.
         irys_points = profile.points
         irys_total_uses = profile.total_uses_count
         irys_contributions = profile.contribution_count
 
-        # Step 3: count actual aportes on Irys (authoritative)
+        # contribution_count is backfilled from the authoritative on-chain aporte
+        # count (also Irys) — recovers from any past profile-write gaps.
         try:
             real_aportes = await list_aportes(profile.uid_hash, limit=500)
             real_contribution_count = len(real_aportes) if real_aportes else 0
@@ -650,38 +635,20 @@ class AIManager:
                 profile.uid_hash, exc,
             )
             real_contribution_count = profile.contribution_count
+        profile.contribution_count = max(profile.contribution_count, real_contribution_count)
 
-        # Step 4: reconcile (cache may be ahead, Irys may be ahead, real
-        # aportes always wins for contribution_count)
-        profile.points = max(profile.points, cached_points)
-        profile.total_uses_count = max(profile.total_uses_count, cached_total_uses)
-        profile.contribution_count = max(
-            profile.contribution_count, cached_contributions, real_contribution_count
-        )
-        profile.daily_aportes_count = max(profile.daily_aportes_count, cached_daily_aportes)
-
-        # Step 5: DISPLAY-ONLY reconciliation — do NOT write back here.
-        # Writing the profile on every status check caused heavy write
-        # amplification (the profile was rewritten on each view), which clobbered
-        # the point/uses increments made by process_contribution and
-        # credit_residual, and overflowed the leaderboard's query window.
-        # Points/uses/contributions are persisted by their own writers under the
-        # per-user lock; the leaderboard and this view both backfill
-        # contribution_count from the real on-chain aporte count, so nothing is
-        # lost by not writing here.
-        if (profile.points != irys_points
-                or profile.total_uses_count != irys_total_uses
-                or profile.contribution_count != irys_contributions):
+        # Display-only: never write back (Irys is updated by the dedicated
+        # writers — process_contribution / credit_residual — under the per-user
+        # lock). We also do NOT repopulate the in-process cache here, so this
+        # view stays a pure Irys read.
+        if profile.contribution_count != irys_contributions:
             logger.info(
-                "status reconcile (display-only) uid_hash=%s: "
-                "points irys=%d shown=%d, uses irys=%d shown=%d, contribs irys=%d shown=%d (real=%d)",
-                profile.uid_hash,
-                irys_points, profile.points,
-                irys_total_uses, profile.total_uses_count,
+                "status (Irys-only) uid_hash=%s: points=%d uses=%d "
+                "contribs irys=%d shown=%d (real=%d)",
+                profile.uid_hash, irys_points, irys_total_uses,
                 irys_contributions, profile.contribution_count,
                 real_contribution_count,
             )
-        self._identity._cache.set(uid, profile)
 
         sorted_ranks = sorted(RANK_TABLE.items(), key=lambda x: x[1]["min_points"])
 

@@ -631,10 +631,8 @@ async def handle_top_mentes_button(message: Message) -> None:
     ghost = get_ghost_state_manager()
     await ghost.reset_state(uid)
 
-    # Compute top10 directamente desde los tags de usuarios.  El cache
-    # _top10_cache vive en el proceso de sync_brain — el bot tiene su
-    # propio espacio de memoria y no comparte ese cache.  compute_top10
-    # es read-only (no escribe a Irys), seguro de llamar on-demand.
+    # Irys is the single source of truth: read each user's latest profile
+    # straight from Irys (no in-process cache overlay).
     from aisynergix.services.irys import compute_top10
     top10 = await compute_top10()
 
