@@ -617,11 +617,22 @@ class AIManager:
         lags ~5-30 s, a just-updated value may take a few seconds to appear here;
         this is the cost of treating Irys as the sole source of truth.
         """
-        # Irys is the single source of truth: read straight from Irys, bypassing
-        # the in-process cache entirely (no cache snapshot, no merge).
+        # Read straight from Irys.
         self._identity.invalidate_cache(uid)
         profile = await self._identity.get_profile(uid)
         target_language = profile.language
+
+        # Overlay the write-ledger: the values this process has already SEALED to
+        # Irys but that Irys's GraphQL index may not have surfaced yet (5-30 s
+        # lag). The ledger is not a separate source — every value in it is sealed
+        # in Irys — so this just shows the latest sealed data without the index
+        # delay. max() guarantees we never display less than what Irys returns.
+        led = self._identity._sealed.get(profile.uid_hash) or {}
+        profile.points = max(profile.points, led.get("points", 0))
+        profile.total_uses_count = max(profile.total_uses_count, led.get("total_uses_count", 0))
+        profile.daily_aportes_count = max(
+            profile.daily_aportes_count, led.get("daily_aportes_count", 0)
+        )
 
         irys_points = profile.points
         irys_total_uses = profile.total_uses_count
@@ -638,7 +649,9 @@ class AIManager:
                 profile.uid_hash, exc,
             )
             real_contribution_count = profile.contribution_count
-        profile.contribution_count = max(profile.contribution_count, real_contribution_count)
+        profile.contribution_count = max(
+            profile.contribution_count, real_contribution_count, led.get("contribution_count", 0)
+        )
 
         # Display-only: never write back (Irys is updated by the dedicated
         # writers — process_contribution / credit_residual — under the per-user
@@ -717,6 +730,30 @@ class AIManager:
             "trust_score": profile.trust_score,
             "human_verified": profile.human_verified,
         }
+
+    async def get_top10(self) -> List[Dict[str, Any]]:
+        """Leaderboard from Irys, overlaying the write-ledger (sealed-to-Irys
+        values) so a just-updated user ranks with current data instead of
+        whatever Irys's lagging index returns. The ledger only holds values that
+        are already sealed in Irys, so this stays Irys-backed.
+        """
+        from aisynergix.services.irys import compute_top10
+        base = await compute_top10()
+        by_hash: Dict[str, Dict[str, Any]] = {u["uid"]: dict(u) for u in base}
+
+        for uid_hash, led in list(self._identity._sealed.items()):
+            cur = by_hash.get(uid_hash)
+            if cur is None:
+                continue  # no Irys profile row yet; skip (avoids partial entries)
+            cur["points"] = max(cur.get("points", 0), led.get("points", 0))
+            cur["contribution_count"] = max(
+                cur.get("contribution_count", 0), led.get("contribution_count", 0)
+            )
+            cur["total_uses_count"] = max(
+                cur.get("total_uses_count", 0), led.get("total_uses_count", 0)
+            )
+
+        return sorted(by_hash.values(), key=lambda u: u["points"], reverse=True)[:10]
 
     async def set_language(self, uid: int, lang_code: str) -> Tuple[bool, str]:
         success = await self._identity.set_language(uid, lang_code)

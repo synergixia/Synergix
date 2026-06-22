@@ -631,10 +631,9 @@ async def handle_top_mentes_button(message: Message) -> None:
     ghost = get_ghost_state_manager()
     await ghost.reset_state(uid)
 
-    # Irys is the single source of truth: read each user's latest profile
-    # straight from Irys (no in-process cache overlay).
-    from aisynergix.services.irys import compute_top10
-    top10 = await compute_top10()
+    # Read from Irys, overlaying the sealed-to-Irys write-ledger so just-updated
+    # users rank with current data despite Irys's index lag.
+    top10 = await get_ai_manager().get_top10()
 
     if not top10 or not isinstance(top10, list):
         await message.answer(t("top_mentes_empty", lang))
