@@ -48,6 +48,16 @@ except ValueError:
     _THINKER_CONCURRENCY = 1
 _THINKER_SEM = asyncio.Semaphore(_THINKER_CONCURRENCY)
 
+# Keep strong references to fire-and-forget background tasks (residual rewards)
+# so the event loop can't garbage-collect them mid-flight before they persist.
+_bg_tasks: Set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> None:
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
 # ── Image generation throttling ──────────────────────────────────────────────
 # How many images may generate at once globally. With a remote GPU (RunPod
 # Serverless) this should match the endpoint's max workers so multiple users can
@@ -337,7 +347,7 @@ class AIManager:
 
             # Fire residual rewards in background — Irys writes must not block the response
             if context and search_results:
-                asyncio.create_task(self._process_residual_rewards(search_results))
+                _spawn_bg(self._process_residual_rewards(search_results))
 
             return clean_response, sticker_emoji, search_results
 
@@ -438,7 +448,7 @@ class AIManager:
                 await self._append_conversation_history(uid, "assistant", clean_response)
 
             if context and search_results:
-                asyncio.create_task(self._process_residual_rewards(search_results))
+                _spawn_bg(self._process_residual_rewards(search_results))
 
         except Exception as exc:
             logger.exception("stream_conversation uid=%s: %s", uid, exc)
@@ -802,27 +812,15 @@ class AIManager:
                 )
                 continue
 
-            try:
-                tags = await read_user_tags(author_uid_hash)
-                if tags:
-                    old_uses = int(tags.get("total_uses_count", 0))
-                    tags["points"] = str(int(tags.get("points", 0)) + 1)
-                    tags["total_uses_count"] = str(old_uses + 1)
-                    await write_user_tags(author_uid_hash, tags)
-                    rewarded_authors.add(author_uid_hash)
-                    logger.info(
-                        "✅ residual reward: author=%s uses %d→%d (score=%.3f)",
-                        author_uid_hash[:8], old_uses, old_uses + 1, score,
-                    )
-                    # Invalidate the IdentityManager cache for this author so
-                    # their next get_profile() reads fresh data from Irys.
-                    self._identity.invalidate_cache_by_hash(author_uid_hash)
-            except Exception as exc:
-                logger.warning(
-                    "residual reward write failed for author=%s: %s",
-                    author_uid_hash[:8], exc,
+            # Atomic, lock-serialized increment on Irys (never clobbered by the
+            # author's own concurrent profile writes).
+            new_uses = await self._identity.credit_residual(author_uid_hash)
+            if new_uses is not None:
+                rewarded_authors.add(author_uid_hash)
+                logger.info(
+                    "✅ residual reward: author=%s uses→%d (score=%.3f)",
+                    author_uid_hash[:8], new_uses, score,
                 )
-                continue
 
         logger.info("residual rewards: %d author(s) credited", len(rewarded_authors))
 
