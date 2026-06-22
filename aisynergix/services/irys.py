@@ -190,33 +190,44 @@ def _tag_filter(tags: List[Dict[str, str]]) -> str:
 
 
 async def _query_latest(tags: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
-    """Retorna el nodo más reciente que coincida con los tags dados.
+    """Retorna el nodo MÁS RECIENTE que coincida con los tags dados.
 
-    Pide ``first: 50`` (en lugar de 20) para usuarios con muchas escrituras y
-    ordena localmente por timestamp DESC.  Irys ya devuelve transacciones en
-    orden DESC por bloque por defecto; añadir explícitamente ``sort/order``
-    al GraphQL falla en algunas versiones del schema y deja la query sin
-    ``data`` — cuidado al modificar.
+    Ordena explícitamente con ``order: DESC`` (Irys lo soporta) para no depender
+    de un orden por defecto incierto: con muchas escrituras por usuario (cientos
+    de tx), confiar en el default hacía que el tx más nuevo no entrara en la
+    primera página y se devolviera uno VIEJO.  Si una versión del schema
+    rechazara ``order`` (deja la query sin ``data``), reintenta sin él.  En ambos
+    casos se reordena localmente por ``timestamp`` DESC como garantía final.
     """
-    q = f"""
-    {{
-      transactions(
-        tags: [{_tag_filter(tags)}]{_owner_filter()},
-        first: 50
-      ) {{ edges {{ node {{ id tags {{ name value }} timestamp }} }} }}
-    }}
-    """
-    try:
-        data = await _gql(q)
-        edges = (data.get("data") or {}).get("transactions", {}).get("edges", [])
-        nodes = [e["node"] for e in edges if e.get("node")]
-        if not nodes:
-            return None
-        nodes.sort(key=lambda n: n.get("timestamp", 0), reverse=True)
-        return nodes[0]
-    except Exception as exc:
-        logger.warning("_query_latest falló: %s", exc)
-        return None
+    inner = f"tags: [{_tag_filter(tags)}]{_owner_filter()}, first: 100"
+    for order_clause in (", order: DESC", ""):
+        q = f"""
+        {{
+          transactions({inner}{order_clause}) {{
+            edges {{ node {{ id tags {{ name value }} timestamp }} }}
+          }}
+        }}
+        """
+        try:
+            data = await _gql(q)
+            edges = (data.get("data") or {}).get("transactions", {}).get("edges", [])
+            nodes = [e["node"] for e in edges if e.get("node")]
+            if not nodes:
+                continue
+            if order_clause:
+                # Server-side order: DESC is authoritative — edges[0] is newest.
+                return nodes[0]
+            # Fallback (no explicit order): best-effort local sort by timestamp.
+            def _ts(n):
+                try:
+                    return int(n.get("timestamp") or 0)
+                except (TypeError, ValueError):
+                    return 0
+            nodes.sort(key=_ts, reverse=True)
+            return nodes[0]
+        except Exception as exc:
+            logger.warning("_query_latest (order=%r) falló: %s", order_clause or "default", exc)
+    return None
 
 
 # Irys GraphQL caps `first` at 1000 per page.  Anything larger needs
