@@ -192,6 +192,26 @@ class IdentityManager:
         # sequences on a profile within this process, so the author's own writes
         # and residual-reward writes can never interleave and clobber each other.
         self._write_locks: Dict[str, asyncio.Lock] = {}
+        # Write-ledger (keyed by uid_hash): the counters this process has already
+        # SEALED to Irys. Unlike the display cache, it is NEVER invalidated by
+        # reads, so increments always build on the true latest value even while
+        # Irys's GraphQL index lags (5-30 s). Display still reads pure Irys; this
+        # only guarantees the seal uses current data.
+        self._sealed: Dict[str, Dict[str, int]] = {}
+
+    _SEALED_FIELDS = ("points", "contribution_count", "daily_aportes_count", "total_uses_count")
+
+    def _sealed_base(self, uid_hash: str, profile: "UserProfile", field: str) -> int:
+        """Latest known counter: max of the Irys-read value and our sealed ledger."""
+        irys_v = getattr(profile, field)
+        led = self._sealed.get(uid_hash, {}).get(field)
+        return max(irys_v, led) if led is not None else irys_v
+
+    def _record_sealed(self, uid_hash: str, profile: "UserProfile") -> None:
+        self._sealed[uid_hash] = {f: getattr(profile, f) for f in self._SEALED_FIELDS}
+        if len(self._sealed) > 2000:
+            # Soft cap: drop an arbitrary entry (active users re-populate on write).
+            self._sealed.pop(next(iter(self._sealed)), None)
 
     def _lock_for(self, uid_hash: str) -> asyncio.Lock:
         lock = self._write_locks.get(uid_hash)
@@ -295,13 +315,23 @@ class IdentityManager:
         async with self._lock_for(uid_hash):
             try:
                 tags = await read_user_tags(uid_hash)
-                old_uses = int(tags.get("total_uses_count", 0))
-                tags["points"] = str(int(tags.get("points", 0)) + 1)
-                tags["total_uses_count"] = str(old_uses + 1)
+                # Use the write-ledger as the authoritative base for the counters
+                # this writer touches, so rapid residual credits aren't lost to
+                # Irys index lag.
+                base_points = max(int(tags.get("points", 0)),
+                                  self._sealed.get(uid_hash, {}).get("points", 0))
+                base_uses = max(int(tags.get("total_uses_count", 0)),
+                                self._sealed.get(uid_hash, {}).get("total_uses_count", 0))
+                tags["points"] = str(base_points + 1)
+                tags["total_uses_count"] = str(base_uses + 1)
                 await write_user_tags(uid_hash, tags)
-                # Author's in-process cache (if any) is now stale — drop it.
+                # Update the ledger for the fields we changed.
+                led = self._sealed.setdefault(uid_hash, {})
+                led["points"] = base_points + 1
+                led["total_uses_count"] = base_uses + 1
+                # Author's display cache (if any) is now stale — drop it.
                 self.invalidate_cache_by_hash(uid_hash)
-                return old_uses + 1
+                return base_uses + 1
             except Exception as exc:
                 _log.warning("credit_residual failed for uid_hash=%s: %s", uid_hash, exc)
                 return None
@@ -337,32 +367,27 @@ class IdentityManager:
         uid_hash = _hash_uid(uid)
 
         async with self._lock_for(uid_hash):
-            cached = self._cache._cache.get(uid)
-            cprof = cached[0] if cached else None
             try:
                 tags = await read_user_tags(uid_hash)
                 profile = UserProfile.from_tags(uid, tags)
             except Exception as exc:
-                # Read failed — fall back to the cached profile as the base so the
-                # increment is never lost. If there's no cache either, abort.
                 _log.error("apply_deltas read failed uid_hash=%s: %s", uid_hash, exc)
-                if cprof is None:
-                    return await self.get_profile(uid)
-                import copy
-                profile = copy.copy(cprof)
+                profile = await self.get_profile(uid)
 
-            # Base each counter on the highest known value (Irys may lag our own
-            # very recent writes, which live in the cache; the cache may lag a
-            # residual reward written straight to Irys).
-
-            def _base(field: str) -> int:
-                irys_v = getattr(profile, field)
-                return max(irys_v, getattr(cprof, field)) if cprof else irys_v
-
-            profile.points = _base("points") + points
-            profile.contribution_count = _base("contribution_count") + contribution
-            profile.daily_aportes_count = _base("daily_aportes_count") + daily
-            profile.total_uses_count = _base("total_uses_count") + uses
+            # Build each counter on the latest known value (max of Irys-read and
+            # our write-ledger), then ADD the delta. The ledger survives the
+            # cache invalidations done by status reads / residual rewards, so the
+            # seal always uses current data even under Irys index lag.
+            profile.points = self._sealed_base(uid_hash, profile, "points") + points
+            profile.contribution_count = (
+                self._sealed_base(uid_hash, profile, "contribution_count") + contribution
+            )
+            profile.daily_aportes_count = (
+                self._sealed_base(uid_hash, profile, "daily_aportes_count") + daily
+            )
+            profile.total_uses_count = (
+                self._sealed_base(uid_hash, profile, "total_uses_count") + uses
+            )
             if trust_delta:
                 profile.update_trust_score(trust_delta)
             if language:
@@ -372,6 +397,7 @@ class IdentityManager:
 
             try:
                 await write_user_tags(uid_hash, profile.to_tags())
+                self._record_sealed(uid_hash, profile)
             except Exception as exc:
                 _log.error("apply_deltas write failed uid_hash=%s: %s", uid_hash, exc)
             self._cache.set(uid, profile)
