@@ -702,7 +702,9 @@ class AIManager:
                 else:
                     # Legacy single-language string — strip Spanish preamble
                     desc = re.sub(r'^El reto es:\s*', '', str(desc_raw), flags=re.IGNORECASE).strip()
-                tema_actual = desc
+                # Strip any leftover [[STICKER:X]] token the model emitted into
+                # the challenge description so it doesn't show in the status.
+                tema_actual = _STICKER_RE.sub(' ', desc).strip()
         except Exception:
             pass
 

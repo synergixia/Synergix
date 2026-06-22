@@ -116,6 +116,8 @@ async def _challenge_broadcast_loop() -> None:
                         desc = desc_raw.get(lang, desc_raw.get("es", ""))
                     else:
                         desc = str(desc_raw)
+                    # Strip any leftover [[STICKER:X]] token from the description.
+                    desc = re.sub(r'\s*\[\[STICKER:[^\]]+\]\]\s*', ' ', desc).strip()
                     msg = t("challenge_broadcast", lang, challenge_description=desc)
                     await bot.send_message(uid, msg, parse_mode="HTML")
                     sent += 1
