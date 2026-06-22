@@ -660,35 +660,28 @@ class AIManager:
         )
         profile.daily_aportes_count = max(profile.daily_aportes_count, cached_daily_aportes)
 
-        # Step 5: always persist the reconciled profile to Irys.  The user
-        # asked for real-time Irys updates — every status check is a chance
-        # to repair stale Irys state caused by past silent write failures.
-        irys_drifted = (
-            profile.points > irys_points
-            or profile.total_uses_count > irys_total_uses
-            or profile.contribution_count > irys_contributions
-        )
-        if irys_drifted:
+        # Step 5: DISPLAY-ONLY reconciliation — do NOT write back here.
+        # Writing the profile on every status check caused heavy write
+        # amplification (the profile was rewritten on each view), which clobbered
+        # the point/uses increments made by process_contribution and
+        # credit_residual, and overflowed the leaderboard's query window.
+        # Points/uses/contributions are persisted by their own writers under the
+        # per-user lock; the leaderboard and this view both backfill
+        # contribution_count from the real on-chain aporte count, so nothing is
+        # lost by not writing here.
+        if (profile.points != irys_points
+                or profile.total_uses_count != irys_total_uses
+                or profile.contribution_count != irys_contributions):
             logger.info(
-                "🔄 Reconciling Irys for uid_hash=%s: "
-                "points %d→%d, uses %d→%d, contribs %d→%d (real_aportes=%d)",
+                "status reconcile (display-only) uid_hash=%s: "
+                "points irys=%d shown=%d, uses irys=%d shown=%d, contribs irys=%d shown=%d (real=%d)",
                 profile.uid_hash,
                 irys_points, profile.points,
                 irys_total_uses, profile.total_uses_count,
                 irys_contributions, profile.contribution_count,
                 real_contribution_count,
             )
-            try:
-                await self._identity.update_profile(uid, profile)
-            except Exception as exc:
-                logger.error(
-                    "❌ Failed to reconcile Irys for uid_hash=%s: %s",
-                    profile.uid_hash, exc,
-                )
-        else:
-            # No divergence — refresh the cache with the canonical Irys
-            # profile so subsequent reads stay consistent without writing.
-            self._identity._cache.set(uid, profile)
+        self._identity._cache.set(uid, profile)
 
         sorted_ranks = sorted(RANK_TABLE.items(), key=lambda x: x[1]["min_points"])
 
