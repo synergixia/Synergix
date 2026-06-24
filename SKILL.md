@@ -97,7 +97,7 @@ timestamp). Every DataItem has the tag `App-Name: Synergix`.
 | `aporte`              | `text/plain; charset=utf-8`     | Contribution text + author UID hash + category   |
 | `emergency-lock`      | `application/json`              | Presence = all writes blocked                    |
 | `system-config`       | `application/json`              | Quality thresholds, trust deltas                 |
-| `ai-guard`            | `text/plain; charset=utf-8`     | Anti-jailbreak pattern list                      |
+| `ai-guard`            | `text/plain; charset=utf-8`     | Adversarial prompt filter patterns               |
 | `challenge`           | `application/json`              | Weekly challenge description                     |
 | `brain-pointer`       | `application/json`              | Latest FAISS index version per LLM               |
 | `brain-pointer-global`| `application/json`              | Global FAISS pointer                             |
@@ -259,7 +259,7 @@ Admin IDs configured via `SYNERGIX_ADMIN_IDS` (comma-separated Telegram UIDs).
 |-------------------|--------------------------------------------------------------------|
 | Daily 00:00 UTC   | `reset_all_daily_counts()` — zero daily quota for all users        |
 | Every 10 min      | `rebuild_top10()` — rescan user DataItems, sort by points          |
-| Hourly            | `load_ai_guard()` — reload anti-jailbreak patterns from Irys       |
+| Hourly            | `load_ai_guard()` — reload adversarial prompt filter patterns from Irys    |
 | Startup           | `load_system_config()` — load quality thresholds from Irys         |
 
 ---
@@ -325,9 +325,9 @@ Admin IDs configured via `SYNERGIX_ADMIN_IDS` (comma-separated Telegram UIDs).
 # 1. Clone
 git clone https://github.com/synergixia/Synergix.git && cd Synergix
 
-# 2. Configure environment
-cp .env.example .env
-# Fill in: TELEGRAM_TOKEN, PRIVATE_KEY
+# 2. Configure environment variables
+#    Duplicate the file "env.example" → rename it to ".env"
+#    Then set TELEGRAM_TOKEN and PRIVATE_KEY inside it
 
 # 3. Place GGUF models in aisynergix/ai/models/
 #    qwen3-1.7b.gguf, qwen3-0.6b.gguf, starcoder2-3b.gguf
@@ -349,7 +349,7 @@ docker-compose logs -f irys-uploader
 On startup the bot automatically:
 1. Connects to `irys-uploader`, verifies wallet address and Irys balance
 2. Loads `system-config` DataItem (quality thresholds)
-3. Loads `ai-guard` DataItem (anti-jailbreak patterns)
+3. Loads `ai-guard` DataItem (adversarial prompt filter patterns)
 4. Checks `emergency-lock` presence
 5. Rebuilds FAISS index from all `aporte` DataItems on Irys
 6. Health-checks thinker, judge, and programmer LLMs
