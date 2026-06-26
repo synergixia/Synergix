@@ -205,6 +205,8 @@ try:
 except ValueError:
     _GROUP_COOLDOWN_S = 5
 _group_last_ts: dict = {}
+# Language the bot speaks in groups (the group is multi-user; default English).
+_GROUP_LANG = os.getenv("SYNERGIX_GROUP_LANG", "en").strip() or "en"
 
 # Bot identity, filled in on_startup — needed to detect @mentions and replies.
 BOT_ID: int = 0
@@ -364,38 +366,82 @@ def _strip_trigger(text: str) -> str:
     return re.sub(r'\s+', ' ', text).strip()
 
 
+async def _group_react_sticker(message: Message) -> None:
+    """Reply to a sticker with a sticker: the Thinker picks a reaction emoji and we
+    send a matching sticker from the same pack (else a different one, else echo)."""
+    sticker = message.sticker
+    chosen_file_id = None
+    if sticker.set_name:
+        try:
+            sset = await bot.get_sticker_set(sticker.set_name)
+            others = [s for s in sset.stickers if s.file_id != sticker.file_id]
+            if others:
+                try:
+                    raw = await get_ai_manager().react_emoji(
+                        f"a sticker showing {sticker.emoji or '🙂'}", _GROUP_LANG
+                    )
+                    reaction = _extract_emoji_reply(raw)
+                except Exception:
+                    reaction = ""
+                match = [s for s in others if s.emoji and reaction and s.emoji in reaction]
+                chosen_file_id = (match[0] if match else random.choice(others)).file_id
+        except Exception as exc:
+            logger.warning("group sticker pack fetch failed: %s", exc)
+    try:
+        await message.reply_sticker(chosen_file_id or sticker.file_id)
+    except Exception as exc:
+        logger.warning("group sticker reply failed: %s", exc)
+
+
 # Registered BEFORE the DM handlers so ALL group/supergroup traffic is consumed
 # here — the DM-only menu, commands, FSM and points never see group messages.
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def handle_group_message(message: Message) -> None:
-    if not message.from_user or message.text is None:
+    if not message.from_user:
         return
     if not _group_allowed(message.chat.id):
         return  # group not whitelisted → absolute silence
     if not _is_addressed_to_bot(message):
         return  # no trigger word / not a reply to the bot → absolute silence
 
-    text = _strip_trigger(message.text)
-    if not text:
-        return  # message was only the trigger word, nothing to answer
-
-    # Light anti-spam cooldown per (group, user).
+    # Anti-spam cooldown per (group, user) — applies to all message types.
     key = (message.chat.id, message.from_user.id)
     now = asyncio.get_event_loop().time()
     if _GROUP_COOLDOWN_S and now - _group_last_ts.get(key, 0.0) < _GROUP_COOLDOWN_S:
         return
     _group_last_ts[key] = now
 
+    # 1) Sticker → reply with a sticker.
+    if message.sticker is not None:
+        await _group_react_sticker(message)
+        return
+
+    if message.text is None:
+        return
+    text = _strip_trigger(message.text)
+    if not text:
+        return  # message was only the trigger word, nothing to answer
+
     from aisynergix.services.irys import check_ai_guard
     if check_ai_guard(text):
         return  # jailbreak attempt → silence
 
-    lang = await detect_user_language(message)
     ai = get_ai_manager()
+
+    # 2) Emoji-only → reply with an emoji (the Thinker picks one).
+    if _is_emoji_only(text):
+        try:
+            raw = await ai.react_emoji(f"the emoji {text}", _GROUP_LANG)
+            await message.reply(_extract_emoji_reply(raw), parse_mode=None)
+        except Exception as exc:
+            logger.warning("group emoji reply failed: %s", exc)
+        return
+
+    # 3) Text → text reply in the group language (may include emojis).
     stop_typing = asyncio.Event()
     typing_task = asyncio.create_task(_keep_typing(message.chat.id, stop_typing))
     try:
-        clean, sticker = await ai.process_group_message(text, lang)
+        clean, sticker = await ai.process_group_message(text, _GROUP_LANG)
         if clean:
             out = f"{clean}\n{sticker}" if sticker else clean
             # Plain text (no HTML parse) — group replies are arbitrary model text.
