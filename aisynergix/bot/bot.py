@@ -331,22 +331,34 @@ async def get_user_language(uid: int) -> str:
     return await identity.get_language(uid)
 
 
-# ── Group chat: respond only when explicitly addressed ───────────────────────
+# ── Group chat: respond only when the trigger keyword is present ─────────────
+# Trigger word (default "syn"). Matched as a WHOLE word, case-insensitive, so it
+# fires on "SYN"/"syn"/"Syn" but not on "synergy", "síntoma", etc.
+_GROUP_KEYWORD = os.getenv("SYNERGIX_GROUP_KEYWORD", "syn").strip()
+_GROUP_KEYWORD_RE = (
+    re.compile(rf'(?<!\w){re.escape(_GROUP_KEYWORD)}(?!\w)', re.IGNORECASE)
+    if _GROUP_KEYWORD else None
+)
+
+
 def _group_allowed(chat_id: int) -> bool:
     return (not _GROUP_WHITELIST) or (chat_id in _GROUP_WHITELIST)
 
 
 def _is_addressed_to_bot(message: Message) -> bool:
-    """True if the message @mentions the bot or replies to one of its messages."""
+    """True if the message contains the trigger word (e.g. SYN) or replies to the bot."""
     r = message.reply_to_message
     if r and r.from_user and BOT_ID and r.from_user.id == BOT_ID:
         return True
-    if message.text and BOT_USERNAME and f"@{BOT_USERNAME}".lower() in message.text.lower():
+    if message.text and _GROUP_KEYWORD_RE and _GROUP_KEYWORD_RE.search(message.text):
         return True
     return False
 
 
-def _strip_bot_mention(text: str) -> str:
+def _strip_trigger(text: str) -> str:
+    """Remove the trigger word (and any @mention) so the Thinker gets the real ask."""
+    if _GROUP_KEYWORD_RE:
+        text = _GROUP_KEYWORD_RE.sub(' ', text)
     if BOT_USERNAME:
         text = re.sub(rf'@{re.escape(BOT_USERNAME)}\b', ' ', text, flags=re.IGNORECASE)
     return re.sub(r'\s+', ' ', text).strip()
@@ -361,11 +373,11 @@ async def handle_group_message(message: Message) -> None:
     if not _group_allowed(message.chat.id):
         return  # group not whitelisted → absolute silence
     if not _is_addressed_to_bot(message):
-        return  # not a mention/reply to the bot → absolute silence
+        return  # no trigger word / not a reply to the bot → absolute silence
 
-    text = _strip_bot_mention(message.text)
+    text = _strip_trigger(message.text)
     if not text:
-        return
+        return  # message was only the trigger word, nothing to answer
 
     # Light anti-spam cooldown per (group, user).
     key = (message.chat.id, message.from_user.id)
