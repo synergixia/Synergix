@@ -289,8 +289,9 @@ class AIManager:
         no RAG, no profile, no points.
         """
         prompt = (
-            f"[The user sent {what}. Reply with ONLY 1 or 2 emojis that express a "
-            "natural, empathetic reaction. No words, no text — only emojis.]"
+            f"[The user sent {what}. Reply with ONLY ONE emoji that RESPONDS to it — "
+            "a complementary, DIFFERENT emoji (e.g. 😊→👍, 😂→😄, ❤️→🥰, 🔥→💪). "
+            "Never repeat the same emoji the user sent. No words — only one emoji.]"
         )
         async with _THINKER_SEM:
             response = await self._thinker.think(

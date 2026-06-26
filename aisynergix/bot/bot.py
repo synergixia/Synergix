@@ -366,6 +366,23 @@ def _strip_trigger(text: str) -> str:
     return re.sub(r'\s+', ' ', text).strip()
 
 
+# Curated fallbacks if the model echoes the user's emoji or returns none.
+_REACTION_FALLBACKS = ["👍", "😄", "🔥", "🙌", "✨", "💡", "❤️", "👏", "🤝", "💪"]
+
+
+def _pick_reaction_emoji(raw: str, exclude: str = "") -> str:
+    """Pick ONE emoji that is different from the user's. Prefer the model's choice;
+    fall back to a curated pool. Never returns an emoji present in ``exclude``."""
+    excl = set(_EMOJI_CHAR_RE.findall(exclude or ""))
+    for e in _EMOJI_CHAR_RE.findall(raw or ""):
+        if e not in excl:
+            return e
+    for e in _REACTION_FALLBACKS:
+        if e not in excl:
+            return e
+    return "✨"
+
+
 async def _group_react_sticker(message: Message) -> None:
     """Reply to a sticker with a sticker: the Thinker picks a reaction emoji and we
     send a matching sticker from the same pack (else a different one, else echo)."""
@@ -428,12 +445,11 @@ async def handle_group_message(message: Message) -> None:
 
     ai = get_ai_manager()
 
-    # 2) Emoji-only → reply with a SINGLE emoji (the Thinker picks one).
+    # 2) Emoji-only → reply with a SINGLE, DIFFERENT emoji (never echo the user's).
     if _is_emoji_only(text):
         try:
             raw = await ai.react_emoji(f"the emoji {text}", _GROUP_LANG)
-            single = (_extract_emoji_reply(raw).split() or ["✨"])[0]
-            await message.reply(single, parse_mode=None)
+            await message.reply(_pick_reaction_emoji(raw, exclude=text), parse_mode=None)
         except Exception as exc:
             logger.warning("group emoji reply failed: %s", exc)
         return
