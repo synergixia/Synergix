@@ -191,6 +191,25 @@ _ADMIN_IDS: set = set(
     if x.strip().isdigit()
 )
 
+# ── Group chat config ────────────────────────────────────────────────────────
+# Whitelist of group chat IDs (negative numbers) where the bot may respond.
+# Empty → responds in any group it's added to. Otherwise only these groups.
+_GROUP_WHITELIST: set = set(
+    int(x.strip())
+    for x in os.getenv("SYNERGIX_GROUP_WHITELIST", "").split(",")
+    if x.strip().lstrip("-").isdigit()
+)
+# Light anti-spam: min seconds between bot answers to the same (group, user).
+try:
+    _GROUP_COOLDOWN_S = max(0, int(os.getenv("SYNERGIX_GROUP_COOLDOWN", "5")))
+except ValueError:
+    _GROUP_COOLDOWN_S = 5
+_group_last_ts: dict = {}
+
+# Bot identity, filled in on_startup — needed to detect @mentions and replies.
+BOT_ID: int = 0
+BOT_USERNAME: str = ""
+
 bot = Bot(token=TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
@@ -310,6 +329,74 @@ async def detect_user_language(message: Message) -> str:
 async def get_user_language(uid: int) -> str:
     identity = get_identity_manager()
     return await identity.get_language(uid)
+
+
+# ── Group chat: respond only when explicitly addressed ───────────────────────
+def _group_allowed(chat_id: int) -> bool:
+    return (not _GROUP_WHITELIST) or (chat_id in _GROUP_WHITELIST)
+
+
+def _is_addressed_to_bot(message: Message) -> bool:
+    """True if the message @mentions the bot or replies to one of its messages."""
+    r = message.reply_to_message
+    if r and r.from_user and BOT_ID and r.from_user.id == BOT_ID:
+        return True
+    if message.text and BOT_USERNAME and f"@{BOT_USERNAME}".lower() in message.text.lower():
+        return True
+    return False
+
+
+def _strip_bot_mention(text: str) -> str:
+    if BOT_USERNAME:
+        text = re.sub(rf'@{re.escape(BOT_USERNAME)}\b', ' ', text, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+# Registered BEFORE the DM handlers so ALL group/supergroup traffic is consumed
+# here — the DM-only menu, commands, FSM and points never see group messages.
+@dp.message(F.chat.type.in_({"group", "supergroup"}))
+async def handle_group_message(message: Message) -> None:
+    if not message.from_user or message.text is None:
+        return
+    if not _group_allowed(message.chat.id):
+        return  # group not whitelisted → absolute silence
+    if not _is_addressed_to_bot(message):
+        return  # not a mention/reply to the bot → absolute silence
+
+    text = _strip_bot_mention(message.text)
+    if not text:
+        return
+
+    # Light anti-spam cooldown per (group, user).
+    key = (message.chat.id, message.from_user.id)
+    now = asyncio.get_event_loop().time()
+    if _GROUP_COOLDOWN_S and now - _group_last_ts.get(key, 0.0) < _GROUP_COOLDOWN_S:
+        return
+    _group_last_ts[key] = now
+
+    from aisynergix.services.irys import check_ai_guard
+    if check_ai_guard(text):
+        return  # jailbreak attempt → silence
+
+    lang = await detect_user_language(message)
+    ai = get_ai_manager()
+    stop_typing = asyncio.Event()
+    typing_task = asyncio.create_task(_keep_typing(message.chat.id, stop_typing))
+    try:
+        clean, sticker = await ai.process_group_message(text, lang)
+        if clean:
+            out = f"{clean}\n{sticker}" if sticker else clean
+            # Plain text (no HTML parse) — group replies are arbitrary model text.
+            await message.reply(out, parse_mode=None)
+    except Exception as exc:
+        logger.exception("Error en respuesta de grupo (chat=%s): %s", message.chat.id, exc)
+    finally:
+        stop_typing.set()
+        typing_task.cancel()
+        try:
+            await typing_task
+        except asyncio.CancelledError:
+            pass
 
 
 @dp.message(Command("start"))
@@ -1412,6 +1499,20 @@ async def set_bot_commands():
 
 async def on_startup():
     logger.info("🚀 Iniciando Nodo Fantasma Synergix...")
+
+    # Bot identity for @mention / reply detection in groups.
+    global BOT_ID, BOT_USERNAME
+    try:
+        me = await bot.get_me()
+        BOT_ID = me.id
+        BOT_USERNAME = me.username or ""
+        logger.info("🤖 Identidad del bot: @%s (id=%s)", BOT_USERNAME, BOT_ID)
+        if _GROUP_WHITELIST:
+            logger.info("👥 Grupos autorizados: %s", sorted(_GROUP_WHITELIST))
+        else:
+            logger.info("👥 Sin whitelist de grupos (responde en cualquier grupo)")
+    except Exception as exc:
+        logger.error("No pude obtener la identidad del bot (get_me): %s", exc)
 
     await load_all_locales()
     logger.info(f"🌐 Locales cargados: {list(LOCALES.keys())}")

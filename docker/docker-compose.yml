@@ -248,6 +248,12 @@ services:
       FAL_KEY: ${FAL_KEY:-}
       FAL_MODEL: ${FAL_MODEL:-fal-ai/flux/schnell}
 
+      # ── Group chats ───────────────────────────────────────────
+      # Whitelist of group IDs (negative) where the bot may answer; empty = any.
+      SYNERGIX_GROUP_WHITELIST: ${SYNERGIX_GROUP_WHITELIST:-}
+      # Min seconds between answers to the same (group, user) — anti-spam.
+      SYNERGIX_GROUP_COOLDOWN: ${SYNERGIX_GROUP_COOLDOWN:-5}
+
       # ── Web search fallback (SearXNG, self-hosted) ────────────
       # Used only when immortal memory has nothing relevant.
       WEB_SEARCH_ENABLED: ${WEB_SEARCH_ENABLED:-true}

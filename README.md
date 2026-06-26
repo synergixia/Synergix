@@ -326,6 +326,17 @@ Synergix/
 | `WEB_SEARCH_PROVIDER` | `searxng` | `searxng` (self-hosted), `brave`, or `duckduckgo` |
 | `SEARXNG_URL` | `http://searxng:8080` | SearXNG endpoint (searxng provider) |
 | `BRAVE_API_KEY` | _(empty)_ | Brave Search API key (brave provider) |
+| `SYNERGIX_GROUP_WHITELIST` | _(empty)_ | Group IDs where the bot may answer; empty = any |
+| `SYNERGIX_GROUP_COOLDOWN` | `5` | Min seconds between answers to the same user in a group |
+
+#### Group chats
+
+When added to a group, the bot answers **only** when @mentioned or replied to;
+any other message is ignored (absolute silence). Group replies use the Thinker +
+immortal-memory RAG, but are **stateless** and never touch the points / ranks /
+contributions system — that stays DM-only. Restrict which groups it serves with
+`SYNERGIX_GROUP_WHITELIST`. Keep **Privacy Mode ON** in BotFather so Telegram only
+delivers mentions, replies and commands to the bot.
 
 ### Application
 

@@ -282,6 +282,38 @@ class AIManager:
         finally:
             _image_in_flight.discard(uid)
 
+    async def process_group_message(
+        self, message: str, target_language: str
+    ) -> Tuple[str, Optional[str]]:
+        """Stateless group reply: immortal-memory RAG + web fallback + Thinker.
+
+        Groups never touch the rank/contribution system: no history, no profile
+        reads/writes, no points, and no residual rewards (authors are not
+        credited for RAG hits in groups). Returns (clean_text, sticker_or_None).
+        """
+        await self._ensure_rag()
+        context, _search_results = await self._rag.query(message, target_language)
+
+        web_used = False
+        if not context:
+            web_context, _ = await self._web.search_as_context(message)
+            if web_context:
+                context = web_context
+                web_used = True
+
+        async with _THINKER_SEM:
+            response = await self._thinker.think(
+                user_message=message,
+                context=context,
+                history=None,
+                target_language=target_language,
+                context_kind="web" if web_used else "memory",
+            )
+
+        clean, sticker = _extract_sticker(response)
+        clean = _strip_filler(_strip_name_prefix(clean))
+        return clean, sticker
+
     async def process_conversation(
         self,
         uid: int,
