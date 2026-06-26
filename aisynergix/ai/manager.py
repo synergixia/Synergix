@@ -282,6 +282,23 @@ class AIManager:
         finally:
             _image_in_flight.discard(uid)
 
+    async def react_emoji(self, what: str, target_language: str = "en") -> str:
+        """Ask the Thinker for a 1-2 emoji reaction (group emoji/sticker replies).
+
+        Returns the raw reaction (the caller extracts the emoji chars). Stateless,
+        no RAG, no profile, no points.
+        """
+        prompt = (
+            f"[The user sent {what}. Reply with ONLY 1 or 2 emojis that express a "
+            "natural, empathetic reaction. No words, no text — only emojis.]"
+        )
+        async with _THINKER_SEM:
+            response = await self._thinker.think(
+                user_message=prompt, context="", history=None, target_language=target_language
+            )
+        clean, sticker = _extract_sticker(response)
+        return (sticker or clean or "").strip()
+
     async def process_group_message(
         self, message: str, target_language: str
     ) -> Tuple[str, Optional[str]]:

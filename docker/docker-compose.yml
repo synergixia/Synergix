@@ -251,6 +251,8 @@ services:
       # ── Group chats ───────────────────────────────────────────
       # Trigger word (whole word, case-insensitive) that makes the bot answer.
       SYNERGIX_GROUP_KEYWORD: ${SYNERGIX_GROUP_KEYWORD:-syn}
+      # Language the bot speaks in groups (default English).
+      SYNERGIX_GROUP_LANG: ${SYNERGIX_GROUP_LANG:-en}
       # Whitelist of group IDs (negative) where the bot may answer; empty = any.
       SYNERGIX_GROUP_WHITELIST: ${SYNERGIX_GROUP_WHITELIST:-}
       # Min seconds between answers to the same (group, user) — anti-spam.
