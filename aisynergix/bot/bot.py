@@ -428,11 +428,12 @@ async def handle_group_message(message: Message) -> None:
 
     ai = get_ai_manager()
 
-    # 2) Emoji-only → reply with an emoji (the Thinker picks one).
+    # 2) Emoji-only → reply with a SINGLE emoji (the Thinker picks one).
     if _is_emoji_only(text):
         try:
             raw = await ai.react_emoji(f"the emoji {text}", _GROUP_LANG)
-            await message.reply(_extract_emoji_reply(raw), parse_mode=None)
+            single = (_extract_emoji_reply(raw).split() or ["✨"])[0]
+            await message.reply(single, parse_mode=None)
         except Exception as exc:
             logger.warning("group emoji reply failed: %s", exc)
         return
