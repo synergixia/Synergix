@@ -36,6 +36,8 @@ import {
   t,
   getI18nLang,
 } from './synergix-i18n.js';
+import { mountChat } from './synergix-chat.js';
+import { mountContribute } from './synergix-contribute.js';
 
 /* ── Tiny helpers ───────────────────────────────────────────────── */
 
@@ -559,6 +561,8 @@ async function boot() {
     mountMemoryExplorer(),
     mountTopMinds(),
     mountWalletVerify(),
+    mountChat(),
+    mountContribute(),
   ];
   for (const p of widgets) {
     p.catch((err) => console.warn('Synergix tool widget failed:', err));
