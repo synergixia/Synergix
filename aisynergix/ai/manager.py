@@ -39,6 +39,19 @@ MIN_CONTRIBUTION_LENGTH = 20
 ELITE_THRESHOLD = 9.0
 LEGENDARY_THRESHOLD = 9.5
 
+
+def _synx_for_score(score: float) -> float:
+    """Recompensa SYNX base por la puntuación del Judge (diseño §5.2)."""
+    if score >= 9.5:
+        return 150.0
+    if score >= 8.5:
+        return 60.0
+    if score >= 7.0:
+        return 25.0
+    if score >= 5.0:
+        return 10.0
+    return 0.0
+
 # Cap concurrent thinker calls to match llama.cpp --parallel (1 on CPU).
 # Extras queue here in asyncio — no HTTP connection, no timeout risk.
 # THINKER_MAX_CONCURRENCY overrides the cap; invalid/blank values fall back to 1.
@@ -594,6 +607,29 @@ class AIManager:
         if profile.human_verified and profile.wallet_address:
             aporte_tags["signature"] = profile.wallet_address.lower()
 
+        # ── Contexto de nodo de comunidad ───────────────────────────────────
+        # Si el usuario tiene un nodo activo, el aporte se asocia a ese nodo y
+        # la recompensa SYNX se multiplica por el vacío de conocimiento del nodo
+        # (llenar un nodo con vacíos críticos recompensa ×5 — diseño §4.5/§5.3).
+        node_id = profile.active_node
+        synx_base = _synx_for_score(quality_score)
+        node_multiplier = 1.0
+        if node_id:
+            aporte_tags["node_id"] = node_id
+            aporte_tags["topic"] = evaluation.get("category", "filosofia")
+            try:
+                from aisynergix.nodes.node_manager import get_node
+                from aisynergix.nodes.knowledge_map import node_knowledge_map
+                node = await get_node(node_id)
+                if node and node.topics:
+                    cov = await node_knowledge_map(node_id, node.topics)
+                    node_multiplier = max(
+                        (info["multiplier"] for info in cov.values()), default=1.0
+                    )
+            except Exception as exc:
+                logger.warning("nodo %s: no se pudo calcular multiplicador: %s", node_id, exc)
+        synx_award = round(synx_base * node_multiplier, 2)
+
         try:
             object_path = await write_aporte(
                 uid_ofuscado=profile.uid_hash,
@@ -634,6 +670,7 @@ class AIManager:
             points=points_gained,
             contribution=1,
             daily=1,
+            synx=synx_award,
             trust_delta=trust_increment,
         )
         new_rank = profile.rank if profile.rank != old_rank else None
@@ -650,6 +687,10 @@ class AIManager:
             "quality_score": quality_score,
             "points_gained": points_gained,
             "new_total_points": profile.points,
+            "synx_gained": synx_award,
+            "synx_multiplier": node_multiplier,
+            "synx_balance": profile.synx_balance,
+            "node_id": node_id,
             "tier": tier,
             "rank": profile.rank,
             "new_rank": new_rank,
@@ -683,6 +724,7 @@ class AIManager:
         profile.daily_aportes_count = max(
             profile.daily_aportes_count, led.get("daily_aportes_count", 0)
         )
+        profile.synx_balance = max(profile.synx_balance, led.get("synx_balance", 0.0))
 
         irys_points = profile.points
         irys_total_uses = profile.total_uses_count
@@ -781,6 +823,8 @@ class AIManager:
             "tema_actual": tema_actual,
             "trust_score": profile.trust_score,
             "human_verified": profile.human_verified,
+            "synx_balance": profile.synx_balance,
+            "active_node": profile.active_node,
         }
 
     async def get_top10(self) -> List[Dict[str, Any]]:

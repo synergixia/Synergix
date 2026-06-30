@@ -512,6 +512,9 @@ _PROFILE_TAG_MAP: Dict[str, str] = {
     "last_seen_ts":        "last-seen-ts",
     "fsm_state":           "fsm-state",
     "wallet_address":      "wallet-address",
+    # Economía SYNX (saldo contable en Irys) + nodo activo del usuario.
+    "synx_balance":        "synx-balance",
+    "active_node":         "active-node",
 }
 _PROFILE_TAG_RMAP: Dict[str, str] = {v: k for k, v in _PROFILE_TAG_MAP.items()}
 
@@ -1041,6 +1044,190 @@ async def upload_log(date_str: str, log_content: str) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# NODOS DE COMUNIDAD
+#
+# Un nodo es una comunidad temática/geográfica con su propio grafo de
+# conocimiento dentro de Synergix.  Se modela con dos DataItems inmutables:
+#
+#   data-type=node         → registro del nodo (id, nombre, tipo, idioma,
+#                            temas, creador).  Mutable por patrón "última
+#                            versión gana" (mismo node-id, nuevo timestamp).
+#   data-type=node-member  → membresía (node-id, uid-hash, rol, estado).
+#                            Última versión por (node-id, uid-hash) gana, así
+#                            "unirse"/"salir" se expresan re-escribiendo el rol.
+#
+# Los aportes hechos dentro de un nodo llevan además el tag `node-id` y
+# `topic`, lo que permite calcular la cobertura de conocimiento del nodo.
+# ═══════════════════════════════════════════════════════════════════════
+
+def _dedupe_latest(nodes: List[Dict[str, Any]], key_tag: str) -> List[Dict[str, str]]:
+    """Devuelve los tags de la versión más reciente por cada valor de ``key_tag``.
+
+    ``nodes`` ya viene ordenado DESC por timestamp (cortesía de _query_all),
+    así que la primera aparición de cada clave es la vigente.
+    """
+    seen: Set[str] = set()
+    out: List[Dict[str, str]] = []
+    for node in nodes:
+        tags = _node_tags(node)
+        key = tags.get(key_tag, "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(tags)
+    return out
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_node(
+    node_id: str,
+    name: str,
+    node_type: str,
+    creator_hash: str,
+    language: str,
+    topics: List[str],
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Sube (o re-versiona) el registro de un nodo a Irys. Retorna el txId."""
+    body = {
+        "node_id": node_id,
+        "name": name,
+        "node_type": node_type,
+        "creator": creator_hash,
+        "language": language,
+        "topics": topics,
+        "created_at": int(datetime.now(timezone.utc).timestamp()),
+        **(extra or {}),
+    }
+    tags = [
+        {"name": "data-type",    "value": "node"},
+        {"name": "node-id",      "value": node_id},
+        {"name": "node-name",    "value": name[:120]},
+        {"name": "node-type",    "value": node_type},
+        {"name": "creator",      "value": creator_hash},
+        {"name": "language",     "value": language},
+        {"name": "topics",       "value": ",".join(topics)[:300]},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    content = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    tx_id = await _upload(content, tags)
+    logger.info("🏘️ Nodo %s guardado en Irys. Ver dato: %s", node_id, _gw(tx_id))
+    return tx_id
+
+
+async def get_node_record(node_id: str) -> Optional[Dict[str, str]]:
+    """Lee el registro vigente de un nodo por su id. None si no existe."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "node"},
+            {"name": "node-id",   "value": node_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("get_node_record %s falló: %s", node_id, exc)
+    return None
+
+
+async def list_node_records(limit: int = 200) -> List[Dict[str, str]]:
+    """Lista todos los nodos (versión vigente de cada uno), más nuevos primero."""
+    try:
+        nodes = await _query_all([{"name": "data-type", "value": "node"}], limit=limit)
+        return _dedupe_latest(nodes, "node-id")
+    except Exception as exc:
+        logger.warning("list_node_records falló: %s", exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_node_member(
+    node_id: str, uid_ofuscado: str, role: str = "member", status: str = "active"
+) -> str:
+    """Escribe una membresía (o la re-versiona para salir/cambiar rol)."""
+    tags = [
+        {"name": "data-type",    "value": "node-member"},
+        {"name": "node-id",      "value": node_id},
+        {"name": "uid-hash",     "value": uid_ofuscado},
+        {"name": "role",         "value": role},
+        {"name": "member-status", "value": status},
+        {"name": "joined-at",    "value": str(int(datetime.now(timezone.utc).timestamp()))},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("👥 Membresía %s@%s (%s/%s) en Irys.", uid_ofuscado, node_id, role, status)
+    return tx_id
+
+
+async def get_node_member(node_id: str, uid_ofuscado: str) -> Optional[Dict[str, str]]:
+    """Lee la membresía vigente de un usuario en un nodo (o None)."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "node-member"},
+            {"name": "node-id",   "value": node_id},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("get_node_member %s@%s falló: %s", uid_ofuscado, node_id, exc)
+    return None
+
+
+async def list_node_members(node_id: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Miembros activos de un nodo (última membresía por usuario con estado active)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "node-member"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        latest = _dedupe_latest(nodes, "uid-hash")
+        return [m for m in latest if m.get("member-status", "active") == "active"]
+    except Exception as exc:
+        logger.warning("list_node_members %s falló: %s", node_id, exc)
+        return []
+
+
+async def list_user_memberships(uid_ofuscado: str, limit: int = 500) -> List[Dict[str, str]]:
+    """Nodos a los que pertenece un usuario (membresías activas, última por nodo)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "node-member"},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ], limit=limit)
+        latest = _dedupe_latest(nodes, "node-id")
+        return [m for m in latest if m.get("member-status", "active") == "active"]
+    except Exception as exc:
+        logger.warning("list_user_memberships %s falló: %s", uid_ofuscado, exc)
+        return []
+
+
+async def list_node_aportes(node_id: str, limit: int = 2000) -> List[Dict[str, str]]:
+    """Lista los aportes asociados a un nodo (tags de cada aporte)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "aporte"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_node_aportes %s falló: %s", node_id, exc)
+        return []
+
+
+async def count_node_aportes(node_id: str) -> int:
+    """Número de aportes asociados a un nodo."""
+    return len(await list_node_aportes(node_id))
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # DIAGNÓSTICO / BALANCE
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1163,6 +1350,16 @@ __all__ = [
     "write_aporte",
     "read_aporte",
     "list_aportes",
+    # Nodos de comunidad
+    "write_node",
+    "get_node_record",
+    "list_node_records",
+    "write_node_member",
+    "get_node_member",
+    "list_node_members",
+    "list_user_memberships",
+    "list_node_aportes",
+    "count_node_aportes",
     # Leaderboard
     "rebuild_top10",
     "compute_top10",

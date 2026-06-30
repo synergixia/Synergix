@@ -46,6 +46,8 @@ from aisynergix.services.wallet_verify import (
 from aisynergix.services import dexscreener as dex_svc
 from aisynergix.services import four_meme as fourmeme_svc
 from aisynergix.services.irys import IRYS_GATEWAY_URL
+from aisynergix.nodes import node_manager as nodes_svc
+from aisynergix.nodes import knowledge_map as kmap_svc
 
 
 logger = logging.getLogger("synergix.bot")
@@ -762,6 +764,7 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
         status_text += "\n" + t(
             "status_trust_score", lang, trust_score=f"{status.get('trust_score', 5.0):.1f}"
         )
+        status_text += "\n" + t("status_synx", lang, synx=f"{status.get('synx_balance', 0):.0f}")
         if status.get("human_verified"):
             status_text += "\n" + t("status_verified", lang)
         await callback.message.edit_text(status_text)
@@ -999,6 +1002,267 @@ async def handle_trade_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# COMMUNITY NODES
+# ══════════════════════════════════════════════════════════════════════════
+
+def _topic_label(key: str, lang: str) -> str:
+    icon = nodes_svc.TOPICS.get(key, "🏷️")
+    return f"{icon} {t('topic_' + key, lang)}"
+
+
+def _node_type_label(key: str, lang: str) -> str:
+    icon = nodes_svc.NODE_TYPES.get(key, "🌐")
+    return f"{icon} {t('node_type_' + key, lang)}"
+
+
+def get_nodes_menu_kb(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t("btn_node_create", lang), callback_data="node:create")],
+        [
+            InlineKeyboardButton(text=t("btn_node_explore", lang), callback_data="node:explore"),
+            InlineKeyboardButton(text=t("btn_node_mine", lang), callback_data="node:mine"),
+        ],
+    ])
+
+
+def get_node_type_kb(lang: str) -> InlineKeyboardMarkup:
+    rows, row = [], []
+    for key in nodes_svc.NODE_TYPES:
+        row.append(InlineKeyboardButton(text=_node_type_label(key, lang), callback_data=f"node:type:{key}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_node_topics_kb(lang: str, selected: list) -> InlineKeyboardMarkup:
+    rows, row = [], []
+    for key in nodes_svc.TOPICS:
+        mark = "✅ " if key in selected else ""
+        row.append(InlineKeyboardButton(text=mark + _topic_label(key, lang), callback_data=f"node:topic:{key}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text=t("btn_node_create_confirm", lang), callback_data="node:topics_done")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_node_view_kb(lang: str, node_id: str, member: bool) -> InlineKeyboardMarkup:
+    rows = []
+    if member:
+        rows.append([
+            InlineKeyboardButton(text=t("btn_node_use", lang), callback_data=f"node:use:{node_id}"),
+            InlineKeyboardButton(text=t("btn_node_leave", lang), callback_data=f"node:leave:{node_id}"),
+        ])
+    else:
+        rows.append([InlineKeyboardButton(text=t("btn_node_join", lang), callback_data=f"node:join:{node_id}")])
+    rows.append([InlineKeyboardButton(text=t("btn_node_back", lang), callback_data="node:explore")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _render_node_view(node, lang: str) -> str:
+    type_label = _node_type_label(node.node_type, lang)
+    lang_label = get_lang_name(node.language)
+    if node.topics:
+        topics_str = ", ".join(_topic_label(k, lang) for k in node.topics)
+        cov = await kmap_svc.node_knowledge_map(node.node_id, node.topics)
+        map_str = kmap_svc.render_map(cov, lambda k: _topic_label(k, lang))
+    else:
+        topics_str = t("node_view_no_topics", lang)
+        map_str = "—"
+    return t(
+        "node_view", lang,
+        icon=node.icon, name=html.escape(node.name), type=type_label,
+        language=lang_label, members=node.member_count, aportes=node.aporte_count,
+        topics=topics_str, map=map_str,
+    )
+
+
+async def _begin_node_creation(uid: int) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    await ghost.enter_node_name_mode(uid)
+    await cache.set_state_data(uid, {"step": "name", "topics": []})
+
+
+@dp.message(Command("nodos"))
+async def cmd_nodes(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+    await message.answer(t("nodes_menu_title", lang), reply_markup=get_nodes_menu_kb(lang))
+
+
+@dp.message(Command("crear_nodo"))
+async def cmd_create_node(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await _begin_node_creation(uid)
+    await message.answer(t("node_create_ask_name", lang))
+
+
+async def handle_node_name_message(message: Message, uid: int, text: str, lang: str) -> None:
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    # Past the name step the flow is inline-only; nudge the user to the buttons.
+    if draft.get("step") and draft["step"] != "name":
+        await message.answer(t("node_use_buttons", lang))
+        return
+    name = text.strip()
+    if not (nodes_svc.MIN_NODE_NAME_LEN <= len(name) <= nodes_svc.MAX_NODE_NAME_LEN):
+        await message.answer(t("node_name_too_short", lang))
+        return
+    draft.update({"name": name, "step": "type", "topics": draft.get("topics", [])})
+    await cache.set_state_data(uid, draft)
+    await message.answer(
+        t("node_create_ask_type", lang, name=html.escape(name)),
+        reply_markup=get_node_type_kb(lang),
+    )
+
+
+@dp.callback_query(F.data.startswith("node:"))
+async def handle_node_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    cache = get_l1_cache()
+    ghost = get_ghost_state_manager()
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    arg = parts[2] if len(parts) > 2 else ""
+
+    if action == "menu":
+        await callback.message.edit_text(t("nodes_menu_title", lang), reply_markup=get_nodes_menu_kb(lang))
+
+    elif action == "create":
+        await _begin_node_creation(uid)
+        await callback.message.edit_text(t("node_create_ask_name", lang))
+
+    elif action == "explore":
+        node_list = await nodes_svc.list_nodes(limit=10)
+        if not node_list:
+            await callback.message.edit_text(t("node_explore_empty", lang), reply_markup=get_nodes_menu_kb(lang))
+        else:
+            rows = [[InlineKeyboardButton(text=f"{n.icon} {n.name}", callback_data=f"node:view:{n.node_id}")]
+                    for n in node_list]
+            rows.append([InlineKeyboardButton(text=t("btn_node_back", lang), callback_data="node:menu")])
+            await callback.message.edit_text(t("node_explore_header", lang), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+    elif action == "mine":
+        my_nodes = await nodes_svc.list_user_nodes(uid)
+        if not my_nodes:
+            await callback.message.edit_text(t("node_mine_empty", lang), reply_markup=get_nodes_menu_kb(lang))
+        else:
+            rows = [[InlineKeyboardButton(text=f"{n.icon} {n.name}", callback_data=f"node:view:{n.node_id}")]
+                    for n in my_nodes]
+            rows.append([InlineKeyboardButton(text=t("btn_node_back", lang), callback_data="node:menu")])
+            await callback.message.edit_text(t("node_mine_header", lang), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+    elif action == "view":
+        node = await nodes_svc.get_node(arg)
+        if not node:
+            await callback.message.edit_text(t("node_not_found", lang), reply_markup=get_nodes_menu_kb(lang))
+        else:
+            member = await nodes_svc.is_member(arg, uid)
+            await callback.message.edit_text(
+                await _render_node_view(node, lang),
+                reply_markup=get_node_view_kb(lang, arg, member),
+            )
+
+    elif action == "type":
+        draft = await cache.get_state_data(uid) or {}
+        if not draft.get("name"):
+            await callback.answer(); return
+        draft.update({"node_type": arg, "step": "topics", "topics": draft.get("topics", [])})
+        await cache.set_state_data(uid, draft)
+        sel = draft["topics"]
+        selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
+        await callback.message.edit_text(
+            t("node_create_ask_topics", lang, selected=selected),
+            reply_markup=get_node_topics_kb(lang, sel),
+        )
+
+    elif action == "topic":
+        draft = await cache.get_state_data(uid) or {}
+        sel = list(draft.get("topics", []))
+        if arg in sel:
+            sel.remove(arg)
+        elif len(sel) < nodes_svc.MAX_TOPICS_PER_NODE:
+            sel.append(arg)
+        draft["topics"] = sel
+        await cache.set_state_data(uid, draft)
+        selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
+        try:
+            await callback.message.edit_text(
+                t("node_create_ask_topics", lang, selected=selected),
+                reply_markup=get_node_topics_kb(lang, sel),
+            )
+        except Exception:
+            pass
+
+    elif action == "topics_done":
+        draft = await cache.get_state_data(uid) or {}
+        name = draft.get("name", "")
+        if not name:
+            await callback.message.edit_text(t("node_create_ask_name", lang))
+            await _begin_node_creation(uid)
+            await callback.answer(); return
+        node = await nodes_svc.create_node(
+            uid, name, draft.get("node_type", "global"), lang, draft.get("topics", []),
+        )
+        await ghost.reset_state(uid)
+        if not node:
+            await callback.message.edit_text(t("node_name_too_short", lang))
+        else:
+            await callback.message.edit_text(
+                t("node_created", lang, icon=node.icon, name=html.escape(node.name),
+                  node_id=node.node_id, bonus=int(nodes_svc.FOUNDER_BONUS_SYNX)),
+            )
+            await callback.message.answer(
+                await _render_node_view(node, lang),
+                reply_markup=get_node_view_kb(lang, node.node_id, True),
+            )
+
+    elif action == "join":
+        node = await nodes_svc.get_node(arg)
+        if not node:
+            await callback.message.edit_text(t("node_not_found", lang), reply_markup=get_nodes_menu_kb(lang))
+        elif await nodes_svc.is_member(arg, uid):
+            await callback.answer(t("node_already_member", lang, name=node.name))
+            return
+        else:
+            await nodes_svc.join_node(uid, arg)
+            await callback.message.edit_text(
+                t("node_joined", lang, name=html.escape(node.name)),
+                reply_markup=get_node_view_kb(lang, arg, True),
+            )
+
+    elif action == "leave":
+        node = await nodes_svc.get_node(arg)
+        await nodes_svc.leave_node(uid, arg)
+        name = html.escape(node.name) if node else arg
+        await callback.message.edit_text(t("node_left", lang, name=name), reply_markup=get_nodes_menu_kb(lang))
+
+    elif action == "use":
+        node = await nodes_svc.get_node(arg)
+        if node:
+            await nodes_svc.set_active_node(uid, arg)
+            await callback.answer(t("node_set_active", lang, name=node.name))
+            return
+
+    await callback.answer()
+
+
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message) -> None:
     if not message.from_user:
@@ -1050,7 +1314,7 @@ async def handle_sticker_message(message: Message) -> None:
     current_state = await ghost.get_state(uid)
     if current_state in (
         "awaiting_contribution", "awaiting_buy_amount", "awaiting_sell_amount",
-        "awaiting_wallet_address", "awaiting_wallet_signature",
+        "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
     ):
         return
 
@@ -1117,6 +1381,10 @@ async def handle_free_conversation(message: Message) -> None:
         await handle_wallet_signature_message(message, uid, text, lang)
         return
 
+    if current_state == "awaiting_node_name":
+        await handle_node_name_message(message, uid, text, lang)
+        return
+
     await handle_conversation_message(message, uid, text, lang)
 
 
@@ -1165,6 +1433,19 @@ async def handle_contribution_message(
                 new_total_points=result.get("new_total_points", 0),
                 rank=_t_rank(result.get("rank", "🌱 Iniciado"), lang),
             )
+
+            synx_gained = result.get("synx_gained", 0)
+            if synx_gained:
+                mult = result.get("synx_multiplier", 1.0)
+                if mult and mult > 1.0:
+                    response_text += "\n" + t(
+                        "contribution_synx", lang,
+                        synx=f"{synx_gained:.0f}", multiplier=f"{mult:.0f}",
+                    )
+                else:
+                    response_text += "\n" + t(
+                        "contribution_synx_plain", lang, synx=f"{synx_gained:.0f}"
+                    )
 
             keyboard = get_main_keyboard(lang)
             await message.answer(response_text, reply_markup=keyboard)
@@ -1568,6 +1849,8 @@ async def handle_wallet_signature_message(
 async def set_bot_commands():
     commands = [
         BotCommand(command="start", description="🔥 Iniciar / Despertar a Synergix"),
+        BotCommand(command="nodos", description="🏘️ Nodos de comunidad"),
+        BotCommand(command="crear_nodo", description="➕ Crear un nodo de comunidad"),
     ]
     await bot.set_my_commands(commands)
 
