@@ -51,6 +51,10 @@ class UserProfile:
     wallet_address: Optional[str] = None
     human_verified: bool = False
     trust_score: float = 5.0
+    # Economía SYNX: saldo contable (no on-chain todavía) registrado en Irys.
+    synx_balance: float = 0.0
+    # Nodo de comunidad activo: los aportes se asocian a este nodo.
+    active_node: Optional[str] = None
 
     def __post_init__(self):
         self.uid_hash = _hash_uid(self.uid)
@@ -99,6 +103,8 @@ class UserProfile:
             wallet_address=tags.get("wallet_address") or None,
             human_verified=tags.get("human_verified", "false").lower() == "true",
             trust_score=float(tags.get("trust_score", "5.0")),
+            synx_balance=float(tags.get("synx_balance", "0") or 0),
+            active_node=tags.get("active_node") or None,
         )
 
         if profile.rank not in RANK_TABLE:
@@ -121,6 +127,9 @@ class UserProfile:
             base["wallet_address"] = self.wallet_address.lower()
         base["trust_score"] = f"{self.trust_score:.2f}"
         base["human_verified"] = "true" if self.human_verified else "false"
+        base["synx_balance"] = f"{self.synx_balance:.2f}"
+        if self.active_node:
+            base["active_node"] = self.active_node
         return base
 
     def update_trust_score(self, delta: float) -> None:
@@ -199,7 +208,10 @@ class IdentityManager:
         # only guarantees the seal uses current data.
         self._sealed: Dict[str, Dict[str, int]] = {}
 
-    _SEALED_FIELDS = ("points", "contribution_count", "daily_aportes_count", "total_uses_count")
+    _SEALED_FIELDS = (
+        "points", "contribution_count", "daily_aportes_count",
+        "total_uses_count", "synx_balance",
+    )
 
     def _sealed_base(self, uid_hash: str, profile: "UserProfile", field: str) -> int:
         """Latest known counter: max of the Irys-read value and our sealed ledger."""
@@ -349,8 +361,10 @@ class IdentityManager:
         contribution: int = 0,
         daily: int = 0,
         uses: int = 0,
+        synx: float = 0.0,
         trust_delta: float = 0.0,
         language: Optional[str] = None,
+        active_node: Optional[str] = None,
     ) -> UserProfile:
         """Atomically apply INCREMENTS to a profile and seal it on Irys.
 
@@ -388,10 +402,15 @@ class IdentityManager:
             profile.total_uses_count = (
                 self._sealed_base(uid_hash, profile, "total_uses_count") + uses
             )
+            profile.synx_balance = (
+                self._sealed_base(uid_hash, profile, "synx_balance") + synx
+            )
             if trust_delta:
                 profile.update_trust_score(trust_delta)
             if language:
                 profile.set_language(language)
+            if active_node is not None:
+                profile.active_node = active_node or None
             profile.calculate_rank()
             profile.last_seen_ts = time.time()
 
@@ -473,6 +492,9 @@ class IdentityManager:
             profile.total_uses_count = max(profile.total_uses_count, irys_profile.total_uses_count)
             profile.contribution_count = max(profile.contribution_count, irys_profile.contribution_count)
             profile.daily_aportes_count = max(profile.daily_aportes_count, irys_profile.daily_aportes_count)
+            # SYNX lo poseen los acreditadores (apply_deltas); una escritura de
+            # perfil normal (idioma, fsm_state…) nunca debe reducirlo.
+            profile.synx_balance = max(profile.synx_balance, irys_profile.synx_balance)
 
         if old_profile is not None:
             regressed_fields = 0

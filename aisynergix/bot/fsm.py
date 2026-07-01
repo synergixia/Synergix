@@ -14,6 +14,8 @@ class SynergixStates(StatesGroup):
     # Wallet verification (2-step EIP-4361 flow)
     awaiting_wallet_address = State()
     awaiting_wallet_signature = State()
+    # Community node creation
+    awaiting_node_name = State()
 
 
 class L1StateCache:
@@ -144,6 +146,9 @@ class GhostStateManager:
 
     async def enter_wallet_signature_mode(self, uid: int) -> None:
         await self.set_state(uid, "awaiting_wallet_signature")
+
+    async def enter_node_name_mode(self, uid: int) -> None:
+        await self.set_state(uid, "awaiting_node_name")
 
 
 _ghost_state_manager: Optional[GhostStateManager] = None

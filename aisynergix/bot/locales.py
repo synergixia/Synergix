@@ -119,15 +119,20 @@ def _get_fallback_locale() -> Dict[str, Any]:
 
 
 def t(key: str, lang: str, **kwargs) -> str:
-    locale = LOCALES.get(lang, LOCALES.get("es", {}))
-    text = locale.get(key, key)
-    
+    locale = LOCALES.get(lang, {})
+    # Fallback en cadena: idioma del usuario → español (locale por defecto) →
+    # la propia clave.  Así una clave aún no traducida a los 8 idiomas
+    # secundarios se muestra en español en vez de como texto crudo.
+    text = locale.get(key)
+    if text is None:
+        text = LOCALES.get("es", {}).get(key, key)
+
     if kwargs:
         try:
             text = text.format(**kwargs)
         except (KeyError, ValueError):
             pass
-    
+
     return text
 
 
