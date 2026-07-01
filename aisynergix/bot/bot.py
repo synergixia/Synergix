@@ -48,6 +48,7 @@ from aisynergix.services import four_meme as fourmeme_svc
 from aisynergix.services.irys import IRYS_GATEWAY_URL
 from aisynergix.nodes import node_manager as nodes_svc
 from aisynergix.nodes import knowledge_map as kmap_svc
+from aisynergix.services import wallet as wallet_svc
 
 
 logger = logging.getLogger("synergix.bot")
@@ -86,6 +87,24 @@ _known_uids: set = set()
 
 # ID of the last challenge that was broadcast to users — avoids re-sending on restart.
 _last_broadcast_challenge_id: Optional[str] = None
+
+# Strong refs to fire-and-forget tasks (custodial wallet creation) so the
+# event loop can't garbage-collect them mid-flight.
+_bot_bg_tasks: set = set()
+
+
+def _spawn_bot_bg(coro) -> None:
+    task = asyncio.create_task(coro)
+    _bot_bg_tasks.add(task)
+    task.add_done_callback(_bot_bg_tasks.discard)
+
+
+async def _ensure_wallet_silent(uid: int) -> None:
+    """Crea la wallet custodial en segundo plano (§3.3: invisible para el usuario)."""
+    try:
+        await wallet_svc.ensure_custodial_wallet(uid)
+    except Exception as exc:
+        logger.warning("ensure_custodial_wallet uid=%s falló: %s", uid, exc)
 
 
 async def _challenge_broadcast_loop() -> None:
@@ -505,6 +524,11 @@ async def cmd_start(message: Message) -> None:
 
     await ghost.reset_state(uid)
 
+    # Wallet custodial silenciosa (§3.2): se crea en segundo plano para no
+    # retrasar la bienvenida (scrypt + upload a Irys tardan ~1-2 s).
+    if wallet_svc.wallet_enabled():
+        _spawn_bot_bg(_ensure_wallet_silent(uid))
+
     keyboard = get_main_keyboard(lang)
 
     await message.answer(welcome_text, reply_markup=keyboard)
@@ -865,6 +889,13 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
             await callback.message.edit_text(t("verify_intro", lang), reply_markup=inline_kb)
     elif action == "balance":
         existing = await get_verified_wallet(uid_hash)
+        is_custodial = False
+        if not existing:
+            # Sin wallet propia verificada → mostrar la custodial (creada
+            # silenciosamente en /start) si existe.
+            profile = await get_identity_manager().get_profile(uid)
+            existing = profile.custodial_address
+            is_custodial = bool(existing)
         if not existing:
             await callback.message.edit_text(t("balance_no_wallet", lang))
         else:
@@ -878,16 +909,17 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
             else:
                 price_usd = market["price_usd"] if market else 0.0
                 usd_value = syn_bal * price_usd
-                await callback.message.edit_text(
-                    t(
-                        "balance_info",
-                        lang,
-                        address=existing,
-                        syn=syn_bal,
-                        usd=usd_value,
-                        bnb=bnb_bal,
-                    )
+                balance_text = t(
+                    "balance_info",
+                    lang,
+                    address=existing,
+                    syn=syn_bal,
+                    usd=usd_value,
+                    bnb=bnb_bal,
                 )
+                if is_custodial:
+                    balance_text += "\n\n" + t("balance_custodial_note", lang)
+                await callback.message.edit_text(balance_text)
     elif action == "progress":
         progress = await fourmeme_svc.get_curve_progress(trading_svc.SYNERGIX_TOKEN)
         if progress is None:

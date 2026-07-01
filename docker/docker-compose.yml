@@ -222,6 +222,8 @@ services:
     environment:
       # ── Wallet / Irys ─────────────────────────────────────────
       PRIVATE_KEY: ${PRIVATE_KEY:?err}
+      # Clave maestra de las wallets custodiales (vacía = función apagada).
+      SYNERGIX_WALLET_MASTER_KEY: ${SYNERGIX_WALLET_MASTER_KEY:-}
       IRYS_NODE_URL: ${IRYS_NODE_URL:-https://uploader.irys.xyz}
       IRYS_GATEWAY_URL: ${IRYS_GATEWAY_URL:-https://gateway.irys.xyz}
       IRYS_TOKEN: ${IRYS_TOKEN:-bnb}

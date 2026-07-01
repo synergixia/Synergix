@@ -55,6 +55,10 @@ class UserProfile:
     synx_balance: float = 0.0
     # Nodo de comunidad activo: los aportes se asocian a este nodo.
     active_node: Optional[str] = None
+    # Wallet BSC custodial generada silenciosamente por el bot (§3.2).  No
+    # confundir con wallet_address: esa es la wallet PROPIA del usuario,
+    # verificada por firma.
+    custodial_address: Optional[str] = None
 
     def __post_init__(self):
         self.uid_hash = _hash_uid(self.uid)
@@ -105,6 +109,7 @@ class UserProfile:
             trust_score=float(tags.get("trust_score", "5.0")),
             synx_balance=float(tags.get("synx_balance", "0") or 0),
             active_node=tags.get("active_node") or None,
+            custodial_address=tags.get("custodial_address") or None,
         )
 
         if profile.rank not in RANK_TABLE:
@@ -130,6 +135,8 @@ class UserProfile:
         base["synx_balance"] = f"{self.synx_balance:.2f}"
         if self.active_node:
             base["active_node"] = self.active_node
+        if self.custodial_address:
+            base["custodial_address"] = self.custodial_address
         return base
 
     def update_trust_score(self, delta: float) -> None:
@@ -495,6 +502,10 @@ class IdentityManager:
             # SYNX lo poseen los acreditadores (apply_deltas); una escritura de
             # perfil normal (idioma, fsm_state…) nunca debe reducirlo.
             profile.synx_balance = max(profile.synx_balance, irys_profile.synx_balance)
+            # La referencia a la wallet custodial se escribe una sola vez; un
+            # perfil stale sin el campo no debe borrarla del siguiente sellado.
+            if not profile.custodial_address and irys_profile.custodial_address:
+                profile.custodial_address = irys_profile.custodial_address
 
         if old_profile is not None:
             regressed_fields = 0
