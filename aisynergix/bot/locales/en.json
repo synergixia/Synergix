@@ -139,5 +139,6 @@
   "status_synx": "💎 SYNX: {synx}",
   "status_active_node": "🏘️ Active node: {node}",
   "contribution_synx": "💎 +{synx} SYNX (×{multiplier} knowledge-gap bonus)",
-  "contribution_synx_plain": "💎 +{synx} SYNX"
+  "contribution_synx_plain": "💎 +{synx} SYNX",
+  "balance_custodial_note": "🔐 This is your Synergix wallet, created automatically for you. Nothing to set up: your rewards live here. Whenever you want, verify your own wallet from the 💰 Synergix menu."
 }

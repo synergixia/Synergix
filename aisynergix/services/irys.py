@@ -515,6 +515,9 @@ _PROFILE_TAG_MAP: Dict[str, str] = {
     # Economía SYNX (saldo contable en Irys) + nodo activo del usuario.
     "synx_balance":        "synx-balance",
     "active_node":         "active-node",
+    # Wallet custodial generada por el bot (distinta de wallet-address, que
+    # es la wallet propia del usuario verificada por firma).
+    "custodial_address":   "custodial-address",
 }
 _PROFILE_TAG_RMAP: Dict[str, str] = {v: k for k, v in _PROFILE_TAG_MAP.items()}
 
@@ -1044,6 +1047,56 @@ async def upload_log(date_str: str, log_content: str) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# WALLET CUSTODIAL — keystore V3 cifrado
+#
+# El keystore se cifra en services/wallet.py ANTES de llegar aquí (Irys es
+# público y permanente: jamás debe subirse una clave en claro).  El patrón
+# es el habitual: última versión por uid-hash gana.
+# ═══════════════════════════════════════════════════════════════════════
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_custodial_wallet(
+    uid_ofuscado: str, address: str, keystore: Dict[str, Any]
+) -> str:
+    """Sella el keystore V3 CIFRADO de la wallet custodial de un usuario."""
+    content = json.dumps(keystore, ensure_ascii=False).encode("utf-8")
+    tags = [
+        {"name": "data-type",      "value": "custodial-wallet"},
+        {"name": "uid-hash",       "value": uid_ofuscado},
+        {"name": "wallet-address", "value": address},
+        {"name": "Content-Type",   "value": "application/json"},
+    ]
+    tx_id = await _upload(content, tags)
+    logger.info(
+        "👛 Keystore custodial de %s sellado en Irys (addr=%s). Ver dato: %s",
+        uid_ofuscado, address, _gw(tx_id),
+    )
+    return tx_id
+
+
+async def read_custodial_wallet(uid_ofuscado: str) -> Optional[Dict[str, Any]]:
+    """Lee la wallet custodial vigente: {"address": str, "keystore": dict} o None."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "custodial-wallet"},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ])
+        if not node:
+            return None
+        address = _node_tags(node).get("wallet-address", "")
+        raw = await _fetch(node["id"])
+        keystore = json.loads(raw.decode("utf-8"))
+        return {"address": address, "keystore": keystore}
+    except Exception as exc:
+        logger.warning("read_custodial_wallet %s falló: %s", uid_ofuscado, exc)
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # NODOS DE COMUNIDAD
 #
 # Un nodo es una comunidad temática/geográfica con su propio grafo de
@@ -1350,6 +1403,9 @@ __all__ = [
     "write_aporte",
     "read_aporte",
     "list_aportes",
+    # Wallet custodial
+    "write_custodial_wallet",
+    "read_custodial_wallet",
     # Nodos de comunidad
     "write_node",
     "get_node_record",
