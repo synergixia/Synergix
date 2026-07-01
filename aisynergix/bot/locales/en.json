@@ -83,7 +83,7 @@
   "rank_iniciado": "🌱 Initiate",
   "rank_activo": "📈 Active",
   "rank_sincronizado": "🧬 Synchronized",
-  "rank_arquitecto": "🏗️ Architect",
+  "rank_arquitecto": "🌌 Architect",
   "rank_mente_colmena": "🧠 Hive Mind",
   "rank_oraculo": "🔮 Oracle",
   "benefit_iniciado": "{remaining} contributions left today",
@@ -140,5 +140,11 @@
   "status_active_node": "🏘️ Active node: {node}",
   "contribution_synx": "💎 +{synx} SYNX (×{multiplier} knowledge-gap bonus)",
   "contribution_synx_plain": "💎 +{synx} SYNX",
-  "balance_custodial_note": "🔐 This is your Synergix wallet, created automatically for you. Nothing to set up: your rewards live here. Whenever you want, verify your own wallet from the 💰 Synergix menu."
+  "balance_custodial_note": "🔐 This is your Synergix wallet, created automatically for you. Nothing to set up: your rewards live here. Whenever you want, verify your own wallet from the 💰 Synergix menu.",
+  "rank_explorador": "⚡ Explorer",
+  "rank_contribuidor": "🔥 Contributor",
+  "rank_experto": "💎 Expert",
+  "benefit_explorador": "{remaining} contributions left today",
+  "benefit_contribuidor": "{remaining} contributions left today",
+  "benefit_experto": "{remaining} contributions left today"
 }

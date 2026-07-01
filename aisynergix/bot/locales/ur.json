@@ -83,7 +83,7 @@
   "rank_iniciado": "🌱 مبتدی",
   "rank_activo": "📈 فعال",
   "rank_sincronizado": "🧬 ہم آہنگ",
-  "rank_arquitecto": "🏗️ معمار",
+  "rank_arquitecto": "🌌 معمار",
   "rank_mente_colmena": "🧠 ذہن کا چھتہ",
   "rank_oraculo": "🔮 غیب دان",
   "benefit_iniciado": "آج {remaining} شراکتیں باقی",
@@ -97,5 +97,11 @@
   "image_cooldown": "⏳ دوسری تصویر مانگنے سے پہلے براہ کرم {minutes} منٹ انتظار کریں۔",
   "image_daily_limit": "🚫 آپ آج {limit} تصاویر کی حد تک پہنچ گئے ہیں۔ کل دوبارہ آئیں۔",
   "image_disabled": "🖼️ تصویر سازی اس وقت دستیاب نہیں ہے۔",
-  "web_search_used": "🌐 انٹرنیٹ سے جواب (اس بارے میں ابھی کوئی لافانی یادداشت نہیں)"
+  "web_search_used": "🌐 انٹرنیٹ سے جواب (اس بارے میں ابھی کوئی لافانی یادداشت نہیں)",
+  "rank_explorador": "⚡ مہم جو",
+  "rank_contribuidor": "🔥 معاون",
+  "rank_experto": "💎 ماہر",
+  "benefit_explorador": "آج {remaining} شراکتیں باقی",
+  "benefit_contribuidor": "آج {remaining} شراکتیں باقی",
+  "benefit_experto": "آج {remaining} شراکتیں باقی"
 }

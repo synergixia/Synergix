@@ -83,7 +83,7 @@
   "rank_iniciado": "🌱 新手",
   "rank_activo": "📈 活跃者",
   "rank_sincronizado": "🧬 同步者",
-  "rank_arquitecto": "🏗️ 架构师",
+  "rank_arquitecto": "🌌 架构师",
   "rank_mente_colmena": "🧠 蜂巢思维",
   "rank_oraculo": "🔮 先知",
   "benefit_iniciado": "今日剩余 {remaining} 次贡献",
@@ -97,5 +97,11 @@
   "image_cooldown": "⏳ 请等待 {minutes} 分钟后再请求新图像。",
   "image_daily_limit": "🚫 你今天已达到 {limit} 张图像的上限，明天再来吧。",
   "image_disabled": "🖼️ 图像生成功能目前不可用。",
-  "web_search_used": "🌐 来自互联网的回答（尚无相关的永恒记忆）"
+  "web_search_used": "🌐 来自互联网的回答（尚无相关的永恒记忆）",
+  "rank_explorador": "⚡ 探索者",
+  "rank_contribuidor": "🔥 贡献者",
+  "rank_experto": "💎 专家",
+  "benefit_explorador": "今日剩余 {remaining} 次贡献",
+  "benefit_contribuidor": "今日剩余 {remaining} 次贡献",
+  "benefit_experto": "今日剩余 {remaining} 次贡献"
 }
