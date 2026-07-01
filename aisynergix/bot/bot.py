@@ -153,11 +153,18 @@ async def _challenge_broadcast_loop() -> None:
 # Maps internal Spanish rank key → (rank locale key, benefit locale key)
 _RANK_KEY_MAP: Dict[str, tuple] = {
     "🌱 Iniciado":      ("rank_iniciado",      "benefit_iniciado"),
+    "⚡ Explorador":    ("rank_explorador",     "benefit_explorador"),
+    "🔥 Contribuidor":  ("rank_contribuidor",   "benefit_contribuidor"),
+    "💎 Experto":       ("rank_experto",        "benefit_experto"),
+    "🌌 Arquitecto":    ("rank_arquitecto",     "benefit_arquitecto"),
+    "🔮 Oráculo":       ("rank_oraculo",        "benefit_oraculo"),
+    # Legacy (tabla pre-v1.0): perfiles en Irys aún no re-sellados por
+    # sync_brain.hydrate_ranks pueden traer estos nombres — se siguen
+    # traduciendo hasta que la migración por puntos los reescriba.
     "📈 Activo":        ("rank_activo",         "benefit_activo"),
     "🧬 Sincronizado":  ("rank_sincronizado",   "benefit_sincronizado"),
     "🏗️ Arquitecto":   ("rank_arquitecto",     "benefit_arquitecto"),
     "🧠 Mente Colmena": ("rank_mente_colmena",  "benefit_mente_colmena"),
-    "🔮 Oráculo":       ("rank_oraculo",        "benefit_oraculo"),
 }
 
 

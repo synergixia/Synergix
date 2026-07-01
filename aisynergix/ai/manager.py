@@ -613,6 +613,10 @@ class AIManager:
         # (llenar un nodo con vacíos críticos recompensa ×5 — diseño §4.5/§5.3).
         node_id = profile.active_node
         synx_base = _synx_for_score(quality_score)
+        # §5.1: recompensa = base × multiplicador_rango × bonus (vacío del nodo).
+        rank_multiplier = RANK_TABLE.get(
+            profile.rank, RANK_TABLE["🌱 Iniciado"]
+        ).get("multiplier", 1.0)
         node_multiplier = 1.0
         if node_id:
             aporte_tags["node_id"] = node_id
@@ -628,7 +632,7 @@ class AIManager:
                     )
             except Exception as exc:
                 logger.warning("nodo %s: no se pudo calcular multiplicador: %s", node_id, exc)
-        synx_award = round(synx_base * node_multiplier, 2)
+        synx_award = round(synx_base * rank_multiplier * node_multiplier, 2)
 
         try:
             object_path = await write_aporte(

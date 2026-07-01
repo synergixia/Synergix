@@ -8,12 +8,13 @@ from dataclasses import dataclass, field
 SALT_UID = "Synergix_"
 UID_HASH_LENGTH = 12
 
+# Tabla de rangos del Diseño Maestro v1.0 (§5.5).
 RANK_TABLE = {
-    "🌱 Iniciado":     {"min_points": 0,     "daily_limit": 5,          "multiplier": 1.0, "beneficio": "5 aportes/día"},
-    "📈 Activo":       {"min_points": 100,   "daily_limit": 12,         "multiplier": 1.2, "beneficio": "12 aportes/día + ×1.2"},
-    "🧬 Sincronizado": {"min_points": 500,   "daily_limit": 25,         "multiplier": 1.5, "beneficio": "25 aportes/día + ×1.5"},
-    "🏗️ Arquitecto":  {"min_points": 1500,  "daily_limit": 40,         "multiplier": 2.0, "beneficio": "40 aportes/día + ×2.0"},
-    "🧠 Mente Colmena":{"min_points": 5000,  "daily_limit": 60,         "multiplier": 2.5, "beneficio": "60 aportes/día + ×2.5"},
+    "🌱 Iniciado":     {"min_points": 0,     "daily_limit": 10,         "multiplier": 1.0, "beneficio": "10 aportes/día"},
+    "⚡ Explorador":   {"min_points": 500,   "daily_limit": 15,         "multiplier": 1.2, "beneficio": "15 aportes/día + ×1.2"},
+    "🔥 Contribuidor": {"min_points": 2000,  "daily_limit": 20,         "multiplier": 1.5, "beneficio": "20 aportes/día + ×1.5"},
+    "💎 Experto":      {"min_points": 5000,  "daily_limit": 25,         "multiplier": 1.8, "beneficio": "25 aportes/día + ×1.8"},
+    "🌌 Arquitecto":   {"min_points": 10000, "daily_limit": 30,         "multiplier": 2.5, "beneficio": "30 aportes/día + ×2.5"},
     "🔮 Oráculo":      {"min_points": 15000, "daily_limit": float("inf"), "multiplier": 3.0, "beneficio": "Sin límite + ×3.0"},
 }
 
@@ -113,7 +114,12 @@ class UserProfile:
         )
 
         if profile.rank not in RANK_TABLE:
+            # Migración: el rango guardado pertenece a una tabla anterior
+            # (📈 Activo, 🧬 Sincronizado, 🏗️ Arquitecto, 🧠 Mente Colmena…).
+            # El rango siempre se deriva de los puntos, así que se recalcula
+            # con la tabla vigente en vez de degradar al usuario a Iniciado.
             profile.rank = "🌱 Iniciado"
+            profile.calculate_rank()
 
         return profile
 

@@ -83,7 +83,7 @@
   "rank_iniciado": "🌱 Iniciante",
   "rank_activo": "📈 Ativo",
   "rank_sincronizado": "🧬 Sincronizado",
-  "rank_arquitecto": "🏗️ Arquiteto",
+  "rank_arquitecto": "🌌 Arquiteto",
   "rank_mente_colmena": "🧠 Mente Colmeia",
   "rank_oraculo": "🔮 Oráculo",
   "benefit_iniciado": "{remaining} contribuições restantes hoje",
@@ -97,5 +97,11 @@
   "image_cooldown": "⏳ Aguarde {minutes} min antes de pedir outra imagem.",
   "image_daily_limit": "🚫 Você atingiu o limite de {limit} imagens por hoje. Volte amanhã.",
   "image_disabled": "🖼️ A geração de imagens não está disponível no momento.",
-  "web_search_used": "🌐 Respondido pela internet (ainda sem memória imortal sobre isto)"
+  "web_search_used": "🌐 Respondido pela internet (ainda sem memória imortal sobre isto)",
+  "rank_explorador": "⚡ Explorador",
+  "rank_contribuidor": "🔥 Contribuidor",
+  "rank_experto": "💎 Especialista",
+  "benefit_explorador": "{remaining} contribuições restantes hoje",
+  "benefit_contribuidor": "{remaining} contribuições restantes hoje",
+  "benefit_experto": "{remaining} contribuições restantes hoje"
 }

@@ -83,7 +83,7 @@
   "rank_iniciado": "🌱 Pemula",
   "rank_activo": "📈 Aktif",
   "rank_sincronizado": "🧬 Tersinkronisasi",
-  "rank_arquitecto": "🏗️ Arsitek",
+  "rank_arquitecto": "🌌 Arsitek",
   "rank_mente_colmena": "🧠 Pikiran Sarang",
   "rank_oraculo": "🔮 Peramal",
   "benefit_iniciado": "{remaining} kontribusi tersisa hari ini",
@@ -97,5 +97,11 @@
   "image_cooldown": "⏳ Harap tunggu {minutes} menit sebelum meminta gambar lain.",
   "image_daily_limit": "🚫 Anda telah mencapai batas {limit} gambar untuk hari ini. Kembali besok.",
   "image_disabled": "🖼️ Pembuatan gambar tidak tersedia saat ini.",
-  "web_search_used": "🌐 Dijawab dari internet (belum ada memori abadi tentang ini)"
+  "web_search_used": "🌐 Dijawab dari internet (belum ada memori abadi tentang ini)",
+  "rank_explorador": "⚡ Penjelajah",
+  "rank_contribuidor": "🔥 Kontributor",
+  "rank_experto": "💎 Pakar",
+  "benefit_explorador": "{remaining} kontribusi tersisa hari ini",
+  "benefit_contribuidor": "{remaining} kontribusi tersisa hari ini",
+  "benefit_experto": "{remaining} kontribusi tersisa hari ini"
 }

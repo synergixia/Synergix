@@ -83,7 +83,7 @@
   "rank_iniciado": "🌱 مبتدئ",
   "rank_activo": "📈 نشط",
   "rank_sincronizado": "🧬 متزامن",
-  "rank_arquitecto": "🏗️ معماري",
+  "rank_arquitecto": "🌌 معماري",
   "rank_mente_colmena": "🧠 عقل الخلية",
   "rank_oraculo": "🔮 عراف",
   "benefit_iniciado": "{remaining} مساهمات متبقية اليوم",
@@ -97,5 +97,11 @@
   "image_cooldown": "⏳ يرجى الانتظار {minutes} دقيقة قبل طلب صورة أخرى.",
   "image_daily_limit": "🚫 لقد وصلت إلى حد {limit} صور لهذا اليوم. عُد غدًا.",
   "image_disabled": "🖼️ إنشاء الصور غير متاح حاليًا.",
-  "web_search_used": "🌐 تمت الإجابة من الإنترنت (لا توجد ذاكرة خالدة عن هذا بعد)"
+  "web_search_used": "🌐 تمت الإجابة من الإنترنت (لا توجد ذاكرة خالدة عن هذا بعد)",
+  "rank_explorador": "⚡ مستكشف",
+  "rank_contribuidor": "🔥 مساهم",
+  "rank_experto": "💎 خبير",
+  "benefit_explorador": "{remaining} مساهمات متبقية اليوم",
+  "benefit_contribuidor": "{remaining} مساهمات متبقية اليوم",
+  "benefit_experto": "{remaining} مساهمات متبقية اليوم"
 }

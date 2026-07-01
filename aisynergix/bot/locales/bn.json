@@ -83,7 +83,7 @@
   "rank_iniciado": "🌱 শিক্ষানবিশ",
   "rank_activo": "📈 সক্রিয়",
   "rank_sincronizado": "🧬 সমন্বিত",
-  "rank_arquitecto": "🏗️ স্থপতি",
+  "rank_arquitecto": "🌌 স্থপতি",
   "rank_mente_colmena": "🧠 ঝাঁক মন",
   "rank_oraculo": "🔮 দ্রষ্টা",
   "benefit_iniciado": "আজ {remaining} অবদান বাকি",
@@ -97,5 +97,11 @@
   "image_cooldown": "⏳ আরেকটি ছবি চাওয়ার আগে অনুগ্রহ করে {minutes} মিনিট অপেক্ষা করুন।",
   "image_daily_limit": "🚫 আপনি আজকের {limit}টি ছবির সীমায় পৌঁছে গেছেন। আগামীকাল আবার আসুন।",
   "image_disabled": "🖼️ ছবি তৈরির সুবিধা এই মুহূর্তে উপলব্ধ নয়।",
-  "web_search_used": "🌐 ইন্টারনেট থেকে উত্তর (এ বিষয়ে এখনও অমর স্মৃতি নেই)"
+  "web_search_used": "🌐 ইন্টারনেট থেকে উত্তর (এ বিষয়ে এখনও অমর স্মৃতি নেই)",
+  "rank_explorador": "⚡ অভিযাত্রী",
+  "rank_contribuidor": "🔥 অবদানকারী",
+  "rank_experto": "💎 বিশেষজ্ঞ",
+  "benefit_explorador": "আজ {remaining} অবদান বাকি",
+  "benefit_contribuidor": "আজ {remaining} অবদান বাকি",
+  "benefit_experto": "আজ {remaining} অবদান বাকি"
 }
