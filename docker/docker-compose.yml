@@ -197,6 +197,48 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # API pública de solo lectura (Fase 3, §7.4) — nodos, Passports, impacto.
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: synergix-api
+    restart: unless-stopped
+    networks:
+      synergix-net:
+        ipv4_address: 172.28.0.40
+    command:
+      ["python", "-m", "uvicorn", "aisynergix.api:app",
+       "--host", "0.0.0.0", "--port", "8090"]
+    environment:
+      PRIVATE_KEY: ${PRIVATE_KEY:?err}
+      IRYS_NODE_URL: ${IRYS_NODE_URL:-https://uploader.irys.xyz}
+      IRYS_GATEWAY_URL: ${IRYS_GATEWAY_URL:-https://gateway.irys.xyz}
+      IRYS_TOKEN: ${IRYS_TOKEN:-bnb}
+      IRYS_UPLOADER_URL: ${IRYS_UPLOADER_URL:-http://irys-uploader:8083}
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
+      HF_HOME: /tmp/hf_cache
+      SENTENCE_TRANSFORMERS_HOME: /tmp/st_cache
+    ports:
+      - "127.0.0.1:8090:8090"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "1.0G"
+        reservations:
+          cpus: "0.2"
+          memory: "256M"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
   bot:
     build:
       context: ..

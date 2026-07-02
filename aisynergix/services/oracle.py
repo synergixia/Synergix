@@ -122,7 +122,11 @@ async def unstake(uid: int) -> Optional[str]:
     if not current:
         return "not_staked"
     amount = float(current.get("amount", 0) or 0)
-    await write_oracle_stake(uid_hash, amount, status="withdrawn", wrong_streak=0)
+    await write_oracle_stake(
+        uid_hash, amount, status="withdrawn", wrong_streak=0,
+        votes_total=int(current.get("votes-total", 0) or 0),
+        votes_correct=int(current.get("votes-correct", 0) or 0),
+    )
     if amount > 0:
         await _identity().credit_synx(uid_hash, amount)
     logger.info("🔮 Oráculo retirado: %s (+%.0f SYNX devueltos)", uid_hash, amount)
@@ -224,6 +228,8 @@ async def _resolve(
             await identity.credit_synx(author, round(base_synx * ORACLE_EXTRA_MULT, 2))
 
         # Votantes: +15 con la mayoría; racha de errores para la minoría.
+        # También se acumula la reputación como juez (tasa de acierto,
+        # campo del Passport §10.2).
         for voter, v in votes.items():
             correct = (v == approved)
             if correct:
@@ -241,6 +247,11 @@ async def _resolve(
                     await write_oracle_stake(
                         voter, float(stake_tags.get("amount", 0) or 0),
                         status="active", wrong_streak=new_streak,
+                        votes_total=int(stake_tags.get("votes-total", 0) or 0) + 1,
+                        votes_correct=(
+                            int(stake_tags.get("votes-correct", 0) or 0)
+                            + (1 if correct else 0)
+                        ),
                     )
             except Exception:
                 pass
