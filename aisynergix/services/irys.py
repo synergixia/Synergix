@@ -518,6 +518,9 @@ _PROFILE_TAG_MAP: Dict[str, str] = {
     # Wallet custodial generada por el bot (distinta de wallet-address, que
     # es la wallet propia del usuario verificada por firma).
     "custodial_address":   "custodial-address",
+    # Racha de días consecutivos contribuyendo (§5.3).
+    "streak_days":         "streak-days",
+    "last_aporte_date":    "last-aporte-date",
 }
 _PROFILE_TAG_RMAP: Dict[str, str] = {v: k for k, v in _PROFILE_TAG_MAP.items()}
 

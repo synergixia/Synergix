@@ -146,5 +146,12 @@
   "rank_experto": "💎 Experto",
   "benefit_explorador": "{remaining} aportes restantes hoy",
   "benefit_contribuidor": "{remaining} aportes restantes hoy",
-  "benefit_experto": "{remaining} aportes restantes hoy"
+  "benefit_experto": "{remaining} aportes restantes hoy",
+  "synx_bonus_detail": "🎁 Bonus: {details}",
+  "bonus_first_day": "primer aporte del día (+20%)",
+  "bonus_virgin_topic": "tema virgen (+50%)",
+  "bonus_underrep_lang": "idioma poco representado (+30%)",
+  "bonus_streak": "racha de 7+ días (×2)",
+  "bonus_perfect": "score perfecto (+100 SYNX)",
+  "streak_line": "🔥 Racha: {days} días consecutivos"
 }

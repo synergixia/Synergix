@@ -502,6 +502,19 @@ class CrossLingualRAG:
         except Exception:
             return False
 
+    async def get_language_stats(self) -> Dict[str, int]:
+        """Documentos por idioma en el corpus (agregado de los 4 cerebros).
+
+        Se usa para el bonus de "idioma poco representado" (§5.3).  Lee la
+        metadata en RAM, así que no cuesta red ni CPU relevante.
+        """
+        counts: Dict[str, int] = {}
+        for brain in self._brains.values():
+            for meta in brain._metadata.values():
+                lang = meta.get("language", "es")
+                counts[lang] = counts.get(lang, 0) + 1
+        return counts
+
     async def get_stats(self) -> Dict[str, Any]:
         return {
             "total_documents": sum(b.total_documents for b in self._brains.values()),

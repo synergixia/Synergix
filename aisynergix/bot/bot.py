@@ -1485,6 +1485,14 @@ async def handle_contribution_message(
                     response_text += "\n" + t(
                         "contribution_synx_plain", lang, synx=f"{synx_gained:.0f}"
                     )
+                # Desglose §5.3 (el vacío ya se muestra arriba con su ×).
+                extra = [b for b in result.get("synx_bonuses", []) if b != "gap"]
+                if extra:
+                    details = ", ".join(t(f"bonus_{b}", lang) for b in extra)
+                    response_text += "\n" + t("synx_bonus_detail", lang, details=details)
+                streak = result.get("streak_days", 0)
+                if streak >= 2:
+                    response_text += "\n" + t("streak_line", lang, days=streak)
 
             keyboard = get_main_keyboard(lang)
             await message.answer(response_text, reply_markup=keyboard)
