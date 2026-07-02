@@ -153,5 +153,8 @@
   "bonus_underrep_lang": "underrepresented language (+30%)",
   "bonus_streak": "7+ day streak (×2)",
   "bonus_perfect": "perfect score (+100 SYNX)",
-  "streak_line": "🔥 Streak: {days} days in a row"
+  "streak_line": "🔥 Streak: {days} days in a row",
+  "btn_useful": "✅ Useful",
+  "useful_thanks": "💫 Impact verified! The authors of those memories get their recognition.",
+  "useful_expired": "This button was already used or has expired."
 }
