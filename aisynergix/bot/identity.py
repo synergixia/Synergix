@@ -60,6 +60,9 @@ class UserProfile:
     # confundir con wallet_address: esa es la wallet PROPIA del usuario,
     # verificada por firma.
     custodial_address: Optional[str] = None
+    # Racha de días consecutivos contribuyendo (§5.3: 7+ días → ×2 ese día).
+    streak_days: int = 0
+    last_aporte_date: Optional[str] = None  # "YYYY-MM-DD" UTC
 
     def __post_init__(self):
         self.uid_hash = _hash_uid(self.uid)
@@ -111,6 +114,8 @@ class UserProfile:
             synx_balance=float(tags.get("synx_balance", "0") or 0),
             active_node=tags.get("active_node") or None,
             custodial_address=tags.get("custodial_address") or None,
+            streak_days=int(tags.get("streak_days", 0) or 0),
+            last_aporte_date=tags.get("last_aporte_date") or None,
         )
 
         if profile.rank not in RANK_TABLE:
@@ -143,6 +148,9 @@ class UserProfile:
             base["active_node"] = self.active_node
         if self.custodial_address:
             base["custodial_address"] = self.custodial_address
+        base["streak_days"] = str(self.streak_days)
+        if self.last_aporte_date:
+            base["last_aporte_date"] = self.last_aporte_date
         return base
 
     def update_trust_score(self, delta: float) -> None:
@@ -378,6 +386,8 @@ class IdentityManager:
         trust_delta: float = 0.0,
         language: Optional[str] = None,
         active_node: Optional[str] = None,
+        streak_days: Optional[int] = None,
+        last_aporte_date: Optional[str] = None,
     ) -> UserProfile:
         """Atomically apply INCREMENTS to a profile and seal it on Irys.
 
@@ -424,6 +434,10 @@ class IdentityManager:
                 profile.set_language(language)
             if active_node is not None:
                 profile.active_node = active_node or None
+            if streak_days is not None:
+                profile.streak_days = streak_days
+            if last_aporte_date is not None:
+                profile.last_aporte_date = last_aporte_date
             profile.calculate_rank()
             profile.last_seen_ts = time.time()
 

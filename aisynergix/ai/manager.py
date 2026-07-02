@@ -607,32 +607,65 @@ class AIManager:
         if profile.human_verified and profile.wallet_address:
             aporte_tags["signature"] = profile.wallet_address.lower()
 
-        # ── Contexto de nodo de comunidad ───────────────────────────────────
-        # Si el usuario tiene un nodo activo, el aporte se asocia a ese nodo y
-        # la recompensa SYNX se multiplica por el vacío de conocimiento del nodo
-        # (llenar un nodo con vacíos críticos recompensa ×5 — diseño §4.5/§5.3).
+        # ── Recompensa SYNX: §5.1 + bonificaciones §5.3 ─────────────────────
+        # SYNX = base(score) × rango × vacío × racha × (1 + Σ bonus%) [+100 si 10.0]
+        from aisynergix.services import rewards
         node_id = profile.active_node
+        category = evaluation.get("category", "filosofia")
         synx_base = _synx_for_score(quality_score)
-        # §5.1: recompensa = base × multiplicador_rango × bonus (vacío del nodo).
         rank_multiplier = RANK_TABLE.get(
             profile.rank, RANK_TABLE["🌱 Iniciado"]
         ).get("multiplier", 1.0)
-        node_multiplier = 1.0
+        today = datetime.now(timezone.utc).date()
+
+        bonus = rewards.BonusBreakdown()
+        bonus.perfect_score = quality_score >= 10.0
+
+        # Racha de días consecutivos (idempotente por fecha; se sella abajo).
+        new_streak, new_last_date = rewards.update_streak(
+            profile.last_aporte_date, profile.streak_days, today
+        )
+        bonus.streak_multiplier = rewards.streak_multiplier_for(new_streak)
+
         if node_id:
+            # Aporte dentro de un nodo: se etiqueta y los aportes del nodo se
+            # traen UNA vez para calcular vacío + primer-del-día + tema virgen.
             aporte_tags["node_id"] = node_id
-            aporte_tags["topic"] = evaluation.get("category", "filosofia")
+            aporte_tags["topic"] = category
             try:
-                from aisynergix.nodes.node_manager import get_node
-                from aisynergix.nodes.knowledge_map import node_knowledge_map
-                node = await get_node(node_id)
-                if node and node.topics:
-                    cov = await node_knowledge_map(node_id, node.topics)
-                    node_multiplier = max(
+                from aisynergix.services.irys import get_node_record, list_node_aportes
+                from aisynergix.nodes.knowledge_map import coverage_from_aportes
+                record = await get_node_record(node_id)
+                node_aportes = await list_node_aportes(node_id)
+                topics = [
+                    x for x in (
+                        (record or {}).get("topics", "") or ""
+                    ).split(",") if x.strip()
+                ]
+                if topics:
+                    cov = coverage_from_aportes(topics, node_aportes)
+                    bonus.gap_multiplier = max(
                         (info["multiplier"] for info in cov.values()), default=1.0
                     )
+                bonus.first_of_day = rewards.is_first_of_day(node_aportes, today)
+                bonus.virgin_topic = rewards.is_virgin_topic(node_aportes, category)
             except Exception as exc:
-                logger.warning("nodo %s: no se pudo calcular multiplicador: %s", node_id, exc)
-        synx_award = round(synx_base * rank_multiplier * node_multiplier, 2)
+                logger.warning("nodo %s: no se pudo calcular bonus: %s", node_id, exc)
+        else:
+            # Sin nodo: "primer aporte del día" se evalúa sobre el propio
+            # usuario; el tema virgen es un concepto de nodo y no aplica.
+            bonus.first_of_day = profile.daily_aportes_count == 0
+
+        try:
+            lang_counts = await self._rag.get_language_stats()
+            bonus.underrep_lang = rewards.is_underrepresented(
+                profile.language, lang_counts
+            )
+        except Exception:
+            pass
+
+        synx_award = rewards.compute_synx(synx_base, rank_multiplier, bonus)
+        node_multiplier = bonus.gap_multiplier
 
         try:
             object_path = await write_aporte(
@@ -676,6 +709,8 @@ class AIManager:
             daily=1,
             synx=synx_award,
             trust_delta=trust_increment,
+            streak_days=new_streak,
+            last_aporte_date=new_last_date,
         )
         new_rank = profile.rank if profile.rank != old_rank else None
 
@@ -694,6 +729,8 @@ class AIManager:
             "synx_gained": synx_award,
             "synx_multiplier": node_multiplier,
             "synx_balance": profile.synx_balance,
+            "synx_bonuses": bonus.active_keys(),
+            "streak_days": new_streak,
             "node_id": node_id,
             "tier": tier,
             "rank": profile.rank,
