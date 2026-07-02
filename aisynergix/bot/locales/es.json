@@ -153,5 +153,8 @@
   "bonus_underrep_lang": "idioma poco representado (+30%)",
   "bonus_streak": "racha de 7+ días (×2)",
   "bonus_perfect": "score perfecto (+100 SYNX)",
-  "streak_line": "🔥 Racha: {days} días consecutivos"
+  "streak_line": "🔥 Racha: {days} días consecutivos",
+  "btn_useful": "✅ Útil",
+  "useful_thanks": "💫 ¡Impacto verificado! Los autores de esas memorias reciben su reconocimiento.",
+  "useful_expired": "Este botón ya fue usado o expiró."
 }

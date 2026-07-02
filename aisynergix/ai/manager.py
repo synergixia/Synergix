@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -466,6 +467,18 @@ class AIManager:
             # without waiting for the full stream to complete.
             if search_results:
                 yield ("memory_count", str(len(search_results)))
+                # PIR: (aporte_tx, author) usados, para el botón "✅ útil".
+                pairs = []
+                seen_txs: set = set()
+                for r in search_results:
+                    meta = r.get("metadata", {})
+                    tx = meta.get("object_name", "")
+                    if not tx or tx.startswith("local:") or tx in seen_txs:
+                        continue
+                    seen_txs.add(tx)
+                    pairs.append([tx, meta.get("author_uid", "")])
+                if pairs:
+                    yield ("sources", json.dumps(pairs))
             elif web_used:
                 yield ("web_used", "1")
 
@@ -714,6 +727,16 @@ class AIManager:
         )
         new_rank = profile.rank if profile.rank != old_rank else None
 
+        # PIR §7.3: si este aporte se construye sobre uno existente, el autor
+        # citado recibe el 10 % de la recompensa.  Background: no bloquea la
+        # respuesta.  El auto-match con el propio aporte recién indexado queda
+        # excluido por el filtro near-clone del RAG y por same_author.
+        if synx_award > 0:
+            _spawn_bg(self._process_reference_royalty(
+                content_summary or content, profile.language,
+                profile.uid_hash, synx_award,
+            ))
+
         return {
             "status": "success",
             "message_key": (
@@ -924,6 +947,73 @@ class AIManager:
         async with self._context_cache_lock:
             self._context_cache.pop(uid, None)
 
+    async def record_useful_sources(self, payload: str) -> int:
+        """Confirma '✅ útil' sobre las fuentes de una respuesta (PIR §7.2).
+
+        ``payload`` es el JSON emitido por stream_conversation: lista de
+        pares [aporte_tx, author_hash].  Cada aporte suma +1 impacto
+        verificado; el tracker paga la regalía perpetua al cruzar bloques
+        de 100.  Retorna cuántos aportes fueron acreditados.
+        """
+        from aisynergix.services.impact import get_impact_tracker
+        try:
+            pairs = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            return 0
+        tracker = get_impact_tracker()
+        credited = 0
+        for item in pairs if isinstance(pairs, list) else []:
+            try:
+                tx, author = str(item[0]), str(item[1])
+            except (IndexError, TypeError, KeyError):
+                continue
+            if await tracker.record_useful(tx, author) is not None:
+                credited += 1
+        return credited
+
+    async def _process_reference_royalty(
+        self,
+        content: str,
+        language: str,
+        author_hash: str,
+        synx_award: float,
+    ) -> None:
+        """Regalía por referencia (§7.3): si el aporte nuevo se construye sobre
+        uno existente de OTRO autor (similitud ≥ REFERENCE_MIN_SCORE), ese
+        autor recibe el 10 % de la recompensa del aporte nuevo.
+
+        Corre en background tras aprobar el aporte; el RAG ya excluye los
+        near-clones (>0.92), que son duplicados y no referencias.
+        """
+        from aisynergix.services.impact import (
+            get_impact_tracker, is_reference_match, REFERENCE_ROYALTY_PCT,
+        )
+        try:
+            _, results = await self._rag.query(content, language)
+        except Exception:
+            return
+        for r in results or []:
+            meta = r.get("metadata", {})
+            cited_tx = meta.get("object_name", "")
+            cited_author = meta.get("author_uid", "")
+            score = r.get("score", 0.0)
+            if not cited_tx or cited_tx.startswith("local:") or not cited_author:
+                continue
+            if not is_reference_match(score, cited_author == author_hash):
+                continue
+            royalty = round(synx_award * REFERENCE_ROYALTY_PCT, 2)
+            try:
+                await get_impact_tracker().record_reference(cited_tx, cited_author)
+                if royalty > 0:
+                    await self._identity.credit_synx(cited_author, royalty)
+                logger.info(
+                    "🔗 Referencia: %s cita a %s (score=%.2f) — regalía %.2f SYNX a %s",
+                    author_hash[:8], cited_tx[:12], score, royalty, cited_author[:8],
+                )
+            except Exception as exc:
+                logger.warning("regalía por referencia falló (%s): %s", cited_tx[:12], exc)
+            break  # solo la fuente principal (top-1 válida)
+
     async def _process_residual_rewards(
         self,
         search_results: List[Dict[str, Any]],
@@ -933,6 +1023,12 @@ class AIManager:
             "residual rewards: evaluating %d search results", len(search_results)
         )
 
+        # PIR (§7.2): cada uso real de un aporte en una respuesta cuenta como
+        # vista en su contador de impacto (dedupe por aporte en esta llamada).
+        from aisynergix.services.impact import get_impact_tracker
+        tracker = get_impact_tracker()
+        viewed_txs: set = set()
+
         for result in search_results:
             author_uid_hash = result.get("metadata", {}).get("author_uid", "")
             score = result.get("score", 0)
@@ -940,13 +1036,22 @@ class AIManager:
             if not author_uid_hash:
                 logger.info("residual: result has no author_uid — skipping (score=%.3f)", score)
                 continue
-            if author_uid_hash in rewarded_authors:
-                continue
             if score < 0.4:
                 logger.info(
                     "residual: author=%s score %.3f < 0.4 — skipping",
                     author_uid_hash[:8], score,
                 )
+                continue
+
+            aporte_tx = result.get("metadata", {}).get("object_name", "")
+            if aporte_tx and aporte_tx not in viewed_txs:
+                viewed_txs.add(aporte_tx)
+                try:
+                    await tracker.record_view(aporte_tx, author_uid_hash)
+                except Exception:
+                    pass
+
+            if author_uid_hash in rewarded_authors:
                 continue
 
             # Atomic, lock-serialized increment on Irys (never clobbered by the

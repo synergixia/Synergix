@@ -1050,6 +1050,86 @@ async def upload_log(date_str: str, log_content: str) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# PRUEBA DE IMPACTO REAL (PIR) — Módulo 5 (§7)
+#
+# Cada aporte tiene un contador de impacto vivo:
+#   data-type=impact-counter  → contador acumulado por aporte (última
+#                               versión gana, mismo patrón que user-profile).
+#   data-type=impact-royalty  → registro PÚBLICO de cada regalía pagada
+#                               {aporte_txId, impactos, SYNX_pagado} (§7.2).
+# ═══════════════════════════════════════════════════════════════════════
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_impact_counter(
+    aporte_tx: str, author_hash: str, counts: Dict[str, Any]
+) -> str:
+    """Sella la versión vigente del contador de impacto de un aporte."""
+    tags = [
+        {"name": "data-type",  "value": "impact-counter"},
+        {"name": "aporte-tx",  "value": aporte_tx},
+        {"name": "author-uid", "value": author_hash},
+        {"name": "views",      "value": str(int(counts.get("views", 0)))},
+        {"name": "useful",     "value": str(int(counts.get("useful", 0)))},
+        {"name": "references", "value": str(int(counts.get("references", 0)))},
+        {"name": "royalty-blocks-paid", "value": str(int(counts.get("royalty_blocks_paid", 0)))},
+        {"name": "synx-paid",  "value": f"{float(counts.get('synx_paid', 0.0)):.2f}"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.debug("📈 Impact counter %s sellado (tx=%s)", aporte_tx[:12], tx_id)
+    return tx_id
+
+
+async def read_impact_counter(aporte_tx: str) -> Optional[Dict[str, str]]:
+    """Lee el contador de impacto vigente de un aporte (tags) o None."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "impact-counter"},
+            {"name": "aporte-tx", "value": aporte_tx},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_impact_counter %s falló: %s", aporte_tx[:12], exc)
+    return None
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_impact_royalty(
+    aporte_tx: str, author_hash: str, impacts: int, synx: float
+) -> str:
+    """Registro público e inmutable de una regalía pagada (§7.2/§7.4)."""
+    body = {
+        "aporte_txId": aporte_tx,
+        "author": author_hash,
+        "impactos": impacts,
+        "SYNX_pagado": synx,
+        "paid_at": int(datetime.now(timezone.utc).timestamp()),
+    }
+    tags = [
+        {"name": "data-type",  "value": "impact-royalty"},
+        {"name": "aporte-tx",  "value": aporte_tx},
+        {"name": "author-uid", "value": author_hash},
+        {"name": "synx",       "value": f"{synx:.2f}"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(json.dumps(body).encode("utf-8"), tags)
+    logger.info(
+        "💫 Regalía PIR: aporte=%s autor=%s +%.2f SYNX. Ver dato: %s",
+        aporte_tx[:12], author_hash, synx, _gw(tx_id),
+    )
+    return tx_id
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # WALLET CUSTODIAL — keystore V3 cifrado
 #
 # El keystore se cifra en services/wallet.py ANTES de llegar aquí (Irys es
@@ -1406,6 +1486,10 @@ __all__ = [
     "write_aporte",
     "read_aporte",
     "list_aportes",
+    # Prueba de Impacto Real
+    "write_impact_counter",
+    "read_impact_counter",
+    "write_impact_royalty",
     # Wallet custodial
     "write_custodial_wallet",
     "read_custodial_wallet",

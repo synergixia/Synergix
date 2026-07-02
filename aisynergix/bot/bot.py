@@ -107,6 +107,26 @@ async def _ensure_wallet_silent(uid: int) -> None:
         logger.warning("ensure_custodial_wallet uid=%s falló: %s", uid, exc)
 
 
+# PIR (§7): fuentes (aporte_tx, autor) de cada respuesta con memoria inmortal,
+# indexadas por (chat_id, message_id) para el botón "✅ útil".  Un solo uso:
+# el callback hace pop.  Se pierde en restart (el botón viejo responde
+# "expirado") — aceptable para una confirmación efímera.
+_impact_sources: Dict[tuple, str] = {}
+_IMPACT_SOURCES_MAX = 500
+
+
+def _register_impact_sources(chat_id: int, message_id: int, payload: str) -> None:
+    _impact_sources[(chat_id, message_id)] = payload
+    while len(_impact_sources) > _IMPACT_SOURCES_MAX:
+        _impact_sources.pop(next(iter(_impact_sources)), None)
+
+
+def _useful_button_kb(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=t("btn_useful", lang), callback_data="impact:useful"),
+    ]])
+
+
 async def _challenge_broadcast_loop() -> None:
     """Background task: poll Irys every 10 min for a new challenge and notify users."""
     global _last_broadcast_challenge_id
@@ -1302,6 +1322,39 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@dp.callback_query(F.data == "impact:useful")
+async def handle_impact_useful(callback: CallbackQuery) -> None:
+    """'✅ útil' (PIR §7.2): +1 impacto verificado a cada aporte usado en la
+    respuesta.  El tracker paga la regalía perpetua al cruzar bloques de 100."""
+    if not callback.from_user or not callback.message:
+        return
+    lang = await get_user_language(callback.from_user.id)
+    key = (callback.message.chat.id, callback.message.message_id)
+    payload = _impact_sources.pop(key, None)
+
+    # El botón desaparece siempre: es de un solo uso.
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    if payload is None:
+        await callback.answer(t("useful_expired", lang))
+        return
+
+    # Acreditar en background — cada aporte implica lecturas/escrituras en
+    # Irys y el callback debe responder en <10 s.
+    async def _credit() -> None:
+        try:
+            n = await get_ai_manager().record_useful_sources(payload)
+            logger.info("✅ útil: %d aporte(s) acreditados (chat=%s)", n, key[0])
+        except Exception as exc:
+            logger.warning("impact useful credit falló: %s", exc)
+
+    _spawn_bot_bg(_credit())
+    await callback.answer(t("useful_thanks", lang))
+
+
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message) -> None:
     if not message.from_user:
@@ -1622,6 +1675,7 @@ async def handle_conversation_message(
     saw_answer = False
     memory_count = 0
     web_used = False
+    sources_payload = ""
     last_edit = 0.0
     THINK_PREVIEW_CHARS = 800  # Telegram caps messages at 4096; show tail only
     THINK_EDIT_INTERVAL = 1.5  # safe distance from Telegram's edit rate limit
@@ -1644,6 +1698,9 @@ async def handle_conversation_message(
                 continue
             if kind == "web_used":
                 web_used = True
+                continue
+            if kind == "sources":
+                sources_payload = chunk
                 continue
 
             now = asyncio.get_event_loop().time()
@@ -1736,13 +1793,17 @@ async def handle_conversation_message(
             final_text += f"\n\n<i>{t('rag_memory_used', lang, count=memory_count)}</i>"
         elif web_used:
             final_text += f"\n\n<i>{t('web_search_used', lang)}</i>"
+        # PIR: si la respuesta usó memoria inmortal, ofrecer confirmar "✅ útil".
+        useful_kb = _useful_button_kb(lang) if sources_payload else None
         try:
-            await sent_msg.edit_text(final_text, parse_mode="HTML")
+            await sent_msg.edit_text(final_text, parse_mode="HTML", reply_markup=useful_kb)
         except Exception:
             try:
-                await sent_msg.edit_text(final_text)
+                await sent_msg.edit_text(final_text, reply_markup=useful_kb)
             except Exception:
-                pass
+                useful_kb = None
+        if useful_kb is not None and sources_payload:
+            _register_impact_sources(message.chat.id, sent_msg.message_id, sources_payload)
 
     except Exception as e:
         logger.exception("Error en conversación streaming de %s: %s", uid, e)
