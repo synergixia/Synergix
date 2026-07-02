@@ -1364,6 +1364,280 @@ async def count_node_aportes(node_id: str) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# ECONOMÍA VIVA (Fase 2): PROVEEDORES · PROYECTOS · ORÁCULOS
+#
+#   data-type=provider       → profesional verificado de un nodo (última
+#                              versión por uid gana; status active|inactive).
+#   data-type=project        → proyecto de financiamiento colectivo (última
+#                              versión por project-id gana; el status es la
+#                              máquina de estados: active→voting→completed|refunded).
+#   data-type=project-fund   → contribución SYNX a un proyecto (append-only).
+#   data-type=project-vote   → voto de un financiador (última por uid gana).
+#   data-type=oracle-stake   → stake de un Juez Oráculo (última por uid gana).
+#   data-type=oracle-review  → revisión de un aporte score≥8 (keyed por
+#                              aporte-tx; status pending→approved|rejected|expired).
+#   data-type=oracle-vote    → voto 👍/👎 de un oráculo (última por uid gana).
+# ═══════════════════════════════════════════════════════════════════════
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_provider(
+    node_id: str, uid_hash: str, category: str, description: str,
+    status: str = "active",
+) -> str:
+    tags = [
+        {"name": "data-type",       "value": "provider"},
+        {"name": "node-id",         "value": node_id},
+        {"name": "uid-hash",        "value": uid_hash},
+        {"name": "category",        "value": category},
+        {"name": "description",     "value": (description or "")[:200]},
+        {"name": "provider-status", "value": status},
+        {"name": "Content-Type",    "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("💼 Proveedor %s@%s (%s) sellado en Irys.", uid_hash, node_id, category)
+    return tx_id
+
+
+async def list_node_providers(node_id: str, limit: int = 500) -> List[Dict[str, str]]:
+    """Proveedores activos de un nodo (última versión por usuario)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "provider"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        latest = _dedupe_latest(nodes, "uid-hash")
+        return [p for p in latest if p.get("provider-status", "active") == "active"]
+    except Exception as exc:
+        logger.warning("list_node_providers %s falló: %s", node_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_project(
+    project_id: str, node_id: str, creator_hash: str, title: str,
+    goal: float, status: str, voting_until: int = 0,
+) -> str:
+    tags = [
+        {"name": "data-type",      "value": "project"},
+        {"name": "project-id",     "value": project_id},
+        {"name": "node-id",        "value": node_id},
+        {"name": "creator",        "value": creator_hash},
+        {"name": "title",          "value": (title or "")[:120]},
+        {"name": "goal",           "value": f"{goal:.2f}"},
+        {"name": "project-status", "value": status},
+        {"name": "voting-until",   "value": str(int(voting_until))},
+        {"name": "Content-Type",   "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🏗️ Proyecto %s (%s) → %s en Irys.", project_id, status, _gw(tx_id))
+    return tx_id
+
+
+async def read_project(project_id: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type",  "value": "project"},
+            {"name": "project-id", "value": project_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_project %s falló: %s", project_id, exc)
+    return None
+
+
+async def list_node_projects(node_id: str, limit: int = 200) -> List[Dict[str, str]]:
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "project"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "project-id")
+    except Exception as exc:
+        logger.warning("list_node_projects %s falló: %s", node_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_project_fund(project_id: str, uid_hash: str, amount: float) -> str:
+    """Registro append-only de una contribución al escrow de un proyecto."""
+    tags = [
+        {"name": "data-type",  "value": "project-fund"},
+        {"name": "project-id", "value": project_id},
+        {"name": "uid-hash",   "value": uid_hash},
+        {"name": "amount",     "value": f"{amount:.2f}"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_project_funds(project_id: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """TODAS las contribuciones de un proyecto (append-only, sin dedupe)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",  "value": "project-fund"},
+            {"name": "project-id", "value": project_id},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_project_funds %s falló: %s", project_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_project_vote(project_id: str, uid_hash: str, vote: bool) -> str:
+    tags = [
+        {"name": "data-type",  "value": "project-vote"},
+        {"name": "project-id", "value": project_id},
+        {"name": "uid-hash",   "value": uid_hash},
+        {"name": "vote",       "value": "yes" if vote else "no"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_project_votes(project_id: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Voto vigente de cada financiador (última versión por usuario)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",  "value": "project-vote"},
+            {"name": "project-id", "value": project_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "uid-hash")
+    except Exception as exc:
+        logger.warning("list_project_votes %s falló: %s", project_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_oracle_stake(
+    uid_hash: str, amount: float, status: str, wrong_streak: int = 0
+) -> str:
+    tags = [
+        {"name": "data-type",    "value": "oracle-stake"},
+        {"name": "uid-hash",     "value": uid_hash},
+        {"name": "amount",       "value": f"{amount:.2f}"},
+        {"name": "stake-status", "value": status},
+        {"name": "wrong-streak", "value": str(int(wrong_streak))},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🔮 Stake de oráculo %s (%s, %.0f SYNX) sellado.", uid_hash, status, amount)
+    return tx_id
+
+
+async def read_oracle_stake(uid_hash: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "oracle-stake"},
+            {"name": "uid-hash",  "value": uid_hash},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_oracle_stake %s falló: %s", uid_hash, exc)
+    return None
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_oracle_review(
+    aporte_tx: str, author_hash: str, base_synx: float, status: str,
+    created_ts: int, votes: int = 0,
+) -> str:
+    tags = [
+        {"name": "data-type",     "value": "oracle-review"},
+        {"name": "aporte-tx",     "value": aporte_tx},
+        {"name": "author-uid",    "value": author_hash},
+        {"name": "base-synx",     "value": f"{base_synx:.2f}"},
+        {"name": "review-status", "value": status},
+        {"name": "created-ts",    "value": str(int(created_ts))},
+        {"name": "votes",         "value": str(int(votes))},
+        {"name": "Content-Type",  "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("⚖️ Review de oráculos %s → %s.", aporte_tx[:12], status)
+    return tx_id
+
+
+async def read_oracle_review(aporte_tx: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "oracle-review"},
+            {"name": "aporte-tx", "value": aporte_tx},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_oracle_review %s falló: %s", aporte_tx[:12], exc)
+    return None
+
+
+async def list_oracle_reviews(limit: int = 200) -> List[Dict[str, str]]:
+    """Última versión de cada review (todas; el caller filtra por status)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "oracle-review"},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "aporte-tx")
+    except Exception as exc:
+        logger.warning("list_oracle_reviews falló: %s", exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_oracle_vote(aporte_tx: str, uid_hash: str, vote: bool) -> str:
+    tags = [
+        {"name": "data-type", "value": "oracle-vote"},
+        {"name": "aporte-tx", "value": aporte_tx},
+        {"name": "uid-hash",  "value": uid_hash},
+        {"name": "vote",      "value": "yes" if vote else "no"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_oracle_votes(aporte_tx: str, limit: int = 200) -> List[Dict[str, str]]:
+    """Voto vigente de cada oráculo sobre un aporte (última por usuario)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "oracle-vote"},
+            {"name": "aporte-tx", "value": aporte_tx},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "uid-hash")
+    except Exception as exc:
+        logger.warning("list_oracle_votes %s falló: %s", aporte_tx[:12], exc)
+        return []
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # DIAGNÓSTICO / BALANCE
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1490,6 +1764,25 @@ __all__ = [
     "write_impact_counter",
     "read_impact_counter",
     "write_impact_royalty",
+    # Proveedores
+    "write_provider",
+    "list_node_providers",
+    # Financiamiento colectivo
+    "write_project",
+    "read_project",
+    "list_node_projects",
+    "write_project_fund",
+    "list_project_funds",
+    "write_project_vote",
+    "list_project_votes",
+    # Jueces Oráculos
+    "write_oracle_stake",
+    "read_oracle_stake",
+    "write_oracle_review",
+    "read_oracle_review",
+    "list_oracle_reviews",
+    "write_oracle_vote",
+    "list_oracle_votes",
     # Wallet custodial
     "write_custodial_wallet",
     "read_custodial_wallet",
