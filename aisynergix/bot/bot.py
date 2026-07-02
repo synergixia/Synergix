@@ -52,6 +52,9 @@ from aisynergix.services import wallet as wallet_svc
 from aisynergix.services import providers as providers_svc
 from aisynergix.services import projects as projects_svc
 from aisynergix.services import oracle as oracle_svc
+from aisynergix.services import agent as agent_svc
+from aisynergix.services import governance as gov_svc
+from aisynergix.services import passport as passport_svc
 
 
 logger = logging.getLogger("synergix.bot")
@@ -1749,6 +1752,258 @@ async def handle_oracle_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# FASE 3: PASSPORT · AGENTE · GOBERNANZA
+# ══════════════════════════════════════════════════════════════════════════
+
+@dp.message(Command("pasaporte"))
+async def cmd_passport(message: Message) -> None:
+    """Synergix Passport (§10): reputación verificable sellada en Arweave."""
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    notice = await message.answer(t("passport_building", lang))
+    result = await passport_svc.build_passport(uid)
+    try:
+        await notice.delete()
+    except Exception:
+        pass
+    if not result:
+        await message.answer(t("passport_failed", lang))
+        return
+    data = result["data"]
+    impacts = data.get("impacts", {})
+    oracle_info = data.get("oracle", {})
+    accuracy = oracle_info.get("accuracy")
+    text = t(
+        "passport_view", lang,
+        ghost_id=data.get("ghost_id", ""),
+        rank=_t_rank(data.get("rank", "🌱 Iniciado"), lang),
+        points=data.get("points", 0),
+        contributions=data.get("contributions", 0),
+        avg_score=data.get("avg_quality_score") or "—",
+        views=impacts.get("views", 0),
+        useful=impacts.get("useful", 0),
+        references=impacts.get("references", 0),
+        synx_earned=f"{data.get('synx_earned', 0):.0f}",
+        oracle_accuracy=(f"{accuracy * 100:.0f}%" if accuracy is not None else "—"),
+        url=f"{IRYS_GATEWAY_URL}/{result['tx']}",
+    )
+    if data.get("human_verified"):
+        text += "\n" + t("status_verified", lang)
+    await message.answer(text)
+
+
+# ── Gobernanza ──────────────────────────────────────────────────────────────
+
+_PROPOSAL_STATUS_ICON = {"open": "🗳️", "approved": "✅", "rejected": "❌"}
+
+
+@dp.message(Command("propuestas"))
+async def cmd_proposals(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        await message.answer(t("need_active_node", lang))
+        return
+
+    records = await gov_svc.list_proposals(node_id)
+    rows = []
+    for r in records[:10]:
+        pid = r.get("proposal-id", "")
+        icon = _PROPOSAL_STATUS_ICON.get(r.get("proposal-status", "open"), "🗳️")
+        label = r.get("text", pid)[:40]
+        rows.append([InlineKeyboardButton(text=f"{icon} {label}", callback_data=f"gov:view:{pid}")])
+    rows.append([InlineKeyboardButton(text=t("btn_proposal_create", lang), callback_data="gov:create")])
+    text = t("proposals_header", lang, pct=int(gov_svc.APPROVAL_PCT * 100),
+             hours=gov_svc.VOTING_WINDOW_H) if records else t("proposals_empty", lang)
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+async def _proposal_view(callback: CallbackQuery, pid: str, lang: str) -> None:
+    await gov_svc.check_and_resolve(pid)
+    record = await gov_svc.get_proposal(pid)
+    if not record:
+        await callback.message.edit_text(t("proposal_not_found", lang))
+        return
+    status = record.get("proposal-status", "open")
+    yes, total = await gov_svc.proposal_tallies(pid)
+    text = t(
+        "proposal_view", lang,
+        icon=_PROPOSAL_STATUS_ICON.get(status, "🗳️"),
+        text=html.escape(record.get("text", "")),
+        status=t("proposal_status_" + status, lang),
+        yes=yes, total=total,
+    )
+    rows = []
+    if status == "open":
+        rows.append([
+            InlineKeyboardButton(text=t("btn_vote_yes", lang), callback_data=f"gov:v:{pid}:1"),
+            InlineKeyboardButton(text=t("btn_vote_no", lang), callback_data=f"gov:v:{pid}:0"),
+        ])
+    await callback.message.edit_text(
+        text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None,
+    )
+
+
+@dp.callback_query(F.data.startswith("gov:"))
+async def handle_governance_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    pid = parts[2] if len(parts) > 2 else ""
+
+    if action == "create":
+        node_id = await _active_node_id(uid)
+        if not node_id:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        ghost = get_ghost_state_manager()
+        cache = get_l1_cache()
+        await ghost.set_state(uid, "awaiting_proposal_text")
+        await cache.set_state_data(uid, {"gov_node": node_id})
+        await callback.message.edit_text(t("proposal_ask_text", lang))
+
+    elif action == "view":
+        await _proposal_view(callback, pid, lang)
+
+    elif action == "v":
+        approve = (parts[3] if len(parts) > 3 else "0") == "1"
+        err = await gov_svc.vote_proposal(uid, pid, approve)
+        if err == "closed":
+            await callback.answer(t("proposal_closed", lang), show_alert=True)
+            return
+        if err == "not_member":
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        if err == "no_weight":
+            await callback.answer(t("proposal_no_weight", lang), show_alert=True)
+            return
+        await callback.answer(t("proposal_vote_recorded", lang))
+        return
+
+    await callback.answer()
+
+
+async def handle_proposal_text_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    await ghost.reset_state(uid)
+    proposal = await gov_svc.create_proposal(uid, draft.get("gov_node", ""), text)
+    if not proposal:
+        await message.answer(t("proposal_invalid", lang,
+                               min=gov_svc.MIN_TEXT_LEN, max=gov_svc.MAX_TEXT_LEN))
+        return
+    await message.answer(t(
+        "proposal_created", lang,
+        pct=int(gov_svc.APPROVAL_PCT * 100), hours=gov_svc.VOTING_WINDOW_H,
+    ))
+
+
+# ── Agente: acciones desde la conversación ──────────────────────────────────
+
+async def _try_agent_actions(message: Message, uid: int, text: str, lang: str) -> bool:
+    """Nivel 2 (Conecta) y Nivel 3 (Actúa) del Agente (§9.2).
+
+    Retorna True si el Agente atendió el mensaje (no pasa al Thinker).
+    Requiere nodo activo; sin nodo, la conversación sigue normal.
+    """
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        return False
+
+    # Nivel 2: "necesito un electricista" → proveedores verificados del nodo.
+    category = agent_svc.detect_provider_intent(text)
+    if category:
+        provs = await providers_svc.get_providers(node_id)
+        matches = [p for p in provs if p.get("category") == category] or provs
+        if not matches:
+            await message.answer(t("agent_no_providers", lang,
+                                   category=_prov_label(category, lang)))
+            return True
+        out = t("agent_providers_found", lang, category=_prov_label(category, lang)) + "\n\n"
+        for p in matches[:5]:
+            out += t(
+                "provider_entry", lang,
+                icon=providers_svc.PROVIDER_CATEGORIES.get(p.get("category", ""), "🧰"),
+                category=t("prov_" + p.get("category", "otros"), lang),
+                desc=html.escape(p.get("description", "")),
+            ) + "\n"
+        await message.answer(out)
+        return True
+
+    # Nivel 3: "dona 10 SYNX al proyecto X" → confirmación explícita, nunca
+    # se mueve SYNX sin que el usuario pulse el botón.
+    amount = agent_svc.detect_donation_intent(text)
+    if amount:
+        records = await projects_svc.list_projects(node_id)
+        project = agent_svc.match_project(records, text)
+        if not project:
+            await message.answer(t("agent_no_project_match", lang))
+            return True
+        pid = project.get("project-id", "")
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=t("btn_confirm_trade", lang),
+                callback_data=f"agent:don:{pid}:{amount:g}",
+            ),
+            InlineKeyboardButton(text=t("btn_cancel_trade", lang), callback_data="agent:cancel"),
+        ]])
+        await message.answer(
+            t("agent_donation_confirm", lang,
+              amount=f"{amount:g}", title=html.escape(project.get("title", pid))),
+            reply_markup=kb,
+        )
+        return True
+
+    return False
+
+
+@dp.callback_query(F.data.startswith("agent:"))
+async def handle_agent_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "cancel":
+        await callback.message.edit_text(t("trade_cancelled", lang))
+
+    elif action == "don":
+        pid = parts[2] if len(parts) > 2 else ""
+        try:
+            amount = float(parts[3]) if len(parts) > 3 else 0.0
+        except ValueError:
+            amount = 0.0
+        err = await projects_svc.fund_project(uid, pid, amount)
+        if err == "insufficient":
+            await callback.message.edit_text(t("project_insufficient", lang))
+        elif err in ("bad_amount", "not_active"):
+            await callback.message.edit_text(t("project_not_active", lang))
+        else:
+            await callback.message.edit_text(
+                t("agent_donation_done", lang, amount=f"{amount:g}")
+            )
+
+    await callback.answer()
+
+
 @dp.callback_query(F.data == "impact:useful")
 async def handle_impact_useful(callback: CallbackQuery) -> None:
     """'✅ útil' (PIR §7.2): +1 impacto verificado a cada aporte usado en la
@@ -1835,7 +2090,7 @@ async def handle_sticker_message(message: Message) -> None:
         "awaiting_contribution", "awaiting_buy_amount", "awaiting_sell_amount",
         "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
         "awaiting_provider_desc", "awaiting_project_name", "awaiting_project_goal",
-        "awaiting_project_fund",
+        "awaiting_project_fund", "awaiting_proposal_text",
     ):
         return
 
@@ -1920,6 +2175,10 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_project_fund":
         await handle_project_fund_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_proposal_text":
+        await handle_proposal_text_message(message, uid, text, lang)
         return
 
     await handle_conversation_message(message, uid, text, lang)
@@ -2093,6 +2352,17 @@ async def handle_conversation_message(
     # Emoji-only message → ask the model for a single emoji reaction.
     # The full verbose response is suppressed; only emojis are extracted and shown.
     is_emoji_msg = _is_emoji_only(text)
+
+    # Agente Synergix (§9.2): intenciones de acción — buscar proveedores
+    # (Nivel 2) o donar a un proyecto (Nivel 3, con confirmación) — se
+    # atienden aquí y no llegan al Thinker.  Detectores deterministas,
+    # sin coste de LLM.
+    if not is_emoji_msg:
+        try:
+            if await _try_agent_actions(message, uid, text, lang):
+                return
+        except Exception as exc:
+            logger.warning("agent actions uid=%s falló: %s", uid, exc)
 
     # Image generation: the Judge classifies whether this is an explicit request
     # to create an image.  If so, handle it here and return — never fall through
@@ -2409,6 +2679,8 @@ async def set_bot_commands():
         BotCommand(command="proveedores", description="💼 Proveedores del nodo"),
         BotCommand(command="proyectos", description="🏗️ Financiamiento colectivo"),
         BotCommand(command="oraculo", description="🔮 Jurado de Oráculos"),
+        BotCommand(command="propuestas", description="🗳️ Gobernanza del nodo"),
+        BotCommand(command="pasaporte", description="🪪 Mi Passport on-chain"),
     ]
     await bot.set_my_commands(commands)
 

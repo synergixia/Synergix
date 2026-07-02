@@ -63,6 +63,9 @@ class UserProfile:
     # Racha de días consecutivos contribuyendo (§5.3: 7+ días → ×2 ese día).
     streak_days: int = 0
     last_aporte_date: Optional[str] = None  # "YYYY-MM-DD" UTC
+    # SYNX ganados históricos (§10.2): solo crece con cada acreditación;
+    # los gastos (fondear, stake) no lo reducen.  Campo del Passport.
+    synx_earned_total: float = 0.0
 
     def __post_init__(self):
         self.uid_hash = _hash_uid(self.uid)
@@ -116,6 +119,7 @@ class UserProfile:
             custodial_address=tags.get("custodial_address") or None,
             streak_days=int(tags.get("streak_days", 0) or 0),
             last_aporte_date=tags.get("last_aporte_date") or None,
+            synx_earned_total=float(tags.get("synx_earned_total", "0") or 0),
         )
 
         if profile.rank not in RANK_TABLE:
@@ -151,6 +155,7 @@ class UserProfile:
         base["streak_days"] = str(self.streak_days)
         if self.last_aporte_date:
             base["last_aporte_date"] = self.last_aporte_date
+        base["synx_earned_total"] = f"{self.synx_earned_total:.2f}"
         return base
 
     def update_trust_score(self, delta: float) -> None:
@@ -231,7 +236,7 @@ class IdentityManager:
 
     _SEALED_FIELDS = (
         "points", "contribution_count", "daily_aportes_count",
-        "total_uses_count", "synx_balance",
+        "total_uses_count", "synx_balance", "synx_earned_total",
     )
 
     def _sealed_base(self, uid_hash: str, profile: "UserProfile", field: str) -> int:
@@ -391,8 +396,17 @@ class IdentityManager:
                 )
                 new_balance = round(base + amount, 2)
                 tags["synx_balance"] = f"{new_balance:.2f}"
+                # Histórico de ganancias (Passport §10.2): solo crece.
+                led = self._sealed.get(uid_hash, {})
+                earned = max(
+                    float(tags.get("synx_earned_total", 0) or 0),
+                    float(led.get("synx_earned_total", 0.0)),
+                ) + amount
+                tags["synx_earned_total"] = f"{earned:.2f}"
                 await write_user_tags(uid_hash, tags)
-                self._sealed.setdefault(uid_hash, {})["synx_balance"] = new_balance
+                sealed = self._sealed.setdefault(uid_hash, {})
+                sealed["synx_balance"] = new_balance
+                sealed["synx_earned_total"] = earned
                 self.invalidate_cache_by_hash(uid_hash)
                 return new_balance
             except Exception as exc:
@@ -493,6 +507,10 @@ class IdentityManager:
             )
             profile.synx_balance = (
                 self._sealed_base(uid_hash, profile, "synx_balance") + synx
+            )
+            profile.synx_earned_total = (
+                self._sealed_base(uid_hash, profile, "synx_earned_total")
+                + (synx if synx > 0 else 0)
             )
             if trust_delta:
                 profile.update_trust_score(trust_delta)

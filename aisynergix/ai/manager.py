@@ -459,6 +459,14 @@ class AIManager:
                     logger.info("uid=%s: web fallback used (%d results)", uid, len(web_results))
                 else:
                     logger.info("uid=%s: web fallback found nothing — Thinker answers unaided", uid)
+                    # IEC (§9.3): pregunta sin respuesta → vacío de
+                    # conocimiento público en el nodo del usuario, para que
+                    # la comunidad compita por llenarlo.
+                    if profile.active_node:
+                        from aisynergix.services.agent import record_knowledge_gap
+                        _spawn_bg(record_knowledge_gap(
+                            profile.active_node, message, target_language
+                        ))
             else:
                 logger.info("uid=%s: answering from immortal memory (%d fragments)",
                             uid, len(search_results))

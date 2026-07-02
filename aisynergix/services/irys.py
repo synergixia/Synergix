@@ -521,6 +521,8 @@ _PROFILE_TAG_MAP: Dict[str, str] = {
     # Racha de días consecutivos contribuyendo (§5.3).
     "streak_days":         "streak-days",
     "last_aporte_date":    "last-aporte-date",
+    # SYNX ganados históricos (Passport §10.2) — solo crece.
+    "synx_earned_total":   "synx-earned-total",
 }
 _PROFILE_TAG_RMAP: Dict[str, str] = {v: k for k, v in _PROFILE_TAG_MAP.items()}
 
@@ -1531,7 +1533,8 @@ async def list_project_votes(project_id: str, limit: int = 1000) -> List[Dict[st
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
 async def write_oracle_stake(
-    uid_hash: str, amount: float, status: str, wrong_streak: int = 0
+    uid_hash: str, amount: float, status: str, wrong_streak: int = 0,
+    votes_total: int = 0, votes_correct: int = 0,
 ) -> str:
     tags = [
         {"name": "data-type",    "value": "oracle-stake"},
@@ -1539,6 +1542,9 @@ async def write_oracle_stake(
         {"name": "amount",       "value": f"{amount:.2f}"},
         {"name": "stake-status", "value": status},
         {"name": "wrong-streak", "value": str(int(wrong_streak))},
+        # Reputación como juez (Passport §10.2): tasa de acierto.
+        {"name": "votes-total",   "value": str(int(votes_total))},
+        {"name": "votes-correct", "value": str(int(votes_correct))},
         {"name": "Content-Type", "value": "application/json"},
     ]
     tx_id = await _upload(b"{}", tags)
@@ -1634,6 +1640,201 @@ async def list_oracle_votes(aporte_tx: str, limit: int = 200) -> List[Dict[str, 
         return _dedupe_latest(nodes, "uid-hash")
     except Exception as exc:
         logger.warning("list_oracle_votes %s falló: %s", aporte_tx[:12], exc)
+        return []
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PROTOCOLO GLOBAL (Fase 3): PASSPORT · VACÍOS · GOBERNANZA
+#
+#   data-type=passport       → reputación agregada y verificable del usuario
+#                              (última versión por uid gana; §10).
+#   data-type=knowledge-gap  → pregunta sin respuesta detectada por el
+#                              Agente (IEC §9.3), pública en el nodo.
+#   data-type=proposal       → propuesta de gobernanza del nodo (§6.2 uso 6).
+#   data-type=proposal-vote  → voto ponderado (1 SYNX = 1 voto); última
+#                              versión por usuario gana.
+# ═══════════════════════════════════════════════════════════════════════
+
+async def list_impact_counters_by_author(author_hash: str, limit: int = 500) -> List[Dict[str, str]]:
+    """Contadores de impacto vigentes de todos los aportes de un autor."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",  "value": "impact-counter"},
+            {"name": "author-uid", "value": author_hash},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "aporte-tx")
+    except Exception as exc:
+        logger.warning("list_impact_counters_by_author %s falló: %s", author_hash, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_passport(uid_hash: str, data: Dict[str, Any]) -> str:
+    """Sella el Passport (reputación agregada) de un usuario en Irys."""
+    content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    tags = [
+        {"name": "data-type", "value": "passport"},
+        {"name": "uid-hash",  "value": uid_hash},
+        {"name": "rank",      "value": str(data.get("rank", ""))},
+        {"name": "points",    "value": str(data.get("points", 0))},
+        {"name": "contributions", "value": str(data.get("contributions", 0))},
+        {"name": "synx-earned",   "value": f"{float(data.get('synx_earned', 0)):.2f}"},
+        {"name": "Content-Type",  "value": "application/json"},
+    ]
+    tx_id = await _upload(content, tags)
+    logger.info("🪪 Passport de %s sellado en Irys. Ver dato: %s", uid_hash, _gw(tx_id))
+    return tx_id
+
+
+async def read_passport(uid_hash: str) -> Optional[Dict[str, Any]]:
+    """Última versión del Passport: {"tags": ..., "data": ..., "tx": ...}."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "passport"},
+            {"name": "uid-hash",  "value": uid_hash},
+        ])
+        if not node:
+            return None
+        raw = await _fetch(node["id"])
+        return {
+            "tx": node["id"],
+            "tags": _node_tags(node),
+            "data": json.loads(raw.decode("utf-8")),
+        }
+    except Exception as exc:
+        logger.warning("read_passport %s falló: %s", uid_hash, exc)
+        return None
+
+
+def _question_hash(question: str) -> str:
+    return hashlib.sha256(question.strip().lower().encode("utf-8")).hexdigest()[:12]
+
+
+async def write_knowledge_gap(node_id: str, question: str, lang: str) -> Optional[str]:
+    """Registra un vacío de conocimiento (pregunta sin respuesta, IEC §9.3).
+
+    Dedupe por hash de la pregunta: la misma duda no se registra dos veces.
+    """
+    qh = _question_hash(question)
+    try:
+        existing = await _query_latest([
+            {"name": "data-type",     "value": "knowledge-gap"},
+            {"name": "question-hash", "value": qh},
+        ])
+        if existing:
+            return None
+        tags = [
+            {"name": "data-type",     "value": "knowledge-gap"},
+            {"name": "node-id",       "value": node_id},
+            {"name": "question",      "value": question[:200]},
+            {"name": "question-hash", "value": qh},
+            {"name": "language",      "value": lang},
+            {"name": "Content-Type",  "value": "application/json"},
+        ]
+        tx_id = await _upload(b"{}", tags)
+        logger.info("🕳️ Vacío de conocimiento registrado en %s: %s", node_id, question[:80])
+        return tx_id
+    except Exception as exc:
+        logger.warning("write_knowledge_gap falló: %s", exc)
+        return None
+
+
+async def list_node_gaps(node_id: str, limit: int = 20) -> List[Dict[str, str]]:
+    """Vacíos de conocimiento del nodo, más nuevos primero (dedupe por pregunta)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "knowledge-gap"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "question-hash")
+    except Exception as exc:
+        logger.warning("list_node_gaps %s falló: %s", node_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_proposal(
+    proposal_id: str, node_id: str, creator_hash: str, text: str,
+    status: str, voting_until: int,
+) -> str:
+    tags = [
+        {"name": "data-type",       "value": "proposal"},
+        {"name": "proposal-id",     "value": proposal_id},
+        {"name": "node-id",         "value": node_id},
+        {"name": "creator",         "value": creator_hash},
+        {"name": "text",            "value": (text or "")[:200]},
+        {"name": "proposal-status", "value": status},
+        {"name": "voting-until",    "value": str(int(voting_until))},
+        {"name": "Content-Type",    "value": "application/json"},
+    ]
+    content = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
+    tx_id = await _upload(content, tags)
+    logger.info("🗳️ Propuesta %s (%s) sellada en Irys.", proposal_id, status)
+    return tx_id
+
+
+async def read_proposal(proposal_id: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type",   "value": "proposal"},
+            {"name": "proposal-id", "value": proposal_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_proposal %s falló: %s", proposal_id, exc)
+    return None
+
+
+async def list_node_proposals(node_id: str, limit: int = 100) -> List[Dict[str, str]]:
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "proposal"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "proposal-id")
+    except Exception as exc:
+        logger.warning("list_node_proposals %s falló: %s", node_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_proposal_vote(
+    proposal_id: str, uid_hash: str, vote: bool, weight: int
+) -> str:
+    tags = [
+        {"name": "data-type",   "value": "proposal-vote"},
+        {"name": "proposal-id", "value": proposal_id},
+        {"name": "uid-hash",    "value": uid_hash},
+        {"name": "vote",        "value": "yes" if vote else "no"},
+        {"name": "weight",      "value": str(int(weight))},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_proposal_votes(proposal_id: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Voto vigente de cada miembro (última versión por usuario)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",   "value": "proposal-vote"},
+            {"name": "proposal-id", "value": proposal_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "uid-hash")
+    except Exception as exc:
+        logger.warning("list_proposal_votes %s falló: %s", proposal_id, exc)
         return []
 
 
@@ -1775,6 +1976,17 @@ __all__ = [
     "list_project_funds",
     "write_project_vote",
     "list_project_votes",
+    # Protocolo Global (Fase 3)
+    "list_impact_counters_by_author",
+    "write_passport",
+    "read_passport",
+    "write_knowledge_gap",
+    "list_node_gaps",
+    "write_proposal",
+    "read_proposal",
+    "list_node_proposals",
+    "write_proposal_vote",
+    "list_proposal_votes",
     # Jueces Oráculos
     "write_oracle_stake",
     "read_oracle_stake",

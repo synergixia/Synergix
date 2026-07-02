@@ -21,6 +21,8 @@ class SynergixStates(StatesGroup):
     awaiting_project_name = State()
     awaiting_project_goal = State()
     awaiting_project_fund = State()
+    # Governance (Fase 3)
+    awaiting_proposal_text = State()
 
 
 class L1StateCache:
