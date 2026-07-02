@@ -49,6 +49,9 @@ from aisynergix.services.irys import IRYS_GATEWAY_URL
 from aisynergix.nodes import node_manager as nodes_svc
 from aisynergix.nodes import knowledge_map as kmap_svc
 from aisynergix.services import wallet as wallet_svc
+from aisynergix.services import providers as providers_svc
+from aisynergix.services import projects as projects_svc
+from aisynergix.services import oracle as oracle_svc
 
 
 logger = logging.getLogger("synergix.bot")
@@ -1322,6 +1325,430 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# FASE 2: PROVEEDORES · FINANCIAMIENTO COLECTIVO · JUECES ORÁCULOS
+# ══════════════════════════════════════════════════════════════════════════
+
+async def _active_node_id(uid: int) -> Optional[str]:
+    profile = await get_identity_manager().get_profile(uid)
+    return profile.active_node
+
+
+def _prov_label(key: str, lang: str) -> str:
+    icon = providers_svc.PROVIDER_CATEGORIES.get(key, "🧰")
+    return f"{icon} {t('prov_' + key, lang)}"
+
+
+# ── Proveedores ─────────────────────────────────────────────────────────────
+
+@dp.message(Command("proveedores"))
+async def cmd_providers(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        await message.answer(t("need_active_node", lang))
+        return
+
+    provs = await providers_svc.get_providers(node_id)
+    text = t("providers_header", lang) + "\n\n"
+    if not provs:
+        text += t("providers_empty", lang)
+    else:
+        for p in provs:
+            text += t(
+                "provider_entry", lang,
+                icon=providers_svc.PROVIDER_CATEGORIES.get(p.get("category", ""), "🧰"),
+                category=t("prov_" + p.get("category", "otros"), lang),
+                desc=html.escape(p.get("description", "")),
+            ) + "\n"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=t("btn_provider_register", lang), callback_data="prov:register"),
+    ]])
+    await message.answer(text, reply_markup=kb)
+
+
+@dp.callback_query(F.data.startswith("prov:"))
+async def handle_provider_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "register":
+        node_id = await _active_node_id(uid)
+        if not node_id:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        rows, row = [], []
+        for key in providers_svc.PROVIDER_CATEGORIES:
+            row.append(InlineKeyboardButton(text=_prov_label(key, lang), callback_data=f"prov:cat:{key}"))
+            if len(row) == 2:
+                rows.append(row); row = []
+        if row:
+            rows.append(row)
+        await callback.message.edit_text(
+            t("provider_ask_category", lang),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    elif action == "cat":
+        category = parts[2] if len(parts) > 2 else ""
+        node_id = await _active_node_id(uid)
+        if not node_id or category not in providers_svc.PROVIDER_CATEGORIES:
+            await callback.answer(); return
+        ghost = get_ghost_state_manager()
+        cache = get_l1_cache()
+        await ghost.set_state(uid, "awaiting_provider_desc")
+        await cache.set_state_data(uid, {"prov_cat": category, "prov_node": node_id})
+        await callback.message.edit_text(t("provider_ask_desc", lang))
+
+    await callback.answer()
+
+
+async def handle_provider_desc_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    category = draft.get("prov_cat", "")
+    node_id = draft.get("prov_node", "")
+    await ghost.reset_state(uid)
+
+    err = await providers_svc.register_provider(uid, node_id, category, text)
+    if err == "not_verified":
+        await message.answer(t("provider_need_verified", lang))
+    elif err == "not_member":
+        await message.answer(t("need_active_node", lang))
+    elif err == "bad_input":
+        await message.answer(t("provider_bad_desc", lang))
+    else:
+        await message.answer(t("provider_registered", lang, category=_prov_label(category, lang)))
+
+
+# ── Financiamiento colectivo ────────────────────────────────────────────────
+
+_PROJECT_STATUS_ICON = {
+    "active": "🟢", "voting": "🗳️", "completed": "✅", "refunded": "↩️",
+}
+
+
+async def _project_view(callback: CallbackQuery, project_id: str, lang: str, uid: int) -> None:
+    # Resolución perezosa de votaciones expiradas antes de mostrar.
+    await projects_svc.check_and_resolve(project_id)
+    proj = await projects_svc.get_project(project_id)
+    if not proj:
+        await callback.message.edit_text(t("project_not_found", lang))
+        return
+    uid_hash = _hash_uid_bot(uid)
+    text = t(
+        "project_view", lang,
+        icon=_PROJECT_STATUS_ICON.get(proj["status"], "🟢"),
+        title=html.escape(proj["title"]),
+        status=t("project_status_" + proj["status"], lang),
+        raised=f"{proj['raised']:.0f}",
+        goal=f"{proj['goal']:.0f}",
+        funders=len(proj["funders"]),
+    )
+    rows = []
+    if proj["status"] == "active":
+        rows.append([InlineKeyboardButton(text=t("btn_project_fund", lang), callback_data=f"proj:fund:{project_id}")])
+        if proj["creator"] == uid_hash and proj["raised"] > 0:
+            rows.append([InlineKeyboardButton(text=t("btn_project_done", lang), callback_data=f"proj:done:{project_id}")])
+    elif proj["status"] == "voting" and uid_hash in proj["funders"]:
+        rows.append([
+            InlineKeyboardButton(text=t("btn_project_vote_yes", lang), callback_data=f"proj:vote:{project_id}:1"),
+            InlineKeyboardButton(text=t("btn_project_vote_no", lang), callback_data=f"proj:vote:{project_id}:0"),
+        ])
+    await callback.message.edit_text(
+        text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None,
+    )
+
+
+def _hash_uid_bot(uid: int) -> str:
+    from aisynergix.bot.identity import _hash_uid
+    return _hash_uid(uid)
+
+
+@dp.message(Command("proyectos"))
+async def cmd_projects(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        await message.answer(t("need_active_node", lang))
+        return
+
+    records = await projects_svc.list_projects(node_id)
+    rows = []
+    for r in records[:10]:
+        pid = r.get("project-id", "")
+        icon = _PROJECT_STATUS_ICON.get(r.get("project-status", "active"), "🟢")
+        rows.append([InlineKeyboardButton(
+            text=f"{icon} {r.get('title', pid)}", callback_data=f"proj:view:{pid}",
+        )])
+    rows.append([InlineKeyboardButton(text=t("btn_project_create", lang), callback_data="proj:create")])
+    text = t("projects_header", lang) if records else t("projects_empty", lang)
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data.startswith("proj:"))
+async def handle_project_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    pid = parts[2] if len(parts) > 2 else ""
+
+    if action == "create":
+        node_id = await _active_node_id(uid)
+        if not node_id:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        await ghost.set_state(uid, "awaiting_project_name")
+        await cache.set_state_data(uid, {"proj_node": node_id})
+        await callback.message.edit_text(t("project_ask_name", lang))
+
+    elif action == "view":
+        await _project_view(callback, pid, lang, uid)
+
+    elif action == "fund":
+        await ghost.set_state(uid, "awaiting_project_fund")
+        await cache.set_state_data(uid, {"proj_id": pid})
+        await callback.message.edit_text(
+            t("project_fund_ask", lang, min=int(projects_svc.FUND_MIN_SYNX))
+        )
+
+    elif action == "done":
+        err = await projects_svc.request_completion(uid, pid)
+        if err == "not_creator":
+            await callback.answer(t("project_only_creator", lang), show_alert=True)
+            return
+        if err in ("not_active", "no_funds"):
+            await callback.answer(t("project_not_active", lang), show_alert=True)
+            return
+        await callback.message.edit_text(
+            t("project_voting_started", lang, hours=projects_svc.VOTING_WINDOW_H)
+        )
+
+    elif action == "vote":
+        approve = (parts[3] if len(parts) > 3 else "0") == "1"
+        result = await projects_svc.vote_project(uid, pid, approve)
+        if result == "not_voting":
+            await callback.answer(t("project_not_active", lang), show_alert=True)
+            return
+        if result == "not_funder":
+            await callback.answer(t("project_only_funders", lang), show_alert=True)
+            return
+        if result == "completed":
+            await callback.message.edit_text(t("project_released", lang))
+        elif result == "refunded":
+            await callback.message.edit_text(t("project_refunded", lang))
+        else:
+            await callback.answer(t("project_vote_recorded", lang))
+            return
+
+    await callback.answer()
+
+
+async def handle_project_name_message(message: Message, uid: int, text: str, lang: str) -> None:
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    title = text.strip()
+    if not (projects_svc.MIN_TITLE_LEN <= len(title) <= projects_svc.MAX_TITLE_LEN):
+        await message.answer(t("project_invalid_name", lang))
+        return
+    draft["proj_title"] = title
+    await get_ghost_state_manager().set_state(uid, "awaiting_project_goal")
+    await cache.set_state_data(uid, draft)
+    await message.answer(t("project_ask_goal", lang, min=int(projects_svc.GOAL_MIN_SYNX)))
+
+
+async def handle_project_goal_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    try:
+        goal = float(text.replace(",", "."))
+    except ValueError:
+        await message.answer(t("invalid_amount", lang))
+        return
+    if goal < projects_svc.GOAL_MIN_SYNX:
+        await message.answer(t("project_ask_goal", lang, min=int(projects_svc.GOAL_MIN_SYNX)))
+        return
+    await ghost.reset_state(uid)
+    proj = await projects_svc.create_project(
+        uid, draft.get("proj_node", ""), draft.get("proj_title", ""), goal,
+    )
+    if not proj:
+        await message.answer(t("project_create_failed", lang))
+        return
+    await message.answer(t(
+        "project_created", lang,
+        title=html.escape(proj["title"]), goal=f"{goal:.0f}",
+    ))
+
+
+async def handle_project_fund_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    pid = draft.get("proj_id", "")
+    try:
+        amount = float(text.replace(",", "."))
+    except ValueError:
+        await message.answer(t("invalid_amount", lang))
+        return
+    await ghost.reset_state(uid)
+    err = await projects_svc.fund_project(uid, pid, amount)
+    if err == "insufficient":
+        await message.answer(t("project_insufficient", lang))
+    elif err == "bad_amount":
+        await message.answer(t("project_fund_ask", lang, min=int(projects_svc.FUND_MIN_SYNX)))
+    elif err == "not_active":
+        await message.answer(t("project_not_active", lang))
+    else:
+        await message.answer(t("project_funded", lang, amount=f"{amount:.0f}"))
+
+
+# ── Jueces Oráculos ─────────────────────────────────────────────────────────
+
+@dp.message(Command("oraculo"))
+async def cmd_oracle(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    stake = await oracle_svc.get_stake(_hash_uid_bot(uid))
+    if stake:
+        text = t(
+            "oracle_menu_staked", lang,
+            amount=f"{float(stake.get('amount', 0) or 0):.0f}",
+            reward=int(oracle_svc.VOTE_REWARD_SYNX),
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t("btn_oracle_pending", lang), callback_data="orc:pending")],
+            [InlineKeyboardButton(text=t("btn_oracle_unstake", lang), callback_data="orc:unstake")],
+        ])
+    else:
+        text = t(
+            "oracle_menu_intro", lang,
+            stake=int(oracle_svc.STAKE_MIN_SYNX),
+            points=oracle_svc.ELIGIBLE_MIN_POINTS,
+            reward=int(oracle_svc.VOTE_REWARD_SYNX),
+            penalty=int(oracle_svc.PENALTY_SYNX),
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=t("btn_oracle_stake", lang, stake=int(oracle_svc.STAKE_MIN_SYNX)),
+                callback_data="orc:stake",
+            ),
+        ]])
+    await message.answer(text, reply_markup=kb)
+
+
+@dp.callback_query(F.data.startswith("orc:"))
+async def handle_oracle_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "stake":
+        err = await oracle_svc.stake(uid)
+        if err == "not_eligible":
+            await callback.answer(
+                t("oracle_not_eligible", lang, points=oracle_svc.ELIGIBLE_MIN_POINTS),
+                show_alert=True,
+            )
+            return
+        if err == "already_staked":
+            await callback.answer(t("oracle_already_staked", lang))
+            return
+        if err == "insufficient":
+            await callback.answer(
+                t("oracle_insufficient", lang, stake=int(oracle_svc.STAKE_MIN_SYNX)),
+                show_alert=True,
+            )
+            return
+        await callback.message.edit_text(t("oracle_stake_ok", lang))
+
+    elif action == "unstake":
+        err = await oracle_svc.unstake(uid)
+        if err == "not_staked":
+            await callback.answer(t("oracle_not_staked", lang))
+            return
+        await callback.message.edit_text(t("oracle_unstake_ok", lang))
+
+    elif action == "pending":
+        reviews = await oracle_svc.pending_reviews(limit=5)
+        if not reviews:
+            await callback.message.edit_text(t("oracle_no_pending", lang))
+        else:
+            from aisynergix.services.irys import read_aporte
+            await callback.message.edit_text(t("oracle_pending_header", lang, count=len(reviews)))
+            for review in reviews:
+                tx = review.get("aporte-tx", "")
+                preview = ""
+                try:
+                    texto, _tags = await read_aporte(tx)
+                    preview = texto[:250] + ("…" if len(texto) > 250 else "")
+                except Exception:
+                    preview = tx
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="👍", callback_data=f"orc:v:{tx}:1"),
+                    InlineKeyboardButton(text="👎", callback_data=f"orc:v:{tx}:0"),
+                ]])
+                await callback.message.answer(
+                    t("oracle_review_entry", lang, preview=html.escape(preview)),
+                    reply_markup=kb,
+                )
+
+    elif action == "v":
+        tx = parts[2] if len(parts) > 2 else ""
+        approve = (parts[3] if len(parts) > 3 else "0") == "1"
+        result = await oracle_svc.vote(uid, tx, approve)
+        if result == "not_oracle":
+            await callback.answer(t("oracle_not_staked", lang), show_alert=True)
+            return
+        if result == "own_aporte":
+            await callback.answer(t("oracle_own_aporte", lang), show_alert=True)
+            return
+        if result == "not_pending":
+            await callback.answer(t("oracle_review_closed", lang))
+        elif result in ("approved", "rejected"):
+            await callback.message.edit_text(t(f"oracle_resolved_{result}", lang))
+        else:
+            await callback.answer(t("oracle_vote_recorded", lang))
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    await callback.answer()
+
+
 @dp.callback_query(F.data == "impact:useful")
 async def handle_impact_useful(callback: CallbackQuery) -> None:
     """'✅ útil' (PIR §7.2): +1 impacto verificado a cada aporte usado en la
@@ -1407,6 +1834,8 @@ async def handle_sticker_message(message: Message) -> None:
     if current_state in (
         "awaiting_contribution", "awaiting_buy_amount", "awaiting_sell_amount",
         "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
+        "awaiting_provider_desc", "awaiting_project_name", "awaiting_project_goal",
+        "awaiting_project_fund",
     ):
         return
 
@@ -1475,6 +1904,22 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_node_name":
         await handle_node_name_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_provider_desc":
+        await handle_provider_desc_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_project_name":
+        await handle_project_name_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_project_goal":
+        await handle_project_goal_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_project_fund":
+        await handle_project_fund_message(message, uid, text, lang)
         return
 
     await handle_conversation_message(message, uid, text, lang)
@@ -1546,6 +1991,8 @@ async def handle_contribution_message(
                 streak = result.get("streak_days", 0)
                 if streak >= 2:
                     response_text += "\n" + t("streak_line", lang, days=streak)
+                if result.get("oracle_review"):
+                    response_text += "\n" + t("oracle_review_pending", lang)
 
             keyboard = get_main_keyboard(lang)
             await message.answer(response_text, reply_markup=keyboard)
@@ -1959,6 +2406,9 @@ async def set_bot_commands():
         BotCommand(command="start", description="🔥 Iniciar / Despertar a Synergix"),
         BotCommand(command="nodos", description="🏘️ Nodos de comunidad"),
         BotCommand(command="crear_nodo", description="➕ Crear un nodo de comunidad"),
+        BotCommand(command="proveedores", description="💼 Proveedores del nodo"),
+        BotCommand(command="proyectos", description="🏗️ Financiamiento colectivo"),
+        BotCommand(command="oraculo", description="🔮 Jurado de Oráculos"),
     ]
     await bot.set_my_commands(commands)
 

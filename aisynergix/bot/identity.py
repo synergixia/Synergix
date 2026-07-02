@@ -399,6 +399,42 @@ class IdentityManager:
                 _log.warning("credit_synx falló para uid_hash=%s: %s", uid_hash, exc)
                 return None
 
+    async def debit_synx(
+        self, uid_hash: str, amount: float, allow_partial: bool = False
+    ) -> Optional[float]:
+        """Debita SYNX de un usuario de forma atómica (financiar, stake, multas).
+
+        Retorna el monto realmente debitado, o None si el saldo es
+        insuficiente (con ``allow_partial=True`` debita lo que haya, para
+        penalizaciones).  Nunca deja el saldo en negativo.
+        """
+        from aisynergix.services.irys import read_user_tags, write_user_tags
+        import logging
+        _log = logging.getLogger(__name__)
+        if amount <= 0:
+            return None
+        async with self._lock_for(uid_hash):
+            try:
+                tags = await read_user_tags(uid_hash)
+                led = self._sealed.get(uid_hash, {})
+                base = max(
+                    float(tags.get("synx_balance", 0) or 0),
+                    float(led.get("synx_balance", 0.0)),
+                )
+                if base < amount:
+                    if not allow_partial or base <= 0:
+                        return None
+                    amount = round(base, 2)
+                new_balance = round(base - amount, 2)
+                tags["synx_balance"] = f"{new_balance:.2f}"
+                await write_user_tags(uid_hash, tags)
+                self._sealed.setdefault(uid_hash, {})["synx_balance"] = new_balance
+                self.invalidate_cache_by_hash(uid_hash)
+                return amount
+            except Exception as exc:
+                _log.warning("debit_synx falló para uid_hash=%s: %s", uid_hash, exc)
+                return None
+
     async def update_profile(self, uid: int, profile: UserProfile) -> None:
         """Persist the profile to Irys under the per-user write lock."""
         async with self._lock_for(_hash_uid(uid)):

@@ -737,6 +737,16 @@ class AIManager:
                 profile.uid_hash, synx_award,
             ))
 
+        # §5.4 Juez 2: los aportes score ≥ 8 pasan al Jurado de Oráculos.
+        # Si lo aprueban, el autor recibe el ×3 de la tabla §5.2.
+        from aisynergix.services.oracle import create_review, REVIEW_MIN_SCORE
+        oracle_review = (
+            quality_score >= REVIEW_MIN_SCORE
+            and not object_path.startswith("local:")
+        )
+        if oracle_review:
+            _spawn_bg(create_review(object_path, profile.uid_hash, synx_award))
+
         return {
             "status": "success",
             "message_key": (
@@ -754,6 +764,7 @@ class AIManager:
             "synx_balance": profile.synx_balance,
             "synx_bonuses": bonus.active_keys(),
             "streak_days": new_streak,
+            "oracle_review": oracle_review,
             "node_id": node_id,
             "tier": tier,
             "rank": profile.rank,
