@@ -14,9 +14,42 @@ Todo lo de este módulo es lógica pura (sin red) para que sea testeable; la
 recolección de datos (aportes del nodo, stats de idioma) vive en el caller.
 """
 
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
+
+# Techo defensivo para cualquier monto SYNX/BNB introducido por el usuario.
+# Evita overflows y montos absurdos; muy por encima de cualquier saldo real.
+MAX_AMOUNT = 1e15
+
+
+def parse_amount(text: str) -> Optional[float]:
+    """Parsea un monto del usuario de forma SEGURA.
+
+    ``float()`` acepta 'nan', 'inf' y '1e400': 'nan' es especialmente
+    peligroso porque rompe todas las comparaciones (``x < nan`` es False),
+    saltándose los controles de saldo y corrompiendo el balance.  Esta
+    función rechaza no-finitos, no-positivos y montos por encima de
+    ``MAX_AMOUNT``.  Retorna el float validado o None.
+    """
+    if text is None:
+        return None
+    try:
+        value = float(str(text).strip().replace(",", "."))
+    except (ValueError, TypeError):
+        return None
+    if not math.isfinite(value) or value <= 0 or value > MAX_AMOUNT:
+        return None
+    return value
+
+
+def is_valid_amount(value: float) -> bool:
+    """True si ``value`` es un monto finito, positivo y bajo el techo."""
+    try:
+        return math.isfinite(value) and 0 < value <= MAX_AMOUNT
+    except (TypeError, ValueError):
+        return False
 
 # §5.3 — parámetros de las bonificaciones.
 FIRST_OF_DAY_PCT = 0.20        # primer aporte del día (en el nodo)
@@ -139,6 +172,9 @@ def is_underrepresented(language: str, lang_counts: Dict[str, int]) -> bool:
 
 
 __all__ = [
+    "MAX_AMOUNT",
+    "parse_amount",
+    "is_valid_amount",
     "BonusBreakdown",
     "compute_synx",
     "update_streak",

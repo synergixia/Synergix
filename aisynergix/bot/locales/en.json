@@ -246,5 +246,6 @@
   "agent_no_providers": "🤷 No {category} providers in your node yet. When someone registers via /proveedores, I'll be able to recommend them.",
   "agent_no_project_match": "🤔 I couldn't find a matching active project. Check the available projects with /proyectos.",
   "agent_donation_confirm": "🤖 I'm about to contribute <b>{amount} SYNX</b> to the project <b>{title}</b>.\n\nConfirm? Your SYNX stay in escrow until the community verifies the project.",
-  "agent_donation_done": "✅ Done! You contributed {amount} SYNX to the project. It stays in escrow until community verification."
+  "agent_donation_done": "✅ Done! You contributed {amount} SYNX to the project. It stays in escrow until community verification.",
+  "contribution_too_long": "📏 Your contribution is too long (max {max_length} characters). Trim your idea and send it again."
 }

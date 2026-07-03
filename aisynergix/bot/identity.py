@@ -66,6 +66,8 @@ class UserProfile:
     # SYNX ganados históricos (§10.2): solo crece con cada acreditación;
     # los gastos (fondear, stake) no lo reducen.  Campo del Passport.
     synx_earned_total: float = 0.0
+    # Anti-farming: True si el usuario ya cobró el bono de fundador de nodo.
+    founder_bonus_claimed: bool = False
 
     def __post_init__(self):
         self.uid_hash = _hash_uid(self.uid)
@@ -120,6 +122,7 @@ class UserProfile:
             streak_days=int(tags.get("streak_days", 0) or 0),
             last_aporte_date=tags.get("last_aporte_date") or None,
             synx_earned_total=float(tags.get("synx_earned_total", "0") or 0),
+            founder_bonus_claimed=tags.get("founder_bonus_claimed", "false").lower() == "true",
         )
 
         if profile.rank not in RANK_TABLE:
@@ -156,6 +159,7 @@ class UserProfile:
         if self.last_aporte_date:
             base["last_aporte_date"] = self.last_aporte_date
         base["synx_earned_total"] = f"{self.synx_earned_total:.2f}"
+        base["founder_bonus_claimed"] = "true" if self.founder_bonus_claimed else "false"
         return base
 
     def update_trust_score(self, delta: float) -> None:
@@ -382,9 +386,12 @@ class IdentityManager:
         Retorna el saldo nuevo, o None si la escritura falla.
         """
         from aisynergix.services.irys import read_user_tags, write_user_tags
+        from aisynergix.services.rewards import is_valid_amount
         import logging
         _log = logging.getLogger(__name__)
-        if amount <= 0:
+        # Defensa en profundidad: rechazar nan/inf/no-positivos que romperían
+        # las comparaciones de saldo y corromperían el balance.
+        if not is_valid_amount(amount):
             return None
         async with self._lock_for(uid_hash):
             try:
@@ -423,9 +430,12 @@ class IdentityManager:
         penalizaciones).  Nunca deja el saldo en negativo.
         """
         from aisynergix.services.irys import read_user_tags, write_user_tags
+        from aisynergix.services.rewards import is_valid_amount
         import logging
         _log = logging.getLogger(__name__)
-        if amount <= 0:
+        # Defensa en profundidad: un 'nan' haría 'base < amount' siempre False,
+        # saltándose el control de saldo y corrompiendo el balance a "nan".
+        if not is_valid_amount(amount):
             return None
         async with self._lock_for(uid_hash):
             try:
@@ -468,6 +478,7 @@ class IdentityManager:
         active_node: Optional[str] = None,
         streak_days: Optional[int] = None,
         last_aporte_date: Optional[str] = None,
+        claim_founder_bonus: bool = False,
     ) -> UserProfile:
         """Atomically apply INCREMENTS to a profile and seal it on Irys.
 
@@ -495,6 +506,15 @@ class IdentityManager:
             # our write-ledger), then ADD the delta. The ledger survives the
             # cache invalidations done by status reads / residual rewards, so the
             # seal always uses current data even under Irys index lag.
+            # Bono de fundador: se acredita UNA sola vez por usuario. La
+            # comprobación va dentro del lock, así dos creaciones de nodo
+            # simultáneas no pueden cobrarlo dos veces (anti-farming).
+            if claim_founder_bonus:
+                if profile.founder_bonus_claimed:
+                    synx = 0.0  # ya cobrado → no acreditar de nuevo
+                else:
+                    profile.founder_bonus_claimed = True
+
             profile.points = self._sealed_base(uid_hash, profile, "points") + points
             profile.contribution_count = (
                 self._sealed_base(uid_hash, profile, "contribution_count") + contribution
@@ -610,6 +630,10 @@ class IdentityManager:
             # perfil stale sin el campo no debe borrarla del siguiente sellado.
             if not profile.custodial_address and irys_profile.custodial_address:
                 profile.custodial_address = irys_profile.custodial_address
+            # Flag monótono (false→true): una escritura stale no debe reactivar
+            # el bono de fundador ya cobrado.
+            if irys_profile.founder_bonus_claimed:
+                profile.founder_bonus_claimed = True
 
         if old_profile is not None:
             regressed_fields = 0

@@ -246,5 +246,6 @@
   "agent_no_providers": "🤷 No hay proveedores de {category} en tu nodo todavía. Cuando alguien se registre con /proveedores, te lo podré recomendar.",
   "agent_no_project_match": "🤔 No encontré un proyecto activo que coincida. Mira los proyectos disponibles con /proyectos.",
   "agent_donation_confirm": "🤖 Voy a aportar <b>{amount} SYNX</b> al proyecto <b>{title}</b>.\n\n¿Confirmas? Tus SYNX quedan en custodia hasta que la comunidad verifique el proyecto.",
-  "agent_donation_done": "✅ ¡Hecho! Aportaste {amount} SYNX al proyecto. Quedan en custodia hasta la verificación comunitaria."
+  "agent_donation_done": "✅ ¡Hecho! Aportaste {amount} SYNX al proyecto. Quedan en custodia hasta la verificación comunitaria.",
+  "contribution_too_long": "📏 Tu aporte es demasiado largo (máximo {max_length} caracteres). Resume tu idea y vuelve a enviarla."
 }
