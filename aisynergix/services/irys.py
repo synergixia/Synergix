@@ -523,6 +523,8 @@ _PROFILE_TAG_MAP: Dict[str, str] = {
     "last_aporte_date":    "last-aporte-date",
     # SYNX ganados históricos (Passport §10.2) — solo crece.
     "synx_earned_total":   "synx-earned-total",
+    # Anti-farming del bono de fundador (una sola vez por usuario).
+    "founder_bonus_claimed": "founder-bonus-claimed",
 }
 _PROFILE_TAG_RMAP: Dict[str, str] = {v: k for k, v in _PROFILE_TAG_MAP.items()}
 

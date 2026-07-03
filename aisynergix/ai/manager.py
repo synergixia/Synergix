@@ -37,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 CHALLENGE_BONUS_POINTS = 5
 MIN_CONTRIBUTION_LENGTH = 20
+# Tope de longitud del aporte.  Sin él, un usuario puede subir megabytes a
+# Irys — que paga la wallet del nodo — como vector de coste/DoS.  8000 chars
+# es holgado para una reflexión real y muy por debajo del límite de upload.
+MAX_CONTRIBUTION_LENGTH = 8000
 ELITE_THRESHOLD = 9.0
 LEGENDARY_THRESHOLD = 9.5
 
@@ -549,11 +553,21 @@ class AIManager:
 
         profile = await self._identity.get_profile(uid)
 
-        if len(content.strip()) < MIN_CONTRIBUTION_LENGTH:
+        content = content.strip()
+        if len(content) < MIN_CONTRIBUTION_LENGTH:
             return {
                 "status": "too_short",
                 "message_key": "contribution_too_short",
                 "user_language": profile.language,
+            }
+
+        # Tope de tamaño: la wallet del nodo paga el almacenamiento en Irys.
+        if len(content) > MAX_CONTRIBUTION_LENGTH:
+            return {
+                "status": "too_long",
+                "message_key": "contribution_too_long",
+                "user_language": profile.language,
+                "max_length": MAX_CONTRIBUTION_LENGTH,
             }
 
         if not profile.can_contribute:

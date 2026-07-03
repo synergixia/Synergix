@@ -141,10 +141,13 @@ async def create_node(
     )
     await write_node_member(node_id, creator_hash, role="founder", status="active")
 
-    # Bono de fundador + marcar nodo activo, atómico bajo el lock por-usuario.
+    # Bono de fundador (una sola vez por usuario — anti-farming) + marcar nodo
+    # activo, atómico bajo el lock por-usuario.  claim_founder_bonus ignora el
+    # crédito si el usuario ya lo cobró en un nodo anterior.
     try:
         await _identity().apply_deltas(
-            uid, synx=FOUNDER_BONUS_SYNX, active_node=node_id
+            uid, synx=FOUNDER_BONUS_SYNX, active_node=node_id,
+            claim_founder_bonus=True,
         )
     except Exception as exc:
         logger.warning("create_node: no se pudo acreditar bono al fundador %s: %s",

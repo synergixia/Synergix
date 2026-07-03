@@ -55,6 +55,7 @@ from aisynergix.services import oracle as oracle_svc
 from aisynergix.services import agent as agent_svc
 from aisynergix.services import governance as gov_svc
 from aisynergix.services import passport as passport_svc
+from aisynergix.services import rewards
 
 
 logger = logging.getLogger("synergix.bot")
@@ -702,8 +703,9 @@ async def handle_memory_button(message: Message) -> None:
                 summary = summary[:120] + "…"
 
             memory_text += (
-                t("memory_entry", lang, num=i, date=date_str, category=category,
-                  quality=quality, summary=summary)
+                t("memory_entry", lang, num=i, date=date_str,
+                  category=html.escape(str(category)), quality=html.escape(str(quality)),
+                  summary=html.escape(summary))
                 + "\n"
             )
         except Exception:
@@ -1586,9 +1588,9 @@ async def handle_project_goal_message(message: Message, uid: int, text: str, lan
     ghost = get_ghost_state_manager()
     cache = get_l1_cache()
     draft = await cache.get_state_data(uid) or {}
-    try:
-        goal = float(text.replace(",", "."))
-    except ValueError:
+    from aisynergix.services.rewards import parse_amount
+    goal = parse_amount(text)
+    if goal is None:
         await message.answer(t("invalid_amount", lang))
         return
     if goal < projects_svc.GOAL_MIN_SYNX:
@@ -1612,9 +1614,9 @@ async def handle_project_fund_message(message: Message, uid: int, text: str, lan
     cache = get_l1_cache()
     draft = await cache.get_state_data(uid) or {}
     pid = draft.get("proj_id", "")
-    try:
-        amount = float(text.replace(",", "."))
-    except ValueError:
+    from aisynergix.services.rewards import parse_amount
+    amount = parse_amount(text)
+    if amount is None:
         await message.answer(t("invalid_amount", lang))
         return
     await ghost.reset_state(uid)
@@ -1987,10 +1989,11 @@ async def handle_agent_callback(callback: CallbackQuery) -> None:
 
     elif action == "don":
         pid = parts[2] if len(parts) > 2 else ""
-        try:
-            amount = float(parts[3]) if len(parts) > 3 else 0.0
-        except ValueError:
-            amount = 0.0
+        # callback_data es falsificable por el cliente: validar el monto.
+        amount = rewards.parse_amount(parts[3]) if len(parts) > 3 else None
+        if amount is None:
+            await callback.answer(t("invalid_amount", lang), show_alert=True)
+            return
         err = await projects_svc.fund_project(uid, pid, amount)
         if err == "insufficient":
             await callback.message.edit_text(t("project_insufficient", lang))
@@ -2267,6 +2270,10 @@ async def handle_contribution_message(
 
         elif result["status"] == "too_short":
             await message.answer(t("contribution_too_short", lang))
+        elif result["status"] == "too_long":
+            await message.answer(
+                t("contribution_too_long", lang, max_length=result.get("max_length", 8000))
+            )
         elif result["status"] == "duplicate":
             await message.answer(t("contribution_duplicate", lang))
         elif result["status"] == "quota_exceeded":
@@ -2552,9 +2559,9 @@ async def handle_buy_amount_message(
     ghost = get_ghost_state_manager()
     cache = get_l1_cache()
 
-    try:
-        bnb_in = float(text.replace(",", "."))
-    except ValueError:
+    from aisynergix.services.rewards import parse_amount
+    bnb_in = parse_amount(text)
+    if bnb_in is None:
         await message.answer(t("invalid_amount", lang))
         return
 
@@ -2593,9 +2600,9 @@ async def handle_sell_amount_message(
     ghost = get_ghost_state_manager()
     cache = get_l1_cache()
 
-    try:
-        syn_in = float(text.replace(",", "."))
-    except ValueError:
+    from aisynergix.services.rewards import parse_amount
+    syn_in = parse_amount(text)
+    if syn_in is None:
         await message.answer(t("invalid_amount", lang))
         return
 

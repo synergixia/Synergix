@@ -70,11 +70,8 @@ def detect_donation_intent(text: str) -> Optional[float]:
     m = _DONATE_RE.search(text)
     if not m:
         return None
-    try:
-        amount = float(m.group(2).replace(",", "."))
-    except (ValueError, TypeError):
-        return None
-    return amount if amount > 0 else None
+    from aisynergix.services.rewards import parse_amount
+    return parse_amount(m.group(2))
 
 
 def _tokens(s: str) -> set:
