@@ -55,6 +55,7 @@ from aisynergix.services import oracle as oracle_svc
 from aisynergix.services import agent as agent_svc
 from aisynergix.services import governance as gov_svc
 from aisynergix.services import passport as passport_svc
+from aisynergix.services import custody as custody_svc
 from aisynergix.services import rewards
 
 
@@ -306,6 +307,10 @@ def get_synergix_inline_keyboard(lang: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=t("btn_progress", lang), callback_data="synergix:progress"),
                 InlineKeyboardButton(text=t("btn_market", lang), callback_data="synergix:market"),
+            ],
+            [
+                InlineKeyboardButton(text=t("btn_deposit", lang), callback_data="synergix:deposit"),
+                InlineKeyboardButton(text=t("btn_withdraw", lang), callback_data="synergix:withdraw"),
             ],
         ]
     )
@@ -975,6 +980,31 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
                     bar=f"<code>{bar_chars}</code>",
                 )
             )
+    elif action == "deposit":
+        if not wallet_svc.wallet_enabled():
+            await callback.message.edit_text(t("custody_disabled", lang))
+        else:
+            info = await custody_svc.deposit_info(uid)
+            if not info:
+                await callback.message.edit_text(t("custody_disabled", lang))
+            else:
+                await callback.message.edit_text(
+                    t("deposit_info", lang,
+                      address=info["address"],
+                      bnb=f"{info['bnb']:.6f}" if info["bnb"] is not None else "?",
+                      synergix=f"{info['synergix']:.4f}" if info["synergix"] is not None else "?"),
+                )
+
+    elif action == "withdraw":
+        if not wallet_svc.wallet_enabled():
+            await callback.message.edit_text(t("custody_disabled", lang))
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=t("btn_withdraw_bnb", lang), callback_data="wd:asset:bnb"),
+                InlineKeyboardButton(text=t("btn_withdraw_syn", lang), callback_data="wd:asset:synergix"),
+            ]])
+            await callback.message.edit_text(t("withdraw_choose_asset", lang), reply_markup=kb)
+
     elif action == "market":
         market = await dex_svc.get_token_market(trading_svc.SYNERGIX_TOKEN)
         if market:
@@ -2007,6 +2037,104 @@ async def handle_agent_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# CUSTODIA ON-CHAIN: retiro de BNB / SYNERGIX (mueve fondos reales)
+# ══════════════════════════════════════════════════════════════════════════
+
+_ASSET_LABEL = {"bnb": "BNB", "synergix": "SYNERGIX"}
+
+
+@dp.callback_query(F.data.startswith("wd:"))
+async def handle_withdraw_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "asset":
+        asset = parts[2] if len(parts) > 2 else ""
+        if asset not in _ASSET_LABEL:
+            await callback.answer(); return
+        await ghost.set_state(uid, "awaiting_withdraw_address")
+        await cache.set_state_data(uid, {"wd_asset": asset})
+        await callback.message.edit_text(
+            t("withdraw_ask_address", lang, asset=_ASSET_LABEL[asset])
+        )
+
+    elif action == "confirm":
+        data = await cache.get_state_data(uid) or {}
+        asset = data.get("wd_asset", "")
+        to_addr = data.get("wd_address", "")
+        amount = data.get("wd_amount", 0.0)
+        await ghost.reset_state(uid)
+        await cache.set_state_data(uid, {})
+        if not (asset and to_addr and amount):
+            await callback.message.edit_text(t("withdraw_expired", lang))
+            await callback.answer(); return
+        await callback.message.edit_text(t("withdraw_sending", lang))
+        result = await custody_svc.withdraw(uid, to_addr, float(amount), asset)
+        if result.get("ok"):
+            tx = result["tx"]
+            tx = tx if tx.startswith("0x") else "0x" + tx
+            await callback.message.edit_text(
+                t("withdraw_sent", lang, amount=f"{amount:g}", asset=_ASSET_LABEL[asset],
+                  tx=tx, url=f"https://bscscan.com/tx/{tx}"),
+                disable_web_page_preview=True,
+            )
+        else:
+            await callback.message.edit_text(
+                t("withdraw_error_" + result.get("error", "broadcast"), lang,
+                  min_bnb=custody_svc.MIN_WITHDRAW_BNB, min_token=custody_svc.MIN_WITHDRAW_TOKEN)
+            )
+
+    elif action == "cancel":
+        await ghost.reset_state(uid)
+        await cache.set_state_data(uid, {})
+        await callback.message.edit_text(t("withdraw_cancelled", lang))
+
+    await callback.answer()
+
+
+async def handle_withdraw_address_message(message: Message, uid: int, text: str, lang: str) -> None:
+    cache = get_l1_cache()
+    data = await cache.get_state_data(uid) or {}
+    to_addr = text.strip()
+    if not custody_svc.is_valid_address(to_addr):
+        await message.answer(t("withdraw_bad_address", lang))
+        return
+    data["wd_address"] = to_addr
+    await get_ghost_state_manager().set_state(uid, "awaiting_withdraw_amount")
+    await cache.set_state_data(uid, data)
+    asset = data.get("wd_asset", "bnb")
+    await message.answer(t("withdraw_ask_amount", lang, asset=_ASSET_LABEL.get(asset, asset)))
+
+
+async def handle_withdraw_amount_message(message: Message, uid: int, text: str, lang: str) -> None:
+    cache = get_l1_cache()
+    data = await cache.get_state_data(uid) or {}
+    amount = rewards.parse_amount(text)
+    if amount is None:
+        await message.answer(t("invalid_amount", lang))
+        return
+    data["wd_amount"] = amount
+    await cache.set_state_data(uid, data)
+    asset = data.get("wd_asset", "bnb")
+    # Confirmación explícita ANTES de firmar (el retiro es irreversible).
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=t("btn_withdraw_confirm", lang), callback_data="wd:confirm"),
+        InlineKeyboardButton(text=t("btn_cancel_trade", lang), callback_data="wd:cancel"),
+    ]])
+    await message.answer(
+        t("withdraw_confirm", lang, amount=f"{amount:g}",
+          asset=_ASSET_LABEL.get(asset, asset), address=html.escape(data.get("wd_address", ""))),
+        reply_markup=kb,
+    )
+
+
 @dp.callback_query(F.data == "impact:useful")
 async def handle_impact_useful(callback: CallbackQuery) -> None:
     """'✅ útil' (PIR §7.2): +1 impacto verificado a cada aporte usado en la
@@ -2094,6 +2222,7 @@ async def handle_sticker_message(message: Message) -> None:
         "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
         "awaiting_provider_desc", "awaiting_project_name", "awaiting_project_goal",
         "awaiting_project_fund", "awaiting_proposal_text",
+        "awaiting_withdraw_address", "awaiting_withdraw_amount",
     ):
         return
 
@@ -2182,6 +2311,14 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_proposal_text":
         await handle_proposal_text_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_withdraw_address":
+        await handle_withdraw_address_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_withdraw_amount":
+        await handle_withdraw_amount_message(message, uid, text, lang)
         return
 
     await handle_conversation_message(message, uid, text, lang)

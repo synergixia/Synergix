@@ -23,6 +23,9 @@ class SynergixStates(StatesGroup):
     awaiting_project_fund = State()
     # Governance (Fase 3)
     awaiting_proposal_text = State()
+    # Custodia on-chain: retiro de BNB / SYNERGIX
+    awaiting_withdraw_address = State()
+    awaiting_withdraw_amount = State()
 
 
 class L1StateCache:
