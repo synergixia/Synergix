@@ -72,6 +72,39 @@ def test_keystore_roundtrip_and_no_plaintext_leak():
     assert raised
 
 
+def test_keystore_cache_survives_irys_lag():
+    """El keystore recién creado se carga desde la caché aunque Irys aún no lo
+    haya indexado (read devuelve None) — reproduce el bug de 'no_wallet' al
+    retirar justo después de depositar."""
+    import asyncio
+    import types
+
+    # irys real arrastra httpx (no instalado aquí): inyectar un stub.
+    fake = types.ModuleType("aisynergix.services.irys")
+
+    async def _write(uid_hash, address, keystore):
+        return "faketx"
+
+    async def _read(uid_hash):
+        return None  # simula lag de indexación: aún no visible en Irys
+
+    fake.write_custodial_wallet = _write
+    fake.read_custodial_wallet = _read
+    sys.modules["aisynergix.services.irys"] = fake
+    try:
+        w._keystore_cache.clear()
+        uid_hash = "cachetest0001"
+        addr = asyncio.run(w.create_custodial_wallet(uid_hash))
+        assert addr and addr.startswith("0x")
+        # Pese a que Irys.read devuelve None, la caché tiene el keystore:
+        acct = asyncio.run(w.load_custodial_account(uid_hash))
+        assert acct is not None
+        assert acct.address == addr
+    finally:
+        sys.modules.pop("aisynergix.services.irys", None)
+        w._keystore_cache.clear()
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

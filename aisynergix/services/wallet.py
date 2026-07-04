@@ -41,6 +41,12 @@ _MASTER_KEY: str = os.getenv("SYNERGIX_WALLET_MASTER_KEY", "").strip()
 # manda /start dos veces seguidas antes de que la primera termine.
 _creating: set = set()
 
+# Caché en RAM del keystore por uid_hash.  Irys tarda 5-30 s en indexar un
+# upload; sin esta caché, un retiro justo después de crear la wallet (p. ej.
+# depositar → retirar) no encontraría el keystore recién sellado y fallaría
+# con "no_wallet".  Se rellena al crear y al leer con éxito de Irys.
+_keystore_cache: Dict[str, Dict[str, Any]] = {}
+
 
 def wallet_enabled() -> bool:
     return bool(_MASTER_KEY)
@@ -93,6 +99,9 @@ async def create_custodial_wallet(uid_hash: str) -> Optional[str]:
         # mejor no devolver la dirección y reintentar en el próximo /start.
         return None
 
+    # Cachear en RAM: un retiro inmediato encontrará el keystore aunque Irys
+    # todavía no lo haya indexado.
+    _keystore_cache[uid_hash] = {"address": address, "keystore": keystore}
     logger.info("👛 Wallet custodial creada para %s → %s", uid_hash, address)
     return address
 
@@ -157,7 +166,13 @@ async def load_custodial_account(uid_hash: str):
     from eth_account import Account
     from aisynergix.services.irys import read_custodial_wallet
 
-    record = await read_custodial_wallet(uid_hash)
+    # 1) Caché en RAM (inmune al lag de indexación de Irys tras crear).
+    record = _keystore_cache.get(uid_hash)
+    # 2) Fallback a Irys (y cachear en éxito, p. ej. tras un restart).
+    if not record or not record.get("keystore"):
+        record = await read_custodial_wallet(uid_hash)
+        if record and record.get("keystore"):
+            _keystore_cache[uid_hash] = record
     if not record or not record.get("keystore"):
         return None
     try:
