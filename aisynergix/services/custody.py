@@ -166,7 +166,9 @@ async def withdraw(
     Retorna {"ok": True, "tx": <hash>} o {"ok": False, "error": <clave>}.
     Firma y difunde una transacción real en BSC — irreversible.
     """
-    from aisynergix.services.wallet import load_custodial_account, wallet_enabled
+    from aisynergix.services.wallet import (
+        load_custodial_account, ensure_custodial_wallet, wallet_enabled,
+    )
     from aisynergix.bot.identity import _hash_uid
     from aisynergix.services.trading import get_bnb_balance, get_token_balance, _get_web3
 
@@ -174,6 +176,10 @@ async def withdraw(
         return {"ok": False, "error": "disabled"}
     is_native = asset == "bnb"
     uid_hash = _hash_uid(uid)
+
+    # Auto-cura: si la wallet nunca se creó (p. ej. el /start fue anterior a
+    # configurar la master key), créala ahora antes de intentar cargarla.
+    await ensure_custodial_wallet(uid)
 
     async with _lock_for(uid_hash):
         acct = await load_custodial_account(uid_hash)
