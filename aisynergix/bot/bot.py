@@ -987,6 +987,14 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
             info = await custody_svc.deposit_info(uid)
             if not info:
                 await callback.message.edit_text(t("custody_disabled", lang))
+            elif not info.get("healthy", True):
+                # La wallet existe pero su keystore no descifra (master key
+                # cambiada): NO mostrar la dirección para depositar; ofrecer
+                # regenerarla bajo la clave actual.
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text=t("btn_wallet_reset", lang), callback_data="wd:reset"),
+                ]])
+                await callback.message.edit_text(t("wallet_unhealthy", lang), reply_markup=kb)
             else:
                 await callback.message.edit_text(
                     t("deposit_info", lang,
@@ -2085,6 +2093,12 @@ async def handle_withdraw_callback(callback: CallbackQuery) -> None:
                   tx=tx, url=f"https://bscscan.com/tx/{tx}"),
                 disable_web_page_preview=True,
             )
+        elif result.get("error") == "undecryptable":
+            # Ofrecer regenerar la wallet bajo la master key actual.
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=t("btn_wallet_reset", lang), callback_data="wd:reset"),
+            ]])
+            await callback.message.edit_text(t("withdraw_error_undecryptable", lang), reply_markup=kb)
         else:
             await callback.message.edit_text(
                 t("withdraw_error_" + result.get("error", "broadcast"), lang,
@@ -2095,6 +2109,22 @@ async def handle_withdraw_callback(callback: CallbackQuery) -> None:
         await ghost.reset_state(uid)
         await cache.set_state_data(uid, {})
         await callback.message.edit_text(t("withdraw_cancelled", lang))
+
+    elif action == "reset":
+        # Confirmación antes de abandonar la wallet vieja (acción destructiva).
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=t("btn_wallet_reset_confirm", lang), callback_data="wd:reset_go"),
+            InlineKeyboardButton(text=t("btn_cancel_trade", lang), callback_data="wd:cancel"),
+        ]])
+        await callback.message.edit_text(t("wallet_reset_confirm", lang), reply_markup=kb)
+
+    elif action == "reset_go":
+        await callback.message.edit_text(t("wallet_reset_working", lang))
+        new_addr = await wallet_svc.reset_custodial_wallet(uid)
+        if new_addr:
+            await callback.message.edit_text(t("wallet_reset_done", lang, address=new_addr))
+        else:
+            await callback.message.edit_text(t("wallet_reset_failed", lang))
 
     await callback.answer()
 
