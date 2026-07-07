@@ -272,5 +272,6 @@
   "withdraw_error_insufficient": "❌ Insufficient balance (remember BNB withdrawals reserve gas).",
   "withdraw_error_no_gas": "⛽ Your wallet has no BNB to pay gas for the SYNERGIX transfer. Deposit some BNB first.",
   "withdraw_error_network": "🌐 Couldn't reach BNB Chain. Try again in a few minutes.",
-  "withdraw_error_broadcast": "❌ The transaction couldn't be sent. Your funds are still in your wallet. Try again."
+  "withdraw_error_broadcast": "❌ The transaction couldn't be sent. Your funds are still in your wallet. Try again.",
+  "withdraw_error_undecryptable": "🚨 Your wallet exists on Irys but can't be opened with the server's current key. This usually means SYNERGIX_WALLET_MASTER_KEY changed. Do NOT deposit more funds and contact the admin: your funds may be recoverable with the original master key."
 }

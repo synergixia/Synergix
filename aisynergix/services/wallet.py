@@ -174,6 +174,11 @@ async def load_custodial_account(uid_hash: str):
         if record and record.get("keystore"):
             _keystore_cache[uid_hash] = record
     if not record or not record.get("keystore"):
+        logger.warning(
+            "load_custodial_account: sin keystore para %s (caché vacía y no "
+            "visible en Irys) — la wallet nunca se creó o aún no está indexada.",
+            uid_hash,
+        )
         return None
     try:
         key = await asyncio.to_thread(
@@ -181,7 +186,11 @@ async def load_custodial_account(uid_hash: str):
         )
         return Account.from_key(key)
     except Exception as exc:
-        logger.error("No se pudo descifrar el keystore de %s: %s", uid_hash, exc)
+        logger.error(
+            "No se pudo descifrar el keystore de %s: %s — indicio de que "
+            "SYNERGIX_WALLET_MASTER_KEY cambió respecto a cuando se creó.",
+            uid_hash, exc,
+        )
         return None
 
 

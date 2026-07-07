@@ -272,5 +272,6 @@
   "withdraw_error_insufficient": "❌ Saldo insuficiente (recuerda que el retiro de BNB reserva el gas).",
   "withdraw_error_no_gas": "⛽ Tu wallet no tiene BNB para pagar el gas del envío de SYNERGIX. Deposita un poco de BNB primero.",
   "withdraw_error_network": "🌐 No pude conectar con BNB Chain. Intenta de nuevo en unos minutos.",
-  "withdraw_error_broadcast": "❌ La transacción no se pudo enviar. Tus fondos siguen en tu wallet. Intenta de nuevo."
+  "withdraw_error_broadcast": "❌ La transacción no se pudo enviar. Tus fondos siguen en tu wallet. Intenta de nuevo.",
+  "withdraw_error_undecryptable": "🚨 Tu wallet existe en Irys pero no se puede abrir con la clave actual del servidor. Esto suele indicar que SYNERGIX_WALLET_MASTER_KEY cambió. NO deposites más fondos y contacta al administrador: tus fondos pueden recuperarse con la clave maestra original."
 }
