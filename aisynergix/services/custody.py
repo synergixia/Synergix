@@ -136,15 +136,21 @@ async def deposit_info(uid: int) -> Optional[Dict[str, Any]]:
 
     El depósito es recibir: el usuario envía BNB o SYNERGIX a esta dirección.
     """
-    from aisynergix.services.wallet import ensure_custodial_wallet
+    from aisynergix.services.wallet import ensure_custodial_wallet, load_custodial_account
     from aisynergix.services.trading import get_bnb_balance, get_token_balance
+    from aisynergix.bot.identity import _hash_uid
     address = await ensure_custodial_wallet(uid)
     if not address:
         return None
+    # Salud: la wallet solo sirve si su keystore se puede DESCIFRAR con la
+    # master key actual.  Si no (p. ej. se cambió la master key), la dirección
+    # es inutilizable y el usuario no debe depositar en ella.
+    acct = await load_custodial_account(_hash_uid(uid))
+    healthy = bool(acct and acct.address == address)
     bnb, syn = await asyncio.gather(
         get_bnb_balance(address), get_token_balance(address),
     )
-    return {"address": address, "bnb": bnb, "synergix": syn}
+    return {"address": address, "bnb": bnb, "synergix": syn, "healthy": healthy}
 
 
 # ── Retiro ───────────────────────────────────────────────────────────────

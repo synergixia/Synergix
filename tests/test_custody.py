@@ -94,6 +94,9 @@ def test_locales_have_custody_keys():
         "btn_deposit", "btn_withdraw", "deposit_info", "withdraw_choose_asset",
         "withdraw_ask_address", "withdraw_confirm", "withdraw_sent",
         "withdraw_error_no_gas", "withdraw_error_insufficient", "withdraw_error_broadcast",
+        # Reset / recuperación de wallet (master key cambiada)
+        "withdraw_error_undecryptable", "btn_wallet_reset", "btn_wallet_reset_confirm",
+        "wallet_unhealthy", "wallet_reset_confirm", "wallet_reset_done", "wallet_reset_failed",
     }
     for lang in ("es", "en"):
         d = json.loads((base / f"{lang}.json").read_text(encoding="utf-8"))

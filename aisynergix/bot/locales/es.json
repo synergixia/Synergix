@@ -273,5 +273,12 @@
   "withdraw_error_no_gas": "⛽ Tu wallet no tiene BNB para pagar el gas del envío de SYNERGIX. Deposita un poco de BNB primero.",
   "withdraw_error_network": "🌐 No pude conectar con BNB Chain. Intenta de nuevo en unos minutos.",
   "withdraw_error_broadcast": "❌ La transacción no se pudo enviar. Tus fondos siguen en tu wallet. Intenta de nuevo.",
-  "withdraw_error_undecryptable": "🚨 Tu wallet existe en Irys pero no se puede abrir con la clave actual del servidor. Esto suele indicar que SYNERGIX_WALLET_MASTER_KEY cambió. NO deposites más fondos y contacta al administrador: tus fondos pueden recuperarse con la clave maestra original."
+  "withdraw_error_undecryptable": "🚨 Tu wallet existe en Irys pero no se puede abrir con la clave actual del servidor. Esto suele indicar que SYNERGIX_WALLET_MASTER_KEY cambió. NO deposites más fondos y contacta al administrador: tus fondos pueden recuperarse con la clave maestra original.",
+  "btn_wallet_reset": "🔄 Crear wallet nueva",
+  "btn_wallet_reset_confirm": "⚠️ Sí, crear una nueva",
+  "wallet_unhealthy": "🚨 <b>Tu wallet no se puede abrir</b>\n\nExiste en Irys pero su clave no coincide con la del servidor (normalmente porque cambió SYNERGIX_WALLET_MASTER_KEY). No deposites en ella.\n\nPuedes crear una wallet NUEVA bajo la clave actual. ⚠️ Perderás el acceso a la anterior y a lo que tuviera.",
+  "wallet_reset_confirm": "⚠️ <b>Confirma</b>\n\nSe creará una wallet custodial NUEVA. La dirección anterior se abandona: si tenía fondos y no conservas la master key original, se pierden.\n\n¿Continuar?",
+  "wallet_reset_working": "⏳ Generando tu nueva wallet y sellándola en Irys…",
+  "wallet_reset_done": "✅ <b>Wallet nueva creada</b>\n\nTu nueva dirección de depósito:\n<code>{address}</code>\n\nYa puedes depositar y retirar con normalidad.",
+  "wallet_reset_failed": "❌ No se pudo crear la wallet nueva. Revisa que SYNERGIX_WALLET_MASTER_KEY esté configurada e inténtalo de nuevo."
 }

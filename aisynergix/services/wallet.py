@@ -154,6 +154,37 @@ async def ensure_custodial_wallet(uid: int) -> Optional[str]:
         _creating.discard(uid_hash)
 
 
+async def reset_custodial_wallet(uid: int) -> Optional[str]:
+    """Genera una wallet custodial NUEVA bajo la master key ACTUAL y repunta el
+    perfil hacia ella.
+
+    Úsese SOLO cuando la anterior es irrecuperable (p. ej. se cambió la master
+    key y no se conserva la original).  La dirección vieja se abandona; su
+    keystore sigue permanente en Irys, así que si algún día se recupera la
+    clave original, esos fondos podrían rescatarse a mano.  Como los DataItems
+    son "última versión gana", el nuevo keystore supersede al viejo para el
+    mismo uid-hash.
+    """
+    if not wallet_enabled():
+        return None
+    from aisynergix.bot.identity import get_identity_manager, _hash_uid
+
+    uid_hash = _hash_uid(uid)
+    address = await create_custodial_wallet(uid_hash)  # genera + sella + cachea
+    if not address:
+        return None
+
+    identity = get_identity_manager()
+    profile = await identity.get_profile(uid)
+    profile.custodial_address = address
+    await identity.update_profile(uid, profile)
+    logger.warning(
+        "🔄 Wallet custodial REGENERADA para %s → %s (la anterior se abandona).",
+        uid_hash, address,
+    )
+    return address
+
+
 async def load_custodial_account(uid_hash: str):
     """Descifra y devuelve la cuenta (``eth_account`` LocalAccount) del usuario.
 
@@ -198,5 +229,6 @@ __all__ = [
     "wallet_enabled",
     "create_custodial_wallet",
     "ensure_custodial_wallet",
+    "reset_custodial_wallet",
     "load_custodial_account",
 ]
