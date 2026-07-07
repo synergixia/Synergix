@@ -184,6 +184,19 @@ async def withdraw(
     async with _lock_for(uid_hash):
         acct = await load_custodial_account(uid_hash)
         if acct is None:
+            # Distinguir "nunca creada" de "existe pero no descifra" (indicio
+            # de que se cambió SYNERGIX_WALLET_MASTER_KEY — fondos en riesgo).
+            from aisynergix.services.irys import read_custodial_wallet
+            try:
+                rec = await read_custodial_wallet(uid_hash)
+            except Exception:
+                rec = None
+            if rec and rec.get("keystore"):
+                logger.error(
+                    "withdraw: keystore de %s existe en Irys pero NO descifra — "
+                    "¿cambió SYNERGIX_WALLET_MASTER_KEY?", uid_hash,
+                )
+                return {"ok": False, "error": "undecryptable"}
             return {"ok": False, "error": "no_wallet"}
         self_address = acct.address
 
