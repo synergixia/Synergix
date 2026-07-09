@@ -318,6 +318,8 @@ services:
 
       # ── BSC / Trading ─────────────────────────────────────────
       BSC_RPC_URL: ${BSC_RPC_URL:-https://bsc-dataseed1.binance.org}
+      # Slippage (%) de los swaps custodiales comprar/vender SYNERGIX.
+      SYNERGIX_SWAP_SLIPPAGE: ${SYNERGIX_SWAP_SLIPPAGE:-12}
 
       # ── HuggingFace / Transformers ─────────────────────────────
       HF_HOME: /tmp/hf_cache

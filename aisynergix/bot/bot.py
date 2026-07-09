@@ -1101,9 +1101,37 @@ async def handle_trade_callback(callback: CallbackQuery) -> None:
         await callback.answer()
         return
 
+    ttype = trade_data.get("type")
     link = trade_data.get("link", "")
     await ghost.reset_state(uid)
     await cache.set_state_data(uid, {})
+
+    # Ejecutar el swap DESDE la wallet custodial cuando la función está activa.
+    # Si no (o el token aún no cotiza en PancakeSwap), caer al enlace externo.
+    if wallet_svc.wallet_enabled() and ttype in ("buy", "sell"):
+        await callback.answer()  # responder ya; el swap puede tardar (approve+swap)
+        await callback.message.edit_text(t("trade_executing", lang))
+        if ttype == "buy":
+            result = await custody_svc.swap_buy(uid, float(trade_data.get("bnb_in", 0)))
+        else:
+            result = await custody_svc.swap_sell(uid, float(trade_data.get("syn_in", 0)))
+
+        if result.get("ok"):
+            tx = result["tx"]
+            tx = tx if tx.startswith("0x") else "0x" + tx
+            await callback.message.edit_text(
+                t("trade_executed", lang, tx=tx, url=f"https://bscscan.com/tx/{tx}"),
+                disable_web_page_preview=True,
+            )
+        elif result.get("error") == "not_graduated":
+            # Aún en bonding curve → enlace externo.
+            await callback.message.edit_text(
+                t("trade_link", lang, link=link, slippage=trading_svc.DEFAULT_SLIPPAGE)
+            )
+        else:
+            await callback.message.edit_text(t("swap_error_" + result.get("error", "broadcast"), lang))
+        return
+
     await callback.message.edit_text(
         t("trade_link", lang, link=link, slippage=trading_svc.DEFAULT_SLIPPAGE)
     )

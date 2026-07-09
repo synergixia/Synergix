@@ -26,7 +26,9 @@ economía interna).  Son cosas distintas.
 
 import asyncio
 import logging
+import os
 import re
+import time
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,57 @@ MIN_WITHDRAW_TOKEN = 1.0
 # margen y se ajusta con estimate_gas cuando es posible).
 GAS_NATIVE = 21000
 GAS_TOKEN_FALLBACK = 100_000
+GAS_SWAP_FALLBACK = 400_000       # swaps con fee-on-transfer consumen más
+GAS_APPROVE_FALLBACK = 60_000
+
+# Slippage de los swaps (%).  SYNERGIX tiene ~1 % de tax + impacto de precio
+# en un pool de baja liquidez, así que el mínimo por defecto es holgado para
+# que la tx no revierta.  Configurable con SYNERGIX_SWAP_SLIPPAGE.
+try:
+    SWAP_SLIPPAGE_PCT = max(0.5, min(50.0, float(os.getenv("SYNERGIX_SWAP_SLIPPAGE", "12"))))
+except (ValueError, TypeError):
+    SWAP_SLIPPAGE_PCT = 12.0
+SWAP_DEADLINE_S = 300             # 5 min de validez de la orden
+
+# ABI del router PancakeSwap V2 (solo las variantes fee-on-transfer que
+# necesita un token con tax) + approve/allowance del ERC-20.
+_ROUTER_ABI = [
+    {
+        "name": "swapExactETHForTokensSupportingFeeOnTransferTokens",
+        "type": "function", "stateMutability": "payable",
+        "inputs": [
+            {"name": "amountOutMin", "type": "uint256"},
+            {"name": "path", "type": "address[]"},
+            {"name": "to", "type": "address"},
+            {"name": "deadline", "type": "uint256"},
+        ],
+        "outputs": [],
+    },
+    {
+        "name": "swapExactTokensForETHSupportingFeeOnTransferTokens",
+        "type": "function", "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "amountIn", "type": "uint256"},
+            {"name": "amountOutMin", "type": "uint256"},
+            {"name": "path", "type": "address[]"},
+            {"name": "to", "type": "address"},
+            {"name": "deadline", "type": "uint256"},
+        ],
+        "outputs": [],
+    },
+]
+_ERC20_ALLOWANCE_ABI = [
+    {
+        "name": "approve", "type": "function", "stateMutability": "nonpayable",
+        "inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "bool"}],
+    },
+    {
+        "name": "allowance", "type": "function", "stateMutability": "view",
+        "inputs": [{"name": "owner", "type": "address"}, {"name": "spender", "type": "address"}],
+        "outputs": [{"name": "", "type": "uint256"}],
+    },
+]
 
 # ABI mínima para transfer(address,uint256).
 _ERC20_TRANSFER_ABI = [{
@@ -87,6 +140,13 @@ def is_valid_address(addr: str) -> bool:
 def max_withdrawable_native(balance_bnb: float, gas_cost_bnb: float) -> float:
     """Máximo BNB retirable dejando el gas de la propia transacción."""
     return max(0.0, round(balance_bnb - gas_cost_bnb, 8))
+
+
+def min_out(expected: float, slippage_pct: float) -> float:
+    """Salida mínima aceptable de un swap aplicando slippage. Nunca negativa."""
+    if expected is None or expected <= 0:
+        return 0.0
+    return max(0.0, expected * (1.0 - slippage_pct / 100.0))
 
 
 def validate_withdrawal(
@@ -240,6 +300,148 @@ async def withdraw(
         return {"ok": True, "tx": tx_hash}
 
 
+# ── Swap: comprar / vender SYNERGIX desde la wallet custodial ────────────
+
+async def swap_buy(uid: int, bnb_amount: float) -> Dict[str, Any]:
+    """Compra SYNERGIX gastando ``bnb_amount`` BNB de la wallet custodial.
+
+    Retorna {"ok": True, "tx": hash} o {"ok": False, "error": clave}.
+    """
+    return await _swap(uid, bnb_amount, side="buy")
+
+
+async def swap_sell(uid: int, syn_amount: float) -> Dict[str, Any]:
+    """Vende ``syn_amount`` SYNERGIX de la wallet custodial por BNB."""
+    return await _swap(uid, syn_amount, side="sell")
+
+
+async def _swap(uid: int, amount: float, side: str) -> Dict[str, Any]:
+    from aisynergix.services.wallet import (
+        load_custodial_account, ensure_custodial_wallet, wallet_enabled,
+    )
+    from aisynergix.bot.identity import _hash_uid
+    from aisynergix.services.trading import (
+        get_bnb_balance, get_token_balance, calculate_buy_amount,
+        calculate_sell_amount, _get_web3,
+    )
+    from aisynergix.services.rewards import is_valid_amount
+
+    if not wallet_enabled():
+        return {"ok": False, "error": "disabled"}
+    if not is_valid_amount(amount):
+        return {"ok": False, "error": "bad_amount"}
+
+    uid_hash = _hash_uid(uid)
+    await ensure_custodial_wallet(uid)
+
+    async with _lock_for(uid_hash):
+        acct = await load_custodial_account(uid_hash)
+        if acct is None:
+            return {"ok": False, "error": "no_wallet"}
+
+        try:
+            w3 = await asyncio.to_thread(_get_web3)
+        except Exception as exc:
+            logger.warning("swap: web3 no disponible: %s", exc)
+            return {"ok": False, "error": "network"}
+
+        gas_cost = await _gas_cost_bnb(w3, GAS_SWAP_FALLBACK)
+        bnb_bal = await get_bnb_balance(acct.address) or 0.0
+
+        # Salida esperada (aplica la comisión del pool); si es None el token
+        # aún no cotiza en PancakeSwap (bonding curve) → el caller usa el link.
+        if side == "buy":
+            if bnb_bal < amount + gas_cost:
+                return {"ok": False, "error": "insufficient"}
+            expected = await calculate_buy_amount(amount)
+            if expected is None:
+                return {"ok": False, "error": "not_graduated"}
+        else:
+            token_bal = await get_token_balance(acct.address) or 0.0
+            if amount > token_bal:
+                return {"ok": False, "error": "insufficient"}
+            if bnb_bal < gas_cost:
+                return {"ok": False, "error": "no_gas"}
+            expected = await calculate_sell_amount(amount)
+            if expected is None:
+                return {"ok": False, "error": "not_graduated"}
+
+        out_min = min_out(expected, SWAP_SLIPPAGE_PCT)
+        try:
+            tx_hash = await asyncio.to_thread(
+                _swap_tx, w3, acct, side, amount, out_min,
+            )
+        except Exception as exc:
+            logger.error("swap %s falló uid_hash=%s: %s", side, uid_hash, exc)
+            return {"ok": False, "error": "broadcast"}
+        logger.info("🔁 Swap %s %s uid_hash=%s tx=%s", side, amount, uid_hash, tx_hash)
+        return {"ok": True, "tx": tx_hash, "expected": expected}
+
+
+def _swap_tx(w3, acct, side: str, amount: float, out_min: float) -> str:
+    """Construye, firma y difunde el swap (bloqueante → to_thread).
+
+    En venta, primero asegura la aprobación del router para gastar el token.
+    """
+    from aisynergix.services.trading import ROUTER_ADDRESS, WBNB_ADDRESS, SYNERGIX_TOKEN
+
+    router_addr = w3.to_checksum_address(ROUTER_ADDRESS)
+    token_addr = w3.to_checksum_address(SYNERGIX_TOKEN)
+    wbnb = w3.to_checksum_address(WBNB_ADDRESS)
+    router = w3.eth.contract(address=router_addr, abi=_ROUTER_ABI)
+    gas_price = w3.eth.gas_price
+    deadline = int(time.time()) + SWAP_DEADLINE_S
+
+    if side == "buy":
+        amount_in_wei = int(round(amount * WEI))
+        out_min_wei = int(out_min * WEI)
+        path = [wbnb, token_addr]
+        fn = router.functions.swapExactETHForTokensSupportingFeeOnTransferTokens(
+            out_min_wei, path, acct.address, deadline
+        )
+        nonce = w3.eth.get_transaction_count(acct.address, "pending")
+        base = {"from": acct.address, "value": amount_in_wei, "gasPrice": gas_price,
+                "nonce": nonce, "chainId": CHAIN_ID}
+        try:
+            base["gas"] = int(fn.estimate_gas(base) * 1.25)
+        except Exception:
+            base["gas"] = GAS_SWAP_FALLBACK
+        signed = acct.sign_transaction(fn.build_transaction(base))
+        return w3.eth.send_raw_transaction(_raw_tx(signed)).hex()
+
+    # ── Venta: approve (si falta) + swap ─────────────────────────────────
+    amount_in_wei = int(round(amount * WEI))
+    out_min_wei = int(out_min * WEI)
+    token = w3.eth.contract(address=token_addr, abi=_ERC20_ALLOWANCE_ABI)
+    nonce = w3.eth.get_transaction_count(acct.address, "pending")
+
+    allowance = token.functions.allowance(acct.address, router_addr).call()
+    if allowance < amount_in_wei:
+        approve_fn = token.functions.approve(router_addr, 2 ** 256 - 1)
+        approve_tx = {"from": acct.address, "gasPrice": gas_price, "nonce": nonce,
+                      "chainId": CHAIN_ID}
+        try:
+            approve_tx["gas"] = int(approve_fn.estimate_gas(approve_tx) * 1.25)
+        except Exception:
+            approve_tx["gas"] = GAS_APPROVE_FALLBACK
+        signed_approve = acct.sign_transaction(approve_fn.build_transaction(approve_tx))
+        approve_hash = w3.eth.send_raw_transaction(_raw_tx(signed_approve))
+        w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+        nonce += 1
+
+    path = [token_addr, wbnb]
+    fn = router.functions.swapExactTokensForETHSupportingFeeOnTransferTokens(
+        amount_in_wei, out_min_wei, path, acct.address, deadline
+    )
+    base = {"from": acct.address, "gasPrice": gas_price, "nonce": nonce, "chainId": CHAIN_ID}
+    try:
+        base["gas"] = int(fn.estimate_gas(base) * 1.25)
+    except Exception:
+        base["gas"] = GAS_SWAP_FALLBACK
+    signed = acct.sign_transaction(fn.build_transaction(base))
+    return w3.eth.send_raw_transaction(_raw_tx(signed)).hex()
+
+
 def _sign_and_send(w3, acct, to_address, amount: float, is_native: bool, gas_limit: int) -> str:
     """Construye, firma y difunde la transacción (bloqueante → to_thread)."""
     from aisynergix.services.trading import SYNERGIX_TOKEN
@@ -284,9 +486,13 @@ def _sign_and_send(w3, acct, to_address, amount: float, is_native: bool, gas_lim
 __all__ = [
     "MIN_WITHDRAW_BNB",
     "MIN_WITHDRAW_TOKEN",
+    "SWAP_SLIPPAGE_PCT",
     "is_valid_address",
     "max_withdrawable_native",
+    "min_out",
     "validate_withdrawal",
     "deposit_info",
     "withdraw",
+    "swap_buy",
+    "swap_sell",
 ]
