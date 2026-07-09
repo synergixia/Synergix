@@ -928,14 +928,17 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
             ]])
             await callback.message.edit_text(t("verify_intro", lang), reply_markup=inline_kb)
     elif action == "balance":
-        existing = await get_verified_wallet(uid_hash)
+        # "Mi Saldo" = saldo on-chain de la wallet CUSTODIAL (donde viven los
+        # depósitos, recompensas y desde donde se retira). Es la wallet que
+        # gestiona el bot; la wallet externa verificada solo se usa como
+        # respaldo si la custodial está deshabilitada.
+        existing = None
         is_custodial = False
-        if not existing:
-            # Sin wallet propia verificada → mostrar la custodial (creada
-            # silenciosamente en /start) si existe.
-            profile = await get_identity_manager().get_profile(uid)
-            existing = profile.custodial_address
+        if wallet_svc.wallet_enabled():
+            existing = await wallet_svc.ensure_custodial_wallet(uid)
             is_custodial = bool(existing)
+        if not existing:
+            existing = await get_verified_wallet(uid_hash)
         if not existing:
             await callback.message.edit_text(t("balance_no_wallet", lang))
         else:
