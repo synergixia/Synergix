@@ -76,6 +76,25 @@ def test_locales_have_bond_keys():
         assert "{bond}" in d["node_create_ask_name"]
 
 
+def test_coverage_stale_flag():
+    """Un tema con aportes viejos (30+ días) se marca desactualizado."""
+    from aisynergix.nodes import knowledge_map as km
+    now = 1_000_000_000
+    old = now - km.STALE_SECONDS - 100
+    fresh = now - 100
+    cov = km.coverage_from_aportes(
+        ["salud", "empleo"],
+        [{"topic": "salud", "timestamp": str(old)},
+         {"topic": "empleo", "timestamp": str(fresh)}],
+        now=now,
+    )
+    assert cov["salud"]["stale"] is True
+    assert cov["empleo"]["stale"] is False
+    # Sin aportes → no stale.
+    cov2 = km.coverage_from_aportes(["salud"], [], now=now)
+    assert cov2["salud"]["stale"] is False
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

@@ -1356,7 +1356,8 @@ async def list_node_aportes(node_id: str, limit: int = 2000) -> List[Dict[str, s
             {"name": "data-type", "value": "aporte"},
             {"name": "node-id",   "value": node_id},
         ], limit=limit)
-        return [_node_tags(n) for n in nodes]
+        # Incluye el tx id del aporte (clave del contador de impacto).
+        return [{**_node_tags(n), "id": n.get("id", "")} for n in nodes]
     except Exception as exc:
         logger.warning("list_node_aportes %s falló: %s", node_id, exc)
         return []

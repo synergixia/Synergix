@@ -118,7 +118,7 @@
   "node_explore_empty": "🌱 Aún no hay nodos. ¡Sé el primero en crear uno!",
   "node_mine_header": "👤 <b>Tus nodos</b>",
   "node_mine_empty": "🌱 Todavía no perteneces a ningún nodo. Crea uno o explora la red.",
-  "node_view": "{icon} <b>{name}</b>\n📂 {type}\n🗣️ {language}\n👥 Miembros: <b>{members}</b>\n📚 Aportes: <b>{aportes}</b>\n🏷️ Temas: {topics}\n\n🗺️ <b>Mapa de conocimiento</b>\n<code>{map}</code>",
+  "node_view": "{icon} <b>{name}</b>\n📂 {type}\n🗣️ {language}\n👥 Miembros: <b>{members}</b>\n📚 Aportes: <b>{aportes}</b>\n💎 SYNX circulando: <b>{synx}</b>\n🏗️ Proyectos activos: <b>{projects}</b>\n✅ Impactos verificados: <b>{impacts}</b>\n🏷️ Temas: {topics}\n\n🗺️ <b>Mapa de conocimiento</b>\n<code>{map}</code>",
   "node_view_no_topics": "Este nodo aún no definió temas.",
   "node_not_found": "❌ Ese nodo ya no existe.",
   "node_joined": "🤝 ¡Te uniste a <b>{name}</b>! Es ahora tu nodo activo.",

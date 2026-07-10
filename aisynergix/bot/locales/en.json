@@ -118,7 +118,7 @@
   "node_explore_empty": "🌱 No nodes yet. Be the first to create one!",
   "node_mine_header": "👤 <b>Your nodes</b>",
   "node_mine_empty": "🌱 You don't belong to any node yet. Create one or explore the network.",
-  "node_view": "{icon} <b>{name}</b>\n📂 {type}\n🗣️ {language}\n👥 Members: <b>{members}</b>\n📚 Contributions: <b>{aportes}</b>\n🏷️ Topics: {topics}\n\n🗺️ <b>Knowledge map</b>\n<code>{map}</code>",
+  "node_view": "{icon} <b>{name}</b>\n📂 {type}\n🗣️ {language}\n👥 Members: <b>{members}</b>\n📚 Contributions: <b>{aportes}</b>\n💎 SYNX circulating: <b>{synx}</b>\n🏗️ Active projects: <b>{projects}</b>\n✅ Verified impacts: <b>{impacts}</b>\n🏷️ Topics: {topics}\n\n🗺️ <b>Knowledge map</b>\n<code>{map}</code>",
   "node_view_no_topics": "This node hasn't defined topics yet.",
   "node_not_found": "❌ That node no longer exists.",
   "node_joined": "🤝 You joined <b>{name}</b>! It's now your active node.",

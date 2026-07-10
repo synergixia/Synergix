@@ -1233,6 +1233,7 @@ def _bond_status_text(bond: Optional[dict], lang: str) -> str:
 
 
 async def _render_node_view(node, lang: str) -> str:
+    from aisynergix.nodes.node_stats import node_stats
     type_label = _node_type_label(node.node_type, lang)
     lang_label = get_lang_name(node.language)
     if node.topics:
@@ -1242,11 +1243,13 @@ async def _render_node_view(node, lang: str) -> str:
     else:
         topics_str = t("node_view_no_topics", lang)
         map_str = "—"
+    stats = await node_stats(node.node_id)
     return t(
         "node_view", lang,
         icon=node.icon, name=html.escape(node.name), type=type_label,
         language=lang_label, members=node.member_count, aportes=node.aporte_count,
-        topics=topics_str, map=map_str,
+        synx=f"{stats['synx_circulating']:,.0f}", projects=stats["active_projects"],
+        impacts=stats["verified_impacts"], topics=topics_str, map=map_str,
     )
 
 
