@@ -279,6 +279,10 @@ async def withdraw(
             get_bnb_balance(self_address),
             get_token_balance(self_address),
         )
+        # SYNERGIX bloqueado como bond de nodo NO es retirable.
+        if not is_native:
+            from aisynergix.services import bonds as bonds_svc
+            token_bal = max(0.0, (token_bal or 0.0) - await bonds_svc.locked_synergix(uid))
 
         err = validate_withdrawal(
             to_address, amount, is_native=is_native,
@@ -358,6 +362,9 @@ async def _swap(uid: int, amount: float, side: str) -> Dict[str, Any]:
                 return {"ok": False, "error": "not_graduated"}
         else:
             token_bal = await get_token_balance(acct.address) or 0.0
+            # El SYNERGIX bloqueado como bond de nodo no se puede vender.
+            from aisynergix.services import bonds as bonds_svc
+            token_bal = max(0.0, token_bal - await bonds_svc.locked_synergix(uid))
             if amount > token_bal:
                 return {"ok": False, "error": "insufficient"}
             if bnb_bal < gas_cost:

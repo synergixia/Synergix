@@ -1186,7 +1186,10 @@ def get_node_topics_kb(lang: str, selected: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def get_node_view_kb(lang: str, node_id: str, member: bool) -> InlineKeyboardMarkup:
+def get_node_view_kb(
+    lang: str, node_id: str, member: bool,
+    is_founder: bool = False, bond: Optional[dict] = None,
+) -> InlineKeyboardMarkup:
     rows = []
     if member:
         rows.append([
@@ -1195,8 +1198,37 @@ def get_node_view_kb(lang: str, node_id: str, member: bool) -> InlineKeyboardMar
         ])
     else:
         rows.append([InlineKeyboardButton(text=t("btn_node_join", lang), callback_data=f"node:join:{node_id}")])
+    # El fundador con bond bloqueado puede iniciar el unbonding.
+    if is_founder and bond and bond.get("bond-status") == "locked":
+        rows.append([InlineKeyboardButton(text=t("btn_node_unbond", lang), callback_data=f"node:unbond:{node_id}")])
     rows.append([InlineKeyboardButton(text=t("btn_node_back", lang), callback_data="node:explore")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _bond_status_text(bond: Optional[dict], lang: str) -> str:
+    """Línea de estado del bond para la vista del nodo (solo fundador)."""
+    from aisynergix.services import bonds as bonds_svc
+    if not bond:
+        return ""
+    status = bond.get("bond-status", "locked")
+    try:
+        amount = float(bond.get("amount", 0) or 0)
+    except (ValueError, TypeError):
+        amount = 0.0
+    amt = f"{amount:,.0f}"
+    if status == "locked":
+        return t("node_bond_status_locked", lang, amount=amt)
+    if status == "unbonding":
+        from datetime import datetime, timezone as _tz
+        try:
+            until = int(bond.get("unbond-until", 0) or 0)
+            date = datetime.fromtimestamp(until, tz=_tz.utc).strftime("%Y-%m-%d")
+        except Exception:
+            date = "?"
+        return t("node_bond_status_unbonding", lang, amount=amt, date=date)
+    if status == "slashed":
+        return t("node_bond_status_slashed", lang, amount=amt)
+    return t("node_bond_status_released", lang, amount=amt)
 
 
 async def _render_node_view(node, lang: str) -> str:
@@ -1224,6 +1256,32 @@ async def _begin_node_creation(uid: int) -> None:
     await cache.set_state_data(uid, {"step": "name", "topics": []})
 
 
+async def _bond_insufficient_msg(uid: int, lang: str) -> Optional[str]:
+    """Mensaje de bond insuficiente, o None si el usuario puede pagarlo."""
+    from aisynergix.services import bonds as bonds_svc
+    if await bonds_svc.can_afford_bond(uid):
+        return None
+    avail = 0.0
+    try:
+        addr = await wallet_svc.ensure_custodial_wallet(uid)
+        bal = (await trading_svc.get_token_balance(addr) or 0.0) if addr else 0.0
+        avail = await bonds_svc.available_synergix(uid, bal)
+    except Exception:
+        pass
+    return t("node_bond_insufficient", lang,
+             bond=f"{bonds_svc.BOND_AMOUNT:,.0f}", available=f"{avail:,.0f}")
+
+
+async def _start_node_creation_text(uid: int, lang: str) -> str:
+    """Comprueba el bond y arranca la creación. Devuelve el texto a enviar."""
+    from aisynergix.services import bonds as bonds_svc
+    msg = await _bond_insufficient_msg(uid, lang)
+    if msg:
+        return msg
+    await _begin_node_creation(uid)
+    return t("node_create_ask_name", lang, bond=f"{bonds_svc.BOND_AMOUNT:,.0f}")
+
+
 @dp.message(Command("nodos"))
 async def cmd_nodes(message: Message) -> None:
     if not message.from_user:
@@ -1242,8 +1300,7 @@ async def cmd_create_node(message: Message) -> None:
     uid = message.from_user.id
     _known_uids.add(uid)
     lang = await get_user_language(uid)
-    await _begin_node_creation(uid)
-    await message.answer(t("node_create_ask_name", lang))
+    await message.answer(await _start_node_creation_text(uid, lang))
 
 
 async def handle_node_name_message(message: Message, uid: int, text: str, lang: str) -> None:
@@ -1281,8 +1338,7 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
         await callback.message.edit_text(t("nodes_menu_title", lang), reply_markup=get_nodes_menu_kb(lang))
 
     elif action == "create":
-        await _begin_node_creation(uid)
-        await callback.message.edit_text(t("node_create_ask_name", lang))
+        await callback.message.edit_text(await _start_node_creation_text(uid, lang))
 
     elif action == "explore":
         node_list = await nodes_svc.list_nodes(limit=10)
@@ -1309,10 +1365,31 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
         if not node:
             await callback.message.edit_text(t("node_not_found", lang), reply_markup=get_nodes_menu_kb(lang))
         else:
+            from aisynergix.bot.identity import _hash_uid
+            from aisynergix.services.irys import get_node_bond
             member = await nodes_svc.is_member(arg, uid)
+            is_founder = node.creator == _hash_uid(uid)
+            text = await _render_node_view(node, lang)
+            bond = await get_node_bond(arg) if is_founder else None
+            if bond:
+                text += "\n" + _bond_status_text(bond, lang)
             await callback.message.edit_text(
-                await _render_node_view(node, lang),
-                reply_markup=get_node_view_kb(lang, arg, member),
+                text, reply_markup=get_node_view_kb(lang, arg, member, is_founder, bond),
+            )
+
+    elif action == "unbond":
+        from aisynergix.services import bonds as bonds_svc
+        node = await nodes_svc.get_node(arg)
+        if not node:
+            await callback.answer(); return
+        unbond_until = await bonds_svc.begin_unbond(uid, arg)
+        if unbond_until is None:
+            await callback.answer(t("node_unbond_denied", lang), show_alert=True)
+        else:
+            from datetime import datetime, timezone as _tz
+            date = datetime.fromtimestamp(unbond_until, tz=_tz.utc).strftime("%Y-%m-%d")
+            await callback.message.edit_text(
+                t("node_unbond_started", lang, days=bonds_svc.UNBOND_DAYS, date=date)
             )
 
     elif action == "type":
@@ -1353,20 +1430,24 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
             await callback.message.edit_text(t("node_create_ask_name", lang))
             await _begin_node_creation(uid)
             await callback.answer(); return
+        from aisynergix.services import bonds as bonds_svc
         node = await nodes_svc.create_node(
             uid, name, draft.get("node_type", "global"), lang, draft.get("topics", []),
         )
         await ghost.reset_state(uid)
         if not node:
-            await callback.message.edit_text(t("node_name_too_short", lang))
+            # Casi siempre: bond insuficiente (el nombre ya se validó antes).
+            msg = await _bond_insufficient_msg(uid, lang) or t("node_name_too_short", lang)
+            await callback.message.edit_text(msg)
         else:
             await callback.message.edit_text(
                 t("node_created", lang, icon=node.icon, name=html.escape(node.name),
-                  node_id=node.node_id, bonus=int(nodes_svc.FOUNDER_BONUS_SYNX)),
+                  node_id=node.node_id, bond=f"{bonds_svc.BOND_AMOUNT:,.0f}"),
             )
             await callback.message.answer(
                 await _render_node_view(node, lang),
-                reply_markup=get_node_view_kb(lang, node.node_id, True),
+                reply_markup=get_node_view_kb(lang, node.node_id, True, True,
+                                              {"bond-status": "locked"}),
             )
 
     elif action == "join":
