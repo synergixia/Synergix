@@ -223,6 +223,7 @@
   "oracle_not_staked": "No tienes stake activo.",
   "oracle_unstake_ok": "↩️ Stake retirado y devuelto a tu saldo.",
   "oracle_no_pending": "📭 No hay aportes pendientes de revisión.",
+  "oracle_new_review_notify": "🔮 Un aporte destacado (puntuación ≥ 8) espera tu revisión. Abre /oraculo → Pendientes para votar.",
   "oracle_pending_header": "⚖️ {count} aporte(s) esperando tu voto:",
   "oracle_review_entry": "📜 <i>{preview}</i>\n\n¿Merece ser inmortalizado con recompensa ×3?",
   "oracle_vote_recorded": "⚖️ Voto registrado. Faltan más votos para resolver.",

@@ -179,6 +179,31 @@ async def _challenge_broadcast_loop() -> None:
             logger.warning("challenge_broadcast_loop error: %s", exc)
 
 
+async def _notify_oracles_new_review(aporte_tx: str) -> None:
+    """Push a los Oráculos activos cuando se abre una revisión (§5.4).
+
+    El hash de UID es irreversible, así que se recorre hacia adelante: por
+    cada usuario conocido en RAM se calcula su hash y se comprueba si es un
+    Oráculo con stake activo. Best-effort, respeta el rate limit de Telegram.
+    """
+    from aisynergix.bot.identity import _hash_uid as _h
+    sent = 0
+    for uid in list(_known_uids):
+        try:
+            if not await oracle_svc.get_stake(_h(uid)):
+                continue
+            lang = await get_user_language(uid)
+            await bot.send_message(
+                uid, t("oracle_new_review_notify", lang), parse_mode="HTML"
+            )
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
+    if sent:
+        logger.info("🔮 Notificados %d Oráculos de la revisión %s", sent, aporte_tx[:12])
+
+
 # Maps internal Spanish rank key → (rank locale key, benefit locale key)
 _RANK_KEY_MAP: Dict[str, tuple] = {
     "🌱 Iniciado":      ("rank_iniciado",      "benefit_iniciado"),
@@ -3186,6 +3211,9 @@ async def on_startup():
 
     # Start background loop that detects new challenges and notifies users
     asyncio.create_task(_challenge_broadcast_loop())
+
+    # Notificación push a Oráculos cuando se abre una revisión (§5.4).
+    oracle_svc.set_review_notifier(_notify_oracles_new_review)
 
     from aisynergix.services.rag_engine import get_rag_engine
     rag = await get_rag_engine()

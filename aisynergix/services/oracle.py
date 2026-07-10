@@ -37,6 +37,17 @@ ELIGIBLE_MIN_POINTS = 2000   # 🔥 Contribuidor+
 _locks: Dict[str, asyncio.Lock] = {}
 _resolved: Dict[str, str] = {}   # aporte_tx → status final (anti doble pago)
 
+# Hook opcional para notificar a los Oráculos cuando se abre una revisión
+# (§5.4). Lo registra la capa del bot en el arranque; el servicio no importa
+# el bot para evitar dependencias circulares.
+_review_notifier = None   # Optional[Callable[[str], Awaitable[None]]]
+
+
+def set_review_notifier(fn) -> None:
+    """Registra el callback ``async fn(aporte_tx)`` de notificación push."""
+    global _review_notifier
+    _review_notifier = fn
+
 
 def _lock_for(tx: str) -> asyncio.Lock:
     lock = _locks.get(tx)
@@ -147,6 +158,13 @@ async def create_review(aporte_tx: str, author_hash: str, base_synx: float) -> N
         await write_oracle_review(
             aporte_tx, author_hash, base_synx, status="pending", created_ts=now
         )
+        # Notificación push a los Oráculos (§5.4), en segundo plano para no
+        # bloquear la respuesta del aporte.
+        if _review_notifier is not None:
+            try:
+                asyncio.create_task(_review_notifier(aporte_tx))
+            except Exception:
+                pass
     except Exception as exc:
         logger.warning("create_review %s falló: %s", aporte_tx[:12], exc)
 
@@ -281,6 +299,7 @@ __all__ = [
     "ELIGIBLE_MIN_POINTS",
     "tally",
     "wrong_streak_after",
+    "set_review_notifier",
     "get_stake",
     "stake",
     "unstake",
