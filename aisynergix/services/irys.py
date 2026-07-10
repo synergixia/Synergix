@@ -747,6 +747,9 @@ async def read_aporte(tx_id: str) -> Tuple[str, Dict[str, str]]:
             # pre-PR2 aportes (those will be indexed using a truncated raw
             # text fallback in the brain-side code).
             "content_summary": rt.get("content-summary", ""),
+            # Nodo del aporte (§4): permite el boost de memoria por nodo en el
+            # RAG. Vacío para aportes fuera de nodo.
+            "node_id": rt.get("node-id", ""),
         }
     return texto, tags
 

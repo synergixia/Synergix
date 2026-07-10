@@ -376,7 +376,7 @@ class AIManager:
             # Thinker MUST always consult immortal memory (RAG) before responding
             history, (context, search_results) = await asyncio.gather(
                 self._get_conversation_history(uid),
-                self._rag.query(message, target_language),
+                self._rag.query(message, target_language, node_id=profile.active_node or ""),
             )
 
             # Semaphore matches --parallel 1; extras queue in asyncio (no timeout risk).
@@ -448,7 +448,7 @@ class AIManager:
 
             history, (context, search_results) = await asyncio.gather(
                 self._get_conversation_history(uid),
-                self._rag.query(message, target_language),
+                self._rag.query(message, target_language, node_id=profile.active_node or ""),
             )
 
             # Immortal memory first; if it has nothing relevant, fall back to the
@@ -750,6 +750,7 @@ class AIManager:
             quality_score=quality_score,
             object_name=object_path,
             category=evaluation.get("category", "filosofia"),
+            node_id=node_id or "",
         )
 
         # Seal the reward atomically as deltas on the latest Irys value (never an
