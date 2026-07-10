@@ -47,6 +47,11 @@ REDEEM_ENABLED: bool = os.getenv("SYNERGIX_REDEEM_ENABLED", "false").strip().low
     "1", "true", "yes", "on",
 )
 
+# Fase C — tasa de conversión y presupuesto de emisión (la red de seguridad
+# principal con hot wallet: acota el peor caso de pérdida por día).
+REDEEM_RATE = _num_env("SYNERGIX_REDEEM_RATE", 1.0)          # SYNERGIX por SYNX
+REDEEM_DAILY_BUDGET = _num_env("SYNERGIX_REDEEM_DAILY_BUDGET", 1000.0)  # soft-launch pequeño
+
 REDEEM_MIN_CONTRIBUTIONS = _int_env("SYNERGIX_REDEEM_MIN_CONTRIBUTIONS", 5)
 REDEEM_MIN_AMOUNT = _num_env("SYNERGIX_REDEEM_MIN_AMOUNT", 100.0)
 REDEEM_USER_WINDOW_CAP = _num_env("SYNERGIX_REDEEM_USER_CAP", 5000.0)
@@ -128,6 +133,43 @@ def _distinct_address_users(records: List[Dict[str, str]]) -> set:
         r.get("uid-hash", "") for r in records
         if r.get("uid-hash") and r.get("redeem-status") in _COUNTED_STATES
     }
+
+
+def synergix_for(synx_amount: float) -> float:
+    """Convierte SYNX canjeado a SYNERGIX real según la tasa."""
+    return round(max(0.0, synx_amount) * REDEEM_RATE, 4)
+
+
+def spent_today(records: List[Dict[str, str]], day_start: int) -> float:
+    """SYNERGIX pagado hoy (para el presupuesto de emisión). Función pura."""
+    total = 0.0
+    for r in records:
+        if r.get("redeem-status") != "paid":
+            continue
+        try:
+            ts = int(r.get("ts", 0) or 0)
+            syn = float(r.get("synergix", 0) or 0)
+        except (ValueError, TypeError):
+            continue
+        if ts >= day_start:
+            total += syn
+    return round(total, 4)
+
+
+def _day_start(now: Optional[int] = None) -> int:
+    from datetime import datetime, timezone
+    n = datetime.fromtimestamp(now, tz=timezone.utc) if now else datetime.now(timezone.utc)
+    return int(n.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+
+
+async def budget_remaining() -> float:
+    """SYNERGIX que aún se puede emitir hoy (presupuesto − gastado hoy)."""
+    from aisynergix.services.irys import list_all_redemptions
+    try:
+        recs = await list_all_redemptions()
+    except Exception:
+        recs = []
+    return max(0.0, round(REDEEM_DAILY_BUDGET - spent_today(recs, _day_start()), 4))
 
 
 # ── E/S (perfil + Irys) ──────────────────────────────────────────────────
@@ -226,33 +268,96 @@ async def redeemable_now(uid: int) -> Dict[str, Any]:
     }
 
 
-async def request_redemption(uid: int, amount: float) -> Dict[str, Any]:
-    """Registra una solicitud de canje tras pasar el gate.
+_pay_locks: Dict[str, Any] = {}
 
-    Fase B: NO paga — solo sella la solicitud (status=requested) para auditoría
-    y para que cuente en los topes.  Fase C procesa requested → paid con el
-    pago real desde el tesoro (idempotente por redemption-id).
+
+def _lock_for(uid_hash: str):
+    import asyncio
+    lock = _pay_locks.get(uid_hash)
+    if lock is None:
+        lock = asyncio.Lock()
+        _pay_locks[uid_hash] = lock
+    return lock
+
+
+async def request_redemption(uid: int, amount: float) -> Dict[str, Any]:
+    """Procesa un canje: gate → presupuesto → debita SYNX → paga SYNERGIX real.
+
+    Orden a prueba de doble-gasto: se debita el SYNX ANTES de transferir (el
+    usuario no puede volver a gastarlo); si la transferencia falla, se
+    reembolsa.  Cada paso se sella en Irys (requested → paid|rejected) para
+    auditoría e idempotencia.  Si el proceso muere entre la transferencia y el
+    sellado 'paid', el registro queda 'requested' y NO se reintenta
+    automáticamente (evita doble pago): el operador reconcilia a mano — por eso
+    el presupuesto de soft-launch debe ser pequeño.
     """
     if not REDEEM_ENABLED:
         return {"ok": False, "reason": "disabled"}
+
+    # Freeze de emergencia (reutiliza el emergency-lock del admin).
+    from aisynergix.services.irys import is_emergency_locked, write_redemption
+    if is_emergency_locked():
+        return {"ok": False, "reason": "frozen"}
+
     ok, reason, _ = await can_redeem(uid, amount)
     if not ok:
         return {"ok": False, "reason": reason}
 
-    from aisynergix.services.irys import write_redemption
+    synergix_amount = synergix_for(amount)
+    if synergix_amount <= 0:
+        return {"ok": False, "reason": "below_min"}
+
+    # Presupuesto de emisión diario (acota el peor caso con hot wallet).
+    if synergix_amount > await budget_remaining():
+        return {"ok": False, "reason": "budget"}
+
+    from aisynergix.services.treasury import treasury_enabled, pay_synergix
+    if not treasury_enabled():
+        return {"ok": False, "reason": "disabled"}
+
     from aisynergix.bot.identity import get_identity_manager
     identity = get_identity_manager()
     profile = await identity.get_profile(uid)
     uid_hash = _hash_uid(uid)
     address = (profile.wallet_address or "").lower()
     rid = generate_redemption_id(uid_hash, amount)
-    try:
-        await write_redemption(rid, uid_hash, address, amount, status="requested")
-    except Exception as exc:
-        logger.error("request_redemption sellado falló: %s", exc)
-        return {"ok": False, "reason": "error"}
-    logger.info("💱 Solicitud de canje %s: %s %.2f SYNX → %s", rid, uid_hash, amount, address)
-    return {"ok": True, "redemption_id": rid, "amount": amount, "address": address}
+
+    async with _lock_for(uid_hash):
+        # 1) Debitar el SYNX (autoritativo, atómico) — punto de no retorno.
+        debited = await identity.debit_synx(uid_hash, amount)
+        if debited is None:
+            return {"ok": False, "reason": "insufficient_balance"}
+
+        # 2) Anclar 'requested' (idempotencia/auditoría) antes de pagar.
+        try:
+            await write_redemption(rid, uid_hash, address, amount,
+                                   status="requested", synergix=synergix_amount)
+        except Exception as exc:
+            logger.error("canje %s: sellado requested falló, reembolso: %s", rid, exc)
+            await identity.credit_synx(uid_hash, debited)
+            return {"ok": False, "reason": "error"}
+
+        # 3) Pagar SYNERGIX real desde el tesoro → wallet verificada.
+        result = await pay_synergix(address, synergix_amount)
+        if not result.get("ok"):
+            logger.warning("canje %s: pago falló (%s) — reembolso SYNX",
+                           rid, result.get("error"))
+            await identity.credit_synx(uid_hash, debited)
+            try:
+                await write_redemption(rid, uid_hash, address, amount,
+                                       status="rejected", synergix=synergix_amount)
+            except Exception:
+                pass
+            return {"ok": False, "reason": "pay_" + str(result.get("error", "broadcast"))}
+
+        # 4) Sellar 'paid' con el hash on-chain.
+        tx = result["tx"]
+        await write_redemption(rid, uid_hash, address, amount,
+                               status="paid", tx=tx, synergix=synergix_amount)
+        logger.info("✅ Canje %s pagado: %.2f SYNX → %.2f SYNERGIX → %s tx=%s",
+                    rid, amount, synergix_amount, address, tx)
+        return {"ok": True, "redemption_id": rid, "amount": amount,
+                "synergix": synergix_amount, "address": address, "tx": tx}
 
 
 __all__ = [
@@ -262,7 +367,12 @@ __all__ = [
     "REDEEM_USER_WINDOW_CAP",
     "REDEEM_ADDRESS_WINDOW_CAP",
     "REDEEM_ADDRESS_MAX_USERS",
+    "REDEEM_RATE",
+    "REDEEM_DAILY_BUDGET",
     "evaluate",
+    "synergix_for",
+    "spent_today",
+    "budget_remaining",
     "can_redeem",
     "redeemable_now",
     "request_redemption",

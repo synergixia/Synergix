@@ -115,8 +115,37 @@ def test_distinct_address_users():
 
 
 def test_redeem_disabled_by_default():
-    # Fase B: el interruptor viene apagado (no se paga nada).
+    # Fases B/C: el interruptor viene apagado (no se paga nada).
     assert rd.REDEEM_ENABLED is False
+
+
+# ── Fase C: tasa y presupuesto de emisión ────────────────────────────────
+
+def test_synergix_for_rate():
+    assert rd.synergix_for(1000) == round(1000 * rd.REDEEM_RATE, 4)
+    assert rd.synergix_for(0) == 0.0
+    assert rd.synergix_for(-5) == 0.0
+
+
+def test_spent_today_only_paid_and_today():
+    day = 1_000_000_000
+    recs = [
+        {"redeem-status": "paid", "synergix": "300", "ts": str(day + 10)},        # cuenta
+        {"redeem-status": "paid", "synergix": "200", "ts": str(day + 20)},        # cuenta
+        {"redeem-status": "requested", "synergix": "999", "ts": str(day + 30)},   # NO (no pagado)
+        {"redeem-status": "rejected", "synergix": "999", "ts": str(day + 40)},    # NO
+        {"redeem-status": "paid", "synergix": "999", "ts": str(day - 10)},        # NO (ayer)
+        {"redeem-status": "paid", "synergix": "malo", "ts": str(day + 50)},       # ignora basura
+    ]
+    assert rd.spent_today(recs, day) == 500.0
+
+
+def test_budget_bounds_daily_loss():
+    # El presupuesto es el techo del gasto diario (propiedad clave del soft-launch).
+    day = 1_000_000_000
+    at_budget = [{"redeem-status": "paid", "synergix": str(rd.REDEEM_DAILY_BUDGET), "ts": str(day + 1)}]
+    assert rd.spent_today(at_budget, day) == rd.REDEEM_DAILY_BUDGET
+    # remaining sería 0 → un nuevo canje se rechazaría con 'budget'.
 
 
 def test_locales_have_redeem_keys():
