@@ -2316,7 +2316,10 @@ async def handle_impact_useful(callback: CallbackQuery) -> None:
 # ══════════════════════════════════════════════════════════════════════════
 
 def _redeem_reason_text(reason: str, lang: str) -> str:
-    """Traduce el motivo de inelegibilidad a un mensaje accionable."""
+    """Traduce el motivo de inelegibilidad/fallo a un mensaje accionable."""
+    if reason.startswith("pay_"):
+        # El pago on-chain falló; el SYNX ya fue reembolsado.
+        return t("redeem_pay_failed", lang)
     keys = {
         "not_verified": ("redeem_need_verify", {}),
         "low_reputation": ("redeem_need_reputation",
@@ -2326,6 +2329,9 @@ def _redeem_reason_text(reason: str, lang: str) -> str:
         "user_cap": ("redeem_user_cap", {}),
         "address_cap": ("redeem_address_cap", {}),
         "address_shared": ("redeem_address_shared", {}),
+        "frozen": ("redeem_frozen", {}),
+        "budget": ("redeem_budget", {}),
+        "disabled": ("redeem_soon_generic", {}),
     }
     key, kw = keys.get(reason, ("redeem_ineligible", {}))
     return t(key, lang, **kw)
@@ -2381,15 +2387,20 @@ async def handle_redeem_claim(callback: CallbackQuery) -> None:
     if not (status.get("enabled") and status.get("eligible")):
         await callback.answer(t("redeem_ineligible", lang))
         return
+    await callback.answer()
+    await callback.message.edit_text(t("redeem_processing", lang))
     result = await redeem_svc.request_redemption(uid, status["max"])
     if result.get("ok"):
+        tx = result["tx"]
+        tx = tx if tx.startswith("0x") else "0x" + tx
         await callback.message.edit_text(
             t("redeem_claimed", lang, amount=f"{result['amount']:,.0f}",
-              address=result["address"])
+              synergix=f"{result['synergix']:,.0f}", address=result["address"],
+              tx=tx, url=f"https://bscscan.com/tx/{tx}"),
+            disable_web_page_preview=True,
         )
     else:
         await callback.message.edit_text(_redeem_reason_text(result.get("reason", ""), lang))
-    await callback.answer()
 
 
 @dp.message(Command("admin"))

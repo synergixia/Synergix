@@ -302,7 +302,7 @@
   "redeem_soon": "✅ You meet the requirements to redeem (up to <b>{max}</b> SYNX → your wallet <code>{address}</code>).\n\n🔜 Automatic redemption goes live very soon. You're all set!",
   "redeem_ready": "✅ You can redeem up to <b>{max}</b> SYNX to your verified wallet <code>{address}</code>.",
   "btn_redeem_claim": "💱 Claim {max} SYNX",
-  "redeem_claimed": "✅ <b>Redemption requested!</b>\n\n{amount} SYNX → <code>{address}</code>\n\nYour real SYNERGIX will arrive shortly.",
+  "redeem_claimed": "✅ <b>Redemption complete!</b>\n\n💎 {amount} SYNX → <b>{synergix} SYNERGIX</b>\n📤 to <code>{address}</code>\n🔗 <a href=\"{url}\">{tx}</a>\n\nCheck your wallet in a few seconds.",
   "redeem_need_verify": "🔐 To redeem, first verify your wallet in 💰 Synergix → Verify wallet. Payout only goes to a wallet you prove you own.",
   "redeem_need_reputation": "📚 You need at least {min} validated contributions to redeem. Keep contributing — reputation protects the network from abuse.",
   "redeem_below_min": "✂️ The minimum redemption is {min} SYNX. Accumulate a bit more.",
@@ -310,5 +310,10 @@
   "redeem_user_cap": "⏳ You reached your redemption limit for now. Try again later.",
   "redeem_address_cap": "⏳ Your wallet reached the redemption limit for now. Try again later.",
   "redeem_address_shared": "🚫 That wallet was already used by another account to redeem. Each wallet belongs to one person.",
-  "redeem_ineligible": "🚫 You can't redeem right now. Check your status with /canjear."
+  "redeem_ineligible": "🚫 You can't redeem right now. Check your status with /canjear.",
+  "redeem_processing": "⏳ Processing your on-chain redemption… (a few seconds)",
+  "redeem_frozen": "🧊 Redemption is temporarily frozen for maintenance. Try again later.",
+  "redeem_budget": "⏳ Today's redemption budget is used up. Come back tomorrow — it renews daily.",
+  "redeem_pay_failed": "❌ The payout couldn't complete and your SYNX was fully refunded. Try again in a few minutes.",
+  "redeem_soon_generic": "🔜 Redemption goes live very soon."
 }

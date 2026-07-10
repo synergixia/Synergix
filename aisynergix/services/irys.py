@@ -1438,15 +1438,20 @@ async def list_user_bonds(uid_ofuscado: str, limit: int = 500) -> List[Dict[str,
 )
 async def write_redemption(
     redemption_id: str, uid_ofuscado: str, address: str, amount: float,
-    status: str, tx: str = "",
+    status: str, tx: str = "", synergix: float = 0.0,
 ) -> str:
-    """Sella una redención. status: requested|paid|rejected. tx: hash on-chain (al pagar)."""
+    """Sella una redención. status: requested|paid|rejected. tx: hash on-chain (al pagar).
+
+    ``amount`` = SYNX canjeado; ``synergix`` = SYNERGIX real pagado (para el
+    presupuesto de emisión).
+    """
     tags = [
         {"name": "data-type",      "value": "redemption"},
         {"name": "redemption-id",  "value": redemption_id},
         {"name": "uid-hash",       "value": uid_ofuscado},
         {"name": "address",        "value": address.lower()},
         {"name": "amount",         "value": f"{amount:.4f}"},
+        {"name": "synergix",       "value": f"{synergix:.4f}"},
         {"name": "redeem-status",  "value": status},
         {"name": "ts",             "value": str(int(datetime.now(timezone.utc).timestamp()))},
         {"name": "tx",             "value": tx},
@@ -1495,6 +1500,16 @@ async def list_address_redemptions(address: str, limit: int = 1000) -> List[Dict
         return [_node_tags(n) for n in nodes]
     except Exception as exc:
         logger.warning("list_address_redemptions %s falló: %s", address, exc)
+        return []
+
+
+async def list_all_redemptions(limit: int = 5000) -> List[Dict[str, str]]:
+    """Última versión de cada redención (dedupe por id) — para el presupuesto diario."""
+    try:
+        nodes = await _query_all([{"name": "data-type", "value": "redemption"}], limit=limit)
+        return _dedupe_latest(nodes, "redemption-id")
+    except Exception as exc:
+        logger.warning("list_all_redemptions falló: %s", exc)
         return []
 
 
@@ -2148,6 +2163,7 @@ __all__ = [
     "get_redemption",
     "list_user_redemptions",
     "list_address_redemptions",
+    "list_all_redemptions",
     # Leaderboard
     "rebuild_top10",
     "compute_top10",
