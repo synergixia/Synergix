@@ -705,8 +705,20 @@ class AIManager:
         except Exception:
             pass
 
+        # §5.4 Juez 3: guardián anti-gaming (ráfaga / plantilla / relleno).
+        # No rechaza (evita castigar falsos positivos como un humano rápido),
+        # pero anula las bonificaciones y el multiplicador de vacío y baja el
+        # trust, de modo que el farmeo deja de ser rentable.
+        from aisynergix.ai.anti_gaming import get_anti_gaming_judge
+        gaming_flagged, gaming_reason = get_anti_gaming_judge().check(
+            profile.uid_hash, content, ts
+        )
+        if gaming_flagged:
+            bonus = rewards.BonusBreakdown()
+
         synx_award = rewards.compute_synx(synx_base, rank_multiplier, bonus)
         node_multiplier = bonus.gap_multiplier
+        trust_delta_final = -trust_decrement if gaming_flagged else trust_increment
 
         try:
             object_path = await write_aporte(
@@ -749,7 +761,7 @@ class AIManager:
             contribution=1,
             daily=1,
             synx=synx_award,
-            trust_delta=trust_increment,
+            trust_delta=trust_delta_final,
             streak_days=new_streak,
             last_aporte_date=new_last_date,
         )
@@ -771,6 +783,7 @@ class AIManager:
         oracle_review = (
             quality_score >= REVIEW_MIN_SCORE
             and not object_path.startswith("local:")
+            and not gaming_flagged
         )
         if oracle_review:
             _spawn_bg(create_review(object_path, profile.uid_hash, synx_award))
@@ -793,6 +806,7 @@ class AIManager:
             "synx_bonuses": bonus.active_keys(),
             "streak_days": new_streak,
             "oracle_review": oracle_review,
+            "gaming_flagged": gaming_flagged,
             "node_id": node_id,
             "tier": tier,
             "rank": profile.rank,
