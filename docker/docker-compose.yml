@@ -335,6 +335,8 @@ services:
       SYNERGIX_TREASURY_KEY: ${SYNERGIX_TREASURY_KEY:-}
       SYNERGIX_REDEEM_RATE: ${SYNERGIX_REDEEM_RATE:-1.0}
       SYNERGIX_REDEEM_DAILY_BUDGET: ${SYNERGIX_REDEEM_DAILY_BUDGET:-1000}
+      # Fase D: contrato de bonds on-chain (vacío = bond contable de Fase A).
+      SYNERGIX_BOND_CONTRACT: ${SYNERGIX_BOND_CONTRACT:-}
 
       # ── HuggingFace / Transformers ─────────────────────────────
       HF_HOME: /tmp/hf_cache
