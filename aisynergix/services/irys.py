@@ -1426,6 +1426,78 @@ async def list_user_bonds(uid_ofuscado: str, limit: int = 500) -> List[Dict[str,
         return []
 
 
+# ── Canjes / redenciones (SYNX contable → SYNERGIX real) — Fase B/C ───────
+# Registro APPEND-ONLY de cada solicitud de canje.  Sirve de (1) auditoría
+# pública, (2) fuente para los límites por-usuario y por-dirección del gate
+# anti-Sybil, y (3) ledger de idempotencia para el pago (Fase C).
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_redemption(
+    redemption_id: str, uid_ofuscado: str, address: str, amount: float,
+    status: str, tx: str = "",
+) -> str:
+    """Sella una redención. status: requested|paid|rejected. tx: hash on-chain (al pagar)."""
+    tags = [
+        {"name": "data-type",      "value": "redemption"},
+        {"name": "redemption-id",  "value": redemption_id},
+        {"name": "uid-hash",       "value": uid_ofuscado},
+        {"name": "address",        "value": address.lower()},
+        {"name": "amount",         "value": f"{amount:.4f}"},
+        {"name": "redeem-status",  "value": status},
+        {"name": "ts",             "value": str(int(datetime.now(timezone.utc).timestamp()))},
+        {"name": "tx",             "value": tx},
+        {"name": "Content-Type",   "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("💱 Redención %s (%s, %.2f SYNX → %s) sellada.",
+                redemption_id, status, amount, address)
+    return tx_id
+
+
+async def get_redemption(redemption_id: str) -> Optional[Dict[str, str]]:
+    """Última versión de una redención (para idempotencia del pago)."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type",     "value": "redemption"},
+            {"name": "redemption-id", "value": redemption_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("get_redemption %s falló: %s", redemption_id, exc)
+    return None
+
+
+async def list_user_redemptions(uid_ofuscado: str, limit: int = 500) -> List[Dict[str, str]]:
+    """Todas las redenciones de un usuario (append-only; el caller filtra por ventana)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "redemption"},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_user_redemptions %s falló: %s", uid_ofuscado, exc)
+        return []
+
+
+async def list_address_redemptions(address: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Todas las redenciones hacia una dirección de pago (defensa Sybil por dirección)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "redemption"},
+            {"name": "address",   "value": address.lower()},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_address_redemptions %s falló: %s", address, exc)
+        return []
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # ECONOMÍA VIVA (Fase 2): PROVEEDORES · PROYECTOS · ORÁCULOS
 #
@@ -2072,6 +2144,10 @@ __all__ = [
     "write_node_bond",
     "get_node_bond",
     "list_user_bonds",
+    "write_redemption",
+    "get_redemption",
+    "list_user_redemptions",
+    "list_address_redemptions",
     # Leaderboard
     "rebuild_top10",
     "compute_top10",

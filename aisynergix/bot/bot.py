@@ -56,6 +56,7 @@ from aisynergix.services import agent as agent_svc
 from aisynergix.services import governance as gov_svc
 from aisynergix.services import passport as passport_svc
 from aisynergix.services import custody as custody_svc
+from aisynergix.services import redemption as redeem_svc
 from aisynergix.services import rewards
 
 
@@ -2310,6 +2311,87 @@ async def handle_impact_useful(callback: CallbackQuery) -> None:
     await callback.answer(t("useful_thanks", lang))
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# CANJE: SYNX contable → SYNERGIX real (Fase B — gate; el pago llega en Fase C)
+# ══════════════════════════════════════════════════════════════════════════
+
+def _redeem_reason_text(reason: str, lang: str) -> str:
+    """Traduce el motivo de inelegibilidad a un mensaje accionable."""
+    keys = {
+        "not_verified": ("redeem_need_verify", {}),
+        "low_reputation": ("redeem_need_reputation",
+                           {"min": redeem_svc.REDEEM_MIN_CONTRIBUTIONS}),
+        "below_min": ("redeem_below_min", {"min": f"{redeem_svc.REDEEM_MIN_AMOUNT:,.0f}"}),
+        "insufficient_balance": ("redeem_insufficient", {}),
+        "user_cap": ("redeem_user_cap", {}),
+        "address_cap": ("redeem_address_cap", {}),
+        "address_shared": ("redeem_address_shared", {}),
+    }
+    key, kw = keys.get(reason, ("redeem_ineligible", {}))
+    return t(key, lang, **kw)
+
+
+@dp.message(Command("canjear"))
+async def cmd_redeem(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    status = await redeem_svc.redeemable_now(uid)
+    balance = status.get("synx_balance", 0.0)
+    header = t("redeem_header", lang, balance=f"{balance:,.0f}")
+
+    if not status.get("eligible"):
+        # No elegible: explicar cómo llegar a serlo (verificar wallet, aportar).
+        await message.answer(header + "\n\n" + _redeem_reason_text(status.get("reason", ""), lang))
+        return
+
+    if not status.get("enabled"):
+        # Elegible pero el canje aún no está activo (Fase B).
+        await message.answer(
+            header + "\n\n" + t("redeem_soon", lang,
+                                max=f"{status['max']:,.0f}", address=status["address"])
+        )
+        return
+
+    # Elegible y activo (Fase C): botón para reclamar el máximo.
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text=t("btn_redeem_claim", lang, max=f"{status['max']:,.0f}"),
+            callback_data="redeem:claim",
+        ),
+    ]])
+    await message.answer(
+        header + "\n\n" + t("redeem_ready", lang,
+                            max=f"{status['max']:,.0f}", address=status["address"]),
+        reply_markup=kb,
+    )
+
+
+@dp.callback_query(F.data == "redeem:claim")
+async def handle_redeem_claim(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    status = await redeem_svc.redeemable_now(uid)
+    if not (status.get("enabled") and status.get("eligible")):
+        await callback.answer(t("redeem_ineligible", lang))
+        return
+    result = await redeem_svc.request_redemption(uid, status["max"])
+    if result.get("ok"):
+        await callback.message.edit_text(
+            t("redeem_claimed", lang, amount=f"{result['amount']:,.0f}",
+              address=result["address"])
+        )
+    else:
+        await callback.message.edit_text(_redeem_reason_text(result.get("reason", ""), lang))
+    await callback.answer()
+
+
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message) -> None:
     if not message.from_user:
@@ -2967,6 +3049,7 @@ async def set_bot_commands():
         BotCommand(command="oraculo", description="🔮 Jurado de Oráculos"),
         BotCommand(command="propuestas", description="🗳️ Gobernanza del nodo"),
         BotCommand(command="pasaporte", description="🪪 Mi Passport on-chain"),
+        BotCommand(command="canjear", description="💱 Canjear SYNX por SYNERGIX"),
     ]
     await bot.set_my_commands(commands)
 

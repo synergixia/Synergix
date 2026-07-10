@@ -297,5 +297,18 @@
   "node_bond_status_released": "✅ Bond: {amount} SYNERGIX liberados.",
   "btn_node_unbond": "🔓 Retirar bond (unbond)",
   "node_unbond_denied": "Solo el fundador puede iniciar el unbonding, y solo si el bond está bloqueado.",
-  "node_unbond_started": "⏳ Unbonding iniciado. Tu bond se liberará en {days} días (el {date}). Hasta entonces sigue bloqueado."
+  "node_unbond_started": "⏳ Unbonding iniciado. Tu bond se liberará en {days} días (el {date}). Hasta entonces sigue bloqueado.",
+  "redeem_header": "💱 <b>Canjear SYNX por SYNERGIX</b>\n\n💎 Tu saldo: <b>{balance}</b> SYNX",
+  "redeem_soon": "✅ Cumples los requisitos para canjear (hasta <b>{max}</b> SYNX → tu wallet <code>{address}</code>).\n\n🔜 El canje automático se activará muy pronto. ¡Ya estás listo!",
+  "redeem_ready": "✅ Puedes canjear hasta <b>{max}</b> SYNX a tu wallet verificada <code>{address}</code>.",
+  "btn_redeem_claim": "💱 Reclamar {max} SYNX",
+  "redeem_claimed": "✅ <b>¡Canje solicitado!</b>\n\n{amount} SYNX → <code>{address}</code>\n\nTu SYNERGIX real llegará en breve.",
+  "redeem_need_verify": "🔐 Para canjear primero verifica tu wallet en 💰 Synergix → Verificar wallet. El pago solo va a una wallet cuya propiedad demuestres.",
+  "redeem_need_reputation": "📚 Necesitas al menos {min} aportes validados para canjear. Sigue contribuyendo — la reputación protege la red del abuso.",
+  "redeem_below_min": "✂️ El canje mínimo es {min} SYNX. Acumula un poco más.",
+  "redeem_insufficient": "❌ No tienes suficiente saldo SYNX para ese canje.",
+  "redeem_user_cap": "⏳ Alcanzaste tu límite de canje por ahora. Vuelve a intentarlo más tarde.",
+  "redeem_address_cap": "⏳ Tu wallet alcanzó el límite de canje por ahora. Inténtalo más tarde.",
+  "redeem_address_shared": "🚫 Esa wallet ya fue usada por otra cuenta para canjear. Cada wallet pertenece a una sola persona.",
+  "redeem_ineligible": "🚫 Ahora mismo no puedes canjear. Revisa tu estado con /canjear."
 }
