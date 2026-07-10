@@ -131,6 +131,15 @@ async def create_node(
     creator_hash = _hash_uid(uid)
     node_id = generate_node_id(creator_hash, clean_name)
 
+    # Bond en SYNERGIX real: crear un nodo exige bloquear BOND_AMOUNT (anti-Sybil).
+    # Se bloquea ANTES de escribir el nodo; si no alcanza el saldo disponible,
+    # no se crea nada.
+    from aisynergix.services import bonds as bonds_svc
+    if not await bonds_svc.lock_node_bond(uid, node_id):
+        logger.info("create_node: %s sin bond suficiente (%.0f SYNERGIX)",
+                    creator_hash, bonds_svc.BOND_AMOUNT)
+        return None
+
     await write_node(
         node_id=node_id,
         name=clean_name,
@@ -141,19 +150,16 @@ async def create_node(
     )
     await write_node_member(node_id, creator_hash, role="founder", status="active")
 
-    # Bono de fundador (una sola vez por usuario — anti-farming) + marcar nodo
-    # activo, atómico bajo el lock por-usuario.  claim_founder_bonus ignora el
-    # crédito si el usuario ya lo cobró en un nodo anterior.
+    # Crear un nodo ahora CUESTA un bond (ya no hay bono de fundador gratis).
+    # Solo se marca el nodo como activo del usuario.
     try:
-        await _identity().apply_deltas(
-            uid, synx=FOUNDER_BONUS_SYNX, active_node=node_id,
-            claim_founder_bonus=True,
-        )
+        await _identity().apply_deltas(uid, active_node=node_id)
     except Exception as exc:
-        logger.warning("create_node: no se pudo acreditar bono al fundador %s: %s",
+        logger.warning("create_node: no se pudo marcar nodo activo para %s: %s",
                        creator_hash, exc)
 
-    logger.info("🏘️ Nodo creado %s '%s' por %s", node_id, clean_name, creator_hash)
+    logger.info("🏘️ Nodo creado %s '%s' por %s (bond %.0f SYNERGIX)",
+                node_id, clean_name, creator_hash, bonds_svc.BOND_AMOUNT)
     return Node(
         node_id=node_id, name=clean_name, node_type=node_type,
         creator=creator_hash, language=language, topics=topics,

@@ -1367,6 +1367,65 @@ async def count_node_aportes(node_id: str) -> int:
     return len(await list_node_aportes(node_id))
 
 
+# ── Bonds de nodo (SYNERGIX real bloqueado — Fase A) ──────────────────────
+# Crear un nodo exige bloquear un bond de SYNERGIX real en la wallet custodial
+# del creador.  El token NO se mueve: se marca como bloqueado con un DataItem
+# node-bond (última versión por node-id gana).  Retiro y venta descuentan el
+# bond bloqueado del saldo disponible.
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_node_bond(
+    node_id: str, uid_ofuscado: str, amount: float, status: str,
+    unbond_until: int = 0,
+) -> str:
+    """Sella (o re-versiona) el bond de un nodo. status: locked|unbonding|released|slashed."""
+    tags = [
+        {"name": "data-type",    "value": "node-bond"},
+        {"name": "node-id",      "value": node_id},
+        {"name": "uid-hash",     "value": uid_ofuscado},
+        {"name": "amount",       "value": f"{amount:.4f}"},
+        {"name": "bond-status",  "value": status},
+        {"name": "unbond-until", "value": str(int(unbond_until))},
+        {"name": "created-ts",   "value": str(int(datetime.now(timezone.utc).timestamp()))},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🔒 Bond de nodo %s (%s, %.0f SYNERGIX) → %s en Irys.",
+                node_id, status, amount, uid_ofuscado)
+    return tx_id
+
+
+async def get_node_bond(node_id: str) -> Optional[Dict[str, str]]:
+    """Bond vigente de un nodo (tags) o None."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "node-bond"},
+            {"name": "node-id",   "value": node_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("get_node_bond %s falló: %s", node_id, exc)
+    return None
+
+
+async def list_user_bonds(uid_ofuscado: str, limit: int = 500) -> List[Dict[str, str]]:
+    """Bonds del usuario (última versión por nodo)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "node-bond"},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "node-id")
+    except Exception as exc:
+        logger.warning("list_user_bonds %s falló: %s", uid_ofuscado, exc)
+        return []
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # ECONOMÍA VIVA (Fase 2): PROVEEDORES · PROYECTOS · ORÁCULOS
 #
@@ -2010,6 +2069,9 @@ __all__ = [
     "list_user_memberships",
     "list_node_aportes",
     "count_node_aportes",
+    "write_node_bond",
+    "get_node_bond",
+    "list_user_bonds",
     # Leaderboard
     "rebuild_top10",
     "compute_top10",
