@@ -87,6 +87,18 @@ def test_validate_token_ok_and_insufficient():
     ) == "insufficient"
 
 
+def test_min_out_applies_slippage():
+    assert cu.min_out(100.0, 12.0) == 88.0
+    assert cu.min_out(1000.0, 0.5) == 995.0
+    assert cu.min_out(50.0, 100.0) == 0.0     # slippage total → mínimo 0
+    assert cu.min_out(0.0, 12.0) == 0.0        # sin salida esperada
+    assert cu.min_out(-5.0, 12.0) == 0.0       # nunca negativo
+
+
+def test_swap_slippage_sane():
+    assert 0.5 <= cu.SWAP_SLIPPAGE_PCT <= 50.0
+
+
 def test_locales_have_custody_keys():
     import json
     base = Path(__file__).resolve().parent.parent / "aisynergix/bot/locales"
@@ -97,6 +109,9 @@ def test_locales_have_custody_keys():
         # Reset / recuperación de wallet (master key cambiada)
         "withdraw_error_undecryptable", "btn_wallet_reset", "btn_wallet_reset_confirm",
         "wallet_unhealthy", "wallet_reset_confirm", "wallet_reset_done", "wallet_reset_failed",
+        # Swap (compra/venta ejecutada desde la wallet custodial)
+        "trade_executing", "trade_executed", "swap_error_insufficient",
+        "swap_error_no_gas", "swap_error_broadcast",
     }
     for lang in ("es", "en"):
         d = json.loads((base / f"{lang}.json").read_text(encoding="utf-8"))

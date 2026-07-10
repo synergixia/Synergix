@@ -280,5 +280,14 @@
   "wallet_reset_confirm": "⚠️ <b>Confirma</b>\n\nSe creará una wallet custodial NUEVA. La dirección anterior se abandona: si tenía fondos y no conservas la master key original, se pierden.\n\n¿Continuar?",
   "wallet_reset_working": "⏳ Generando tu nueva wallet y sellándola en Irys…",
   "wallet_reset_done": "✅ <b>Wallet nueva creada</b>\n\nTu nueva dirección de depósito:\n<code>{address}</code>\n\nYa puedes depositar y retirar con normalidad.",
-  "wallet_reset_failed": "❌ No se pudo crear la wallet nueva. Revisa que SYNERGIX_WALLET_MASTER_KEY esté configurada e inténtalo de nuevo."
+  "wallet_reset_failed": "❌ No se pudo crear la wallet nueva. Revisa que SYNERGIX_WALLET_MASTER_KEY esté configurada e inténtalo de nuevo.",
+  "trade_executing": "⏳ Ejecutando la operación on-chain desde tu wallet Synergix… (puede tardar unos segundos)",
+  "trade_executed": "✅ <b>¡Operación ejecutada!</b>\n\n🔗 <a href=\"{url}\">{tx}</a>\n\nRevisa tu nuevo saldo en 📊 Mi Saldo en unos segundos.",
+  "swap_error_disabled": "🔒 La función de wallet no está activada.",
+  "swap_error_bad_amount": "❌ Monto inválido.",
+  "swap_error_no_wallet": "❌ No se pudo abrir tu wallet. Ve a 📥 Depositar para revisarla.",
+  "swap_error_network": "🌐 No pude conectar con BNB Chain. Intenta de nuevo en unos minutos.",
+  "swap_error_insufficient": "❌ Saldo insuficiente en tu wallet (recuerda dejar algo de BNB para el gas).",
+  "swap_error_no_gas": "⛽ Tu wallet no tiene BNB para pagar el gas. Deposita un poco de BNB primero.",
+  "swap_error_broadcast": "❌ La operación no se pudo completar (posible slippage o liquidez baja). Tus fondos siguen en tu wallet. Intenta con menos cantidad."
 }
