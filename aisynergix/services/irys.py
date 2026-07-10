@@ -1553,6 +1553,29 @@ async def write_provider(
     return tx_id
 
 
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_payment(
+    node_id: str, from_hash: str, to_hash: str, amount: float, memo: str = "",
+) -> str:
+    """Registro append-only de un pago SYNX entre dos usuarios (§6.2, uso 2)."""
+    tags = [
+        {"name": "data-type",  "value": "synx-payment"},
+        {"name": "node-id",    "value": node_id},
+        {"name": "from-hash",  "value": from_hash},
+        {"name": "to-hash",    "value": to_hash},
+        {"name": "amount",     "value": f"{amount:.2f}"},
+        {"name": "memo",       "value": (memo or "")[:120]},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("💸 Pago SYNX %.2f: %s → %s (%s)", amount, from_hash, to_hash, node_id)
+    return tx_id
+
+
 async def list_node_providers(node_id: str, limit: int = 500) -> List[Dict[str, str]]:
     """Proveedores activos de un nodo (última versión por usuario)."""
     try:

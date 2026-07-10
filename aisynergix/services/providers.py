@@ -76,11 +76,71 @@ async def get_providers(node_id: str) -> List[Dict[str, str]]:
     return await list_node_providers(node_id)
 
 
+# Pago SYNX a un proveedor (§6.2, uso 2).
+MIN_PAYMENT_SYNX = 1.0
+
+
+async def pay_provider(
+    payer_uid: int, node_id: str, provider_hash: str, amount: float, memo: str = "",
+) -> Optional[str]:
+    """Transfiere SYNX del pagador al proveedor y lo registra en Irys.
+
+    Débito-antes-crédito con reversión: si el crédito o el sellado fallan, se
+    devuelve el SYNX al pagador para no perder saldo. Retorna clave de error
+    ("bad_amount" | "self_payment" | "not_provider" | "insufficient") o None.
+    """
+    from aisynergix.bot.identity import get_identity_manager
+    from aisynergix.services.irys import (
+        get_node_member, list_node_providers, write_payment,
+    )
+
+    amount = round(float(amount or 0), 2)
+    if amount < MIN_PAYMENT_SYNX:
+        return "bad_amount"
+
+    payer_hash = _hash_uid(payer_uid)
+    if payer_hash == provider_hash:
+        return "self_payment"
+
+    # El destinatario debe ser un proveedor activo del nodo.
+    providers = await list_node_providers(node_id)
+    if not any(p.get("uid-hash") == provider_hash
+               and p.get("provider-status", "active") == "active"
+               for p in providers):
+        return "not_provider"
+
+    identity = get_identity_manager()
+    debited = await identity.debit_synx(payer_hash, amount)
+    if debited is None:
+        return "insufficient"
+
+    credited = await identity.credit_synx(provider_hash, debited)
+    if credited is None:
+        # El crédito falló: devolver el SYNX al pagador (aún no se movió nada).
+        await identity.credit_synx(payer_hash, debited)
+        return "insufficient"
+
+    # Los saldos ya se movieron y sellaron en Irys (débito y crédito sellan el
+    # perfil). El registro de pago es auditoría best-effort: si falla, los
+    # saldos siguen siendo correctos, solo se pierde la traza del evento.
+    try:
+        await write_payment(node_id, payer_hash, provider_hash, debited, memo)
+    except Exception as exc:
+        logger.error(
+            "pay_provider: transferencia OK pero no se selló el registro: %s", exc
+        )
+
+    logger.info("💸 %s pagó %.2f SYNX a %s", payer_hash, debited, provider_hash)
+    return None
+
+
 __all__ = [
     "PROVIDER_CATEGORIES",
     "MAX_DESC_LEN",
     "MIN_DESC_LEN",
+    "MIN_PAYMENT_SYNX",
     "register_provider",
     "deregister_provider",
     "get_providers",
+    "pay_provider",
 ]

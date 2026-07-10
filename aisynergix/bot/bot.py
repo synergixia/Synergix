@@ -1540,9 +1540,12 @@ async def cmd_providers(message: Message) -> None:
 
     provs = await providers_svc.get_providers(node_id)
     text = t("providers_header", lang) + "\n\n"
+    rows: list = []
     if not provs:
         text += t("providers_empty", lang)
     else:
+        from aisynergix.bot.identity import _hash_uid
+        me = _hash_uid(uid)
         for p in provs:
             text += t(
                 "provider_entry", lang,
@@ -1550,10 +1553,15 @@ async def cmd_providers(message: Message) -> None:
                 category=t("prov_" + p.get("category", "otros"), lang),
                 desc=html.escape(p.get("description", "")),
             ) + "\n"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=t("btn_provider_register", lang), callback_data="prov:register"),
-    ]])
-    await message.answer(text, reply_markup=kb)
+            phash = p.get("uid-hash", "")
+            if phash and phash != me:  # no ofrecer pagarse a uno mismo
+                rows.append([InlineKeyboardButton(
+                    text=t("btn_provider_pay", lang,
+                           category=t("prov_" + p.get("category", "otros"), lang)),
+                    callback_data=f"prov:pay:{phash}")])
+    rows.append([InlineKeyboardButton(
+        text=t("btn_provider_register", lang), callback_data="prov:register")])
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @dp.callback_query(F.data.startswith("prov:"))
@@ -1593,6 +1601,19 @@ async def handle_provider_callback(callback: CallbackQuery) -> None:
         await cache.set_state_data(uid, {"prov_cat": category, "prov_node": node_id})
         await callback.message.edit_text(t("provider_ask_desc", lang))
 
+    elif action == "pay":
+        provider_hash = parts[2] if len(parts) > 2 else ""
+        node_id = await _active_node_id(uid)
+        if not node_id or not provider_hash:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        ghost = get_ghost_state_manager()
+        cache = get_l1_cache()
+        await ghost.set_state(uid, "awaiting_provider_payment")
+        await cache.set_state_data(
+            uid, {"pay_hash": provider_hash, "pay_node": node_id})
+        await callback.message.answer(t("provider_ask_amount", lang))
+
     await callback.answer()
 
 
@@ -1613,6 +1634,33 @@ async def handle_provider_desc_message(message: Message, uid: int, text: str, la
         await message.answer(t("provider_bad_desc", lang))
     else:
         await message.answer(t("provider_registered", lang, category=_prov_label(category, lang)))
+
+
+async def handle_provider_payment_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    provider_hash = draft.get("pay_hash", "")
+    node_id = draft.get("pay_node", "")
+    await ghost.reset_state(uid)
+
+    from aisynergix.services.rewards import parse_amount, is_valid_amount
+    amount = parse_amount(text)
+    if amount is None or not is_valid_amount(amount) or amount <= 0:
+        await message.answer(t("provider_pay_bad_amount", lang))
+        return
+
+    err = await providers_svc.pay_provider(uid, node_id, provider_hash, amount)
+    if err == "bad_amount":
+        await message.answer(t("provider_pay_bad_amount", lang))
+    elif err == "not_provider":
+        await message.answer(t("provider_pay_not_provider", lang))
+    elif err == "self_payment":
+        await message.answer(t("provider_pay_self", lang))
+    elif err == "insufficient":
+        await message.answer(t("provider_pay_insufficient", lang))
+    else:
+        await message.answer(t("provider_pay_ok", lang, amount=f"{amount:,.2f}"))
 
 
 # ── Financiamiento colectivo ────────────────────────────────────────────────
@@ -2482,7 +2530,8 @@ async def handle_sticker_message(message: Message) -> None:
     if current_state in (
         "awaiting_contribution", "awaiting_buy_amount", "awaiting_sell_amount",
         "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
-        "awaiting_provider_desc", "awaiting_project_name", "awaiting_project_goal",
+        "awaiting_provider_desc", "awaiting_provider_payment",
+        "awaiting_project_name", "awaiting_project_goal",
         "awaiting_project_fund", "awaiting_proposal_text",
         "awaiting_withdraw_address", "awaiting_withdraw_amount",
     ):
@@ -2557,6 +2606,10 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_provider_desc":
         await handle_provider_desc_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_provider_payment":
+        await handle_provider_payment_message(message, uid, text, lang)
         return
 
     if current_state == "awaiting_project_name":
