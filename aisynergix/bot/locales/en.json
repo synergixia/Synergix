@@ -110,6 +110,7 @@
   "node_create_ask_name": "🏘️ Creating a node requires locking a bond of <b>{bond} SYNERGIX</b> from your wallet (released when you close the node, after 7 days).\n\nWhat's your community called? Type the name (3-60 characters).",
   "node_name_too_short": "✂️ The name must be 3 to 60 characters. Try again.",
   "node_create_ask_type": "📂 What kind of node is <b>{name}</b>?",
+  "node_create_ask_language": "🌐 What is the node's primary language?",
   "node_create_ask_topics": "🏷️ Pick up to 5 priority topics (tap to toggle):\n\nSelected: {selected}",
   "node_topics_none": "none",
   "node_use_buttons": "👆 Use the buttons above to continue.",

@@ -1174,6 +1174,18 @@ def get_node_type_kb(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def get_node_lang_kb(lang: str) -> InlineKeyboardMarkup:
+    """Teclado de idioma principal del nodo (§4.4)."""
+    rows, row = [], []
+    for code, name in LANG_NAMES.items():
+        row.append(InlineKeyboardButton(text=name, callback_data=f"node:lang:{code}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def get_node_topics_kb(lang: str, selected: list) -> InlineKeyboardMarkup:
     rows, row = [], []
     for key in nodes_svc.TOPICS:
@@ -1400,7 +1412,18 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
         draft = await cache.get_state_data(uid) or {}
         if not draft.get("name"):
             await callback.answer(); return
-        draft.update({"node_type": arg, "step": "topics", "topics": draft.get("topics", [])})
+        draft.update({"node_type": arg, "step": "language", "topics": draft.get("topics", [])})
+        await cache.set_state_data(uid, draft)
+        await callback.message.edit_text(
+            t("node_create_ask_language", lang),
+            reply_markup=get_node_lang_kb(lang),
+        )
+
+    elif action == "lang":
+        draft = await cache.get_state_data(uid) or {}
+        if not draft.get("node_type") or arg not in LANG_NAMES:
+            await callback.answer(); return
+        draft.update({"language": arg, "step": "topics", "topics": draft.get("topics", [])})
         await cache.set_state_data(uid, draft)
         sel = draft["topics"]
         selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
@@ -1436,7 +1459,8 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
             await callback.answer(); return
         from aisynergix.services import bonds as bonds_svc
         node = await nodes_svc.create_node(
-            uid, name, draft.get("node_type", "global"), lang, draft.get("topics", []),
+            uid, name, draft.get("node_type", "global"),
+            draft.get("language", lang), draft.get("topics", []),
         )
         await ghost.reset_state(uid)
         if not node:

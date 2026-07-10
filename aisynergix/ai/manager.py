@@ -679,9 +679,15 @@ class AIManager:
                 ]
                 if topics:
                     cov = coverage_from_aportes(topics, node_aportes)
-                    bonus.gap_multiplier = max(
-                        (info["multiplier"] for info in cov.values()), default=1.0
+                    # §9: el bono de vacío corresponde AL TEMA del aporte, no al
+                    # máximo del nodo. Un aporte llena el vacío de SU tema.
+                    topic_key = category.strip().lower()
+                    match = next(
+                        (info for tkey, info in cov.items()
+                         if tkey.strip().lower() == topic_key),
+                        None,
                     )
+                    bonus.gap_multiplier = match["multiplier"] if match else 1.0
                 bonus.first_of_day = rewards.is_first_of_day(node_aportes, today)
                 bonus.virgin_topic = rewards.is_virgin_topic(node_aportes, category)
             except Exception as exc:
