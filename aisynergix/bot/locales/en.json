@@ -297,5 +297,18 @@
   "node_bond_status_released": "✅ Bond: {amount} SYNERGIX released.",
   "btn_node_unbond": "🔓 Withdraw bond (unbond)",
   "node_unbond_denied": "Only the founder can start unbonding, and only while the bond is locked.",
-  "node_unbond_started": "⏳ Unbonding started. Your bond will be released in {days} days (on {date}). Until then it stays locked."
+  "node_unbond_started": "⏳ Unbonding started. Your bond will be released in {days} days (on {date}). Until then it stays locked.",
+  "redeem_header": "💱 <b>Redeem SYNX for SYNERGIX</b>\n\n💎 Your balance: <b>{balance}</b> SYNX",
+  "redeem_soon": "✅ You meet the requirements to redeem (up to <b>{max}</b> SYNX → your wallet <code>{address}</code>).\n\n🔜 Automatic redemption goes live very soon. You're all set!",
+  "redeem_ready": "✅ You can redeem up to <b>{max}</b> SYNX to your verified wallet <code>{address}</code>.",
+  "btn_redeem_claim": "💱 Claim {max} SYNX",
+  "redeem_claimed": "✅ <b>Redemption requested!</b>\n\n{amount} SYNX → <code>{address}</code>\n\nYour real SYNERGIX will arrive shortly.",
+  "redeem_need_verify": "🔐 To redeem, first verify your wallet in 💰 Synergix → Verify wallet. Payout only goes to a wallet you prove you own.",
+  "redeem_need_reputation": "📚 You need at least {min} validated contributions to redeem. Keep contributing — reputation protects the network from abuse.",
+  "redeem_below_min": "✂️ The minimum redemption is {min} SYNX. Accumulate a bit more.",
+  "redeem_insufficient": "❌ You don't have enough SYNX balance for that redemption.",
+  "redeem_user_cap": "⏳ You reached your redemption limit for now. Try again later.",
+  "redeem_address_cap": "⏳ Your wallet reached the redemption limit for now. Try again later.",
+  "redeem_address_shared": "🚫 That wallet was already used by another account to redeem. Each wallet belongs to one person.",
+  "redeem_ineligible": "🚫 You can't redeem right now. Check your status with /canjear."
 }
