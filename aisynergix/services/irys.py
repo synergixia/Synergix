@@ -1795,6 +1795,19 @@ async def list_bounty_claims(bounty_id: str, limit: int = 2000) -> List[Dict[str
         return []
 
 
+async def list_bounty_claims_by_author(author_hash: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Todos los bounties que un autor ha cobrado (para el Passport)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",  "value": "bounty-claim"},
+            {"name": "author-uid", "value": author_hash},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_bounty_claims_by_author %s falló: %s", author_hash, exc)
+        return []
+
+
 @retry(
     retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
