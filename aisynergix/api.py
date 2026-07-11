@@ -100,6 +100,35 @@ async def node_detail(request: Request) -> JSONResponse:
         return JSONResponse({"error": "unavailable"}, status_code=503)
 
 
+async def node_bounties(request: Request) -> JSONResponse:
+    """Bounties de conocimiento de un nodo (Proof-of-Knowledge, §7.4).
+
+    Deja a una organización externa ver qué vacíos tienen pool activo y cuánto
+    queda — la superficie de demanda del protocolo.
+    """
+    from aisynergix.services.bounties import list_bounties
+    node_id = request.path_params["node_id"]
+    try:
+        items = await list_bounties(node_id)
+        return JSONResponse({"node_id": node_id, "bounties": [
+            {
+                "bounty_id": b.get("bounty-id", ""),
+                "topic": b.get("topic", ""),
+                "status": b.get("bounty-status", "open"),
+                "open": bool(b.get("open")),
+                "pool": float(b.get("pool", 0) or 0),
+                "reward": float(b.get("reward", 0) or 0),
+                "remaining": float(b.get("remaining", 0) or 0),
+                "paid_count": int(b.get("paid-count", 0) or 0),
+                "deadline": int(b.get("deadline", 0) or 0),
+            }
+            for b in items
+        ]})
+    except Exception as exc:
+        logger.warning("node_bounties %s failed: %s", node_id, exc)
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+
+
 async def passport(request: Request) -> JSONResponse:
     """Passport público por Ghost ID — reputación verificable sin identidad."""
     from aisynergix.services.passport import get_passport
@@ -145,6 +174,7 @@ routes = [
     Route("/api/top10", top10),
     Route("/api/nodes", nodes_index),
     Route("/api/nodes/{node_id}", node_detail),
+    Route("/api/nodes/{node_id}/bounties", node_bounties),
     Route("/api/passport/{ghost_id}", passport),
     Route("/api/impact/{aporte_tx}", impact),
 ]

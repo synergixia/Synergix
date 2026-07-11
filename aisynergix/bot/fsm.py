@@ -22,6 +22,8 @@ class SynergixStates(StatesGroup):
     awaiting_project_name = State()
     awaiting_project_goal = State()
     awaiting_project_fund = State()
+    # Bounties de conocimiento (Proof-of-Knowledge)
+    awaiting_bounty_pool = State()
     # Governance (Fase 3)
     awaiting_proposal_text = State()
     # Custodia on-chain: retiro de BNB / SYNERGIX
