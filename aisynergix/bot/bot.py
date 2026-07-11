@@ -180,6 +180,19 @@ async def _challenge_broadcast_loop() -> None:
             logger.warning("challenge_broadcast_loop error: %s", exc)
 
 
+async def _api_settlement_loop() -> None:
+    """Liquida en segundo plano los royalties de la API a los autores citados
+    (Proof-of-Knowledge ③). El bot es dueño del ledger SYNX, así que el pago a
+    los humanos se hace aquí, no en el proceso read-only de la API."""
+    from aisynergix.services.knowledge_api import settle_pending_usage
+    while True:
+        await asyncio.sleep(300)  # cada 5 minutos
+        try:
+            await settle_pending_usage(limit=50)
+        except Exception as exc:
+            logger.warning("api_settlement_loop error: %s", exc)
+
+
 async def _notify_oracles_new_review(aporte_tx: str) -> None:
     """Push a los Oráculos activos cuando se abre una revisión (§5.4).
 
@@ -3395,6 +3408,9 @@ async def on_startup():
 
     # Notificación push a Oráculos cuando se abre una revisión (§5.4).
     oracle_svc.set_review_notifier(_notify_oracles_new_review)
+
+    # Liquidación de royalties de la API de Conocimiento a los autores (③).
+    asyncio.create_task(_api_settlement_loop())
 
     from aisynergix.services.rag_engine import get_rag_engine
     rag = await get_rag_engine()

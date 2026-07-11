@@ -129,6 +129,43 @@ async def node_bounties(request: Request) -> JSONResponse:
         return JSONResponse({"error": "unavailable"}, status_code=503)
 
 
+_API_ERROR_STATUS = {
+    "bad_key": 401, "inactive": 403, "insufficient_credit": 402, "bad_query": 400,
+}
+
+
+async def ask(request: Request) -> JSONResponse:
+    """API de Conocimiento que paga a humanos (Proof-of-Knowledge ③).
+
+    POST con cabecera ``X-API-Key`` y cuerpo JSON ``{"question": "...",
+    "top_k": 5}``. Devuelve fragmentos fundamentados + citas (autor + tx
+    Arweave), cobra a la key y registra el reparto; los autores citados se
+    liquidan en el proceso del bot.
+    """
+    from aisynergix.services.knowledge_api import answer_query, DEFAULT_TOP_K
+    api_key = request.headers.get("x-api-key", "")
+    if not api_key:
+        return JSONResponse({"error": "missing_api_key"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad_json"}, status_code=400)
+    question = (body or {}).get("question", "")
+    try:
+        top_k = int((body or {}).get("top_k", DEFAULT_TOP_K))
+    except (ValueError, TypeError):
+        top_k = DEFAULT_TOP_K
+    top_k = max(1, min(10, top_k))
+    try:
+        answer, err = await answer_query(api_key, question, top_k)
+    except Exception as exc:
+        logger.warning("ask failed: %s", exc)
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+    if err:
+        return JSONResponse({"error": err}, status_code=_API_ERROR_STATUS.get(err, 400))
+    return JSONResponse(answer)
+
+
 async def passport(request: Request) -> JSONResponse:
     """Passport público por Ghost ID — reputación verificable sin identidad."""
     from aisynergix.services.passport import get_passport
@@ -175,6 +212,7 @@ routes = [
     Route("/api/nodes", nodes_index),
     Route("/api/nodes/{node_id}", node_detail),
     Route("/api/nodes/{node_id}/bounties", node_bounties),
+    Route("/api/ask", ask, methods=["POST"]),
     Route("/api/passport/{ghost_id}", passport),
     Route("/api/impact/{aporte_tx}", impact),
 ]
@@ -184,7 +222,7 @@ app = Starlette(
     middleware=[
         Middleware(
             CORSMiddleware,
-            allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"],
+            allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"],
         ),
     ],
 )
