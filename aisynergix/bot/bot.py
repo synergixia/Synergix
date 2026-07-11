@@ -988,6 +988,21 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
                 )
                 if is_custodial:
                     balance_text += "\n\n" + t("balance_custodial_note", lang)
+                    # Membresía por tenencia (Capa 1): el tier se calcula sobre
+                    # el saldo de la custodial, que es justo `syn_bal` aquí.
+                    from aisynergix.services import tiers as tiers_svc
+                    tier = tiers_svc.tier_for(syn_bal)
+                    nxt = tiers_svc.next_tier(syn_bal)
+                    if tier["key"] != "base":
+                        balance_text += "\n\n" + t(
+                            "membership_current", lang,
+                            tier=tier["name"], bonus=tier["daily_bonus"])
+                    else:
+                        balance_text += "\n\n" + t("membership_none", lang)
+                    if nxt:
+                        balance_text += "\n" + t(
+                            "membership_next", lang, tier=nxt["name"],
+                            amount=f"{nxt['min'] - syn_bal:,.0f}", bonus=nxt["daily_bonus"])
                 await callback.message.edit_text(balance_text)
     elif action == "progress":
         progress = await fourmeme_svc.get_curve_progress(trading_svc.SYNERGIX_TOKEN)
@@ -1143,6 +1158,10 @@ async def handle_trade_callback(callback: CallbackQuery) -> None:
             result = await custody_svc.swap_sell(uid, float(trade_data.get("syn_in", 0)))
 
         if result.get("ok"):
+            # La tenencia cambió → recalcular el tier de membresía en la
+            # próxima consulta (Capa 1).
+            from aisynergix.services import tiers as tiers_svc
+            tiers_svc.invalidate(uid)
             tx = result["tx"]
             tx = tx if tx.startswith("0x") else "0x" + tx
             await callback.message.edit_text(
@@ -2299,6 +2318,9 @@ async def handle_withdraw_callback(callback: CallbackQuery) -> None:
         await callback.message.edit_text(t("withdraw_sending", lang))
         result = await custody_svc.withdraw(uid, to_addr, float(amount), asset)
         if result.get("ok"):
+            if asset == "SYNERGIX":
+                from aisynergix.services import tiers as tiers_svc
+                tiers_svc.invalidate(uid)
             tx = result["tx"]
             tx = tx if tx.startswith("0x") else "0x" + tx
             await callback.message.edit_text(

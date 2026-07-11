@@ -570,12 +570,20 @@ class AIManager:
                 "max_length": MAX_CONTRIBUTION_LENGTH,
             }
 
-        if not profile.can_contribute:
+        # Beneficio de tenencia (Capa 1): tener SYNERGIX real sube el límite
+        # diario de aportes por encima del que da el rango.
+        try:
+            from aisynergix.services.tiers import holder_daily_bonus
+            holder_bonus = await holder_daily_bonus(uid)
+        except Exception:
+            holder_bonus = 0
+        effective_limit = profile.daily_limit + holder_bonus
+        if profile.daily_aportes_count >= effective_limit:
             return {
                 "status": "quota_exceeded",
                 "message_key": "quota_exceeded",
                 "user_language": profile.language,
-                "daily_limit": profile.daily_limit,
+                "daily_limit": effective_limit,
             }
 
         cfg = get_system_config()
