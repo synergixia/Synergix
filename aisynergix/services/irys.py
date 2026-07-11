@@ -1702,6 +1702,99 @@ async def list_project_votes(project_id: str, limit: int = 1000) -> List[Dict[st
         return []
 
 
+# ── Bounties de conocimiento (Proof-of-Knowledge, §7.4 ampliado) ──────────
+# Un patrocinador financia un pool para llenar un vacío (nodo+tema). Cada
+# aporte verificado a ese tema paga una recompensa fija hasta agotar el pool.
+# El registro `bounty` es versionado (última versión gana: estado + pagados);
+# `bounty-claim` es append-only (un pago por aporte, idempotente por tx).
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_bounty(
+    bounty_id: str, node_id: str, topic: str, sponsor_hash: str,
+    pool: float, reward: float, per_user: int, deadline: int,
+    status: str, paid_count: int = 0,
+) -> str:
+    tags = [
+        {"name": "data-type",     "value": "bounty"},
+        {"name": "bounty-id",     "value": bounty_id},
+        {"name": "node-id",       "value": node_id},
+        {"name": "topic",         "value": (topic or "")[:60]},
+        {"name": "sponsor",       "value": sponsor_hash},
+        {"name": "pool",          "value": f"{pool:.2f}"},
+        {"name": "reward",        "value": f"{reward:.2f}"},
+        {"name": "per-user",      "value": str(int(per_user))},
+        {"name": "deadline",      "value": str(int(deadline))},
+        {"name": "bounty-status", "value": status},
+        {"name": "paid-count",    "value": str(int(paid_count))},
+        {"name": "Content-Type",  "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🎯 Bounty %s (%s, pool %.0f) sellado en Irys.", bounty_id, status, pool)
+    return tx_id
+
+
+async def read_bounty(bounty_id: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "bounty"},
+            {"name": "bounty-id", "value": bounty_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_bounty %s falló: %s", bounty_id, exc)
+    return None
+
+
+async def list_node_bounties(node_id: str, limit: int = 200) -> List[Dict[str, str]]:
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "bounty"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "bounty-id")
+    except Exception as exc:
+        logger.warning("list_node_bounties %s falló: %s", node_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_bounty_claim(
+    bounty_id: str, author_hash: str, aporte_tx: str, amount: float,
+) -> str:
+    """Pago append-only de un aporte verificado contra un bounty."""
+    tags = [
+        {"name": "data-type",  "value": "bounty-claim"},
+        {"name": "bounty-id",  "value": bounty_id},
+        {"name": "author-uid", "value": author_hash},
+        {"name": "aporte-tx",  "value": aporte_tx},
+        {"name": "amount",     "value": f"{amount:.2f}"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_bounty_claims(bounty_id: str, limit: int = 2000) -> List[Dict[str, str]]:
+    """TODOS los pagos de un bounty (append-only, sin dedupe)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "bounty-claim"},
+            {"name": "bounty-id", "value": bounty_id},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_bounty_claims %s falló: %s", bounty_id, exc)
+        return []
+
+
 @retry(
     retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),
