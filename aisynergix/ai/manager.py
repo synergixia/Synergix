@@ -797,6 +797,13 @@ class AIManager:
         if oracle_review:
             _spawn_bg(create_review(object_path, profile.uid_hash, synx_award))
 
+        # Bounties de conocimiento: si el aporte llena un vacío con un bounty
+        # abierto (mismo nodo+tema, no marcado por el Juez 3), paga al autor
+        # desde el pool. Idempotente y en segundo plano.
+        if node_id and not gaming_flagged and not object_path.startswith("local:"):
+            from aisynergix.services.bounties import reward_aporte as _bounty_pay
+            _spawn_bg(_bounty_pay(node_id, category, profile.uid_hash, object_path))
+
         return {
             "status": "success",
             "message_key": (
