@@ -13,9 +13,15 @@ testeable sin red: cuenta aportes por tema contra ``TARGET_APORTES_PER_TOPIC``.
 """
 
 import logging
-from typing import Any, Dict, List
+import time
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Un tema con aportes pero cuyo más reciente tiene 30+ días se marca como
+# desactualizado (§4.5: genera alerta al nodo).
+STALE_DAYS = 30
+STALE_SECONDS = STALE_DAYS * 86_400
 
 # Aportes necesarios para considerar un tema 100 % cubierto.
 TARGET_APORTES_PER_TOPIC = 20
@@ -45,30 +51,43 @@ def multiplier_for_level(level: str) -> float:
     return {"critical": MULT_CRITICAL, "active": MULT_ACTIVE}.get(level, MULT_COVERED)
 
 
+def _aporte_ts(tags: Dict[str, str]) -> int:
+    try:
+        return int(tags.get("timestamp", 0) or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
 def coverage_from_aportes(
-    topics: List[str], aporte_tags: List[Dict[str, str]]
+    topics: List[str], aporte_tags: List[Dict[str, str]], now: Optional[int] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Calcula la cobertura por tema (función pura, sin red).
 
-    Devuelve ``{topic: {count, percent, level, multiplier}}`` para cada tema
-    del nodo.  ``percent`` está acotado a [0, 100].
+    Devuelve ``{topic: {count, percent, level, multiplier, stale}}`` por tema.
+    ``percent`` está acotado a [0, 100]; ``stale`` es True si el tema tiene
+    aportes pero el más reciente tiene 30+ días.
     """
+    now = now if now is not None else int(time.time())
     counts: Dict[str, int] = {t: 0 for t in topics}
+    newest: Dict[str, int] = {t: 0 for t in topics}
     for tags in aporte_tags:
         topic = _aporte_topic(tags)
         if topic in counts:
             counts[topic] += 1
+            newest[topic] = max(newest[topic], _aporte_ts(tags))
 
     result: Dict[str, Dict[str, Any]] = {}
     for topic in topics:
         n = counts.get(topic, 0)
         percent = min(100.0, (n / TARGET_APORTES_PER_TOPIC) * 100.0) if TARGET_APORTES_PER_TOPIC else 0.0
         level = _level_for(percent)
+        stale = bool(n > 0 and newest[topic] > 0 and (now - newest[topic]) > STALE_SECONDS)
         result[topic] = {
             "count": n,
             "percent": round(percent, 1),
             "level": level,
             "multiplier": multiplier_for_level(level),
+            "stale": stale,
         }
     return result
 
@@ -101,9 +120,10 @@ def render_map(coverage: Dict[str, Dict[str, Any]], topic_label) -> str:
         pct = info["percent"]
         filled = int(round(pct / 10.0))
         bar = "█" * filled + "░" * (10 - filled)
-        lines.append(
-            f"{topic_label(topic)} {bar} {int(pct)}%{badge.get(info['level'], '')}"
-        )
+        tag = badge.get(info["level"], "")
+        if info.get("stale"):
+            tag += " ⏰ desactualizado"
+        lines.append(f"{topic_label(topic)} {bar} {int(pct)}%{tag}")
     return "\n".join(lines)
 
 

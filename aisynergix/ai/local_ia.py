@@ -285,12 +285,12 @@ JUDGE_SYSTEM_PROMPT = (
     '|economia|naturaleza|sociedad|innovacion|programacion>",\n'
     '  "impact_index": <float 0.0-1.0>,\n'
     '  "related_to_challenge": <false>,\n'
-    '  "constructive_feedback": "<si quality_score < 6.0: consejo concreto para mejorar; '
-    'si >= 6.0: cadena vacía>",\n'
+    '  "constructive_feedback": "<si quality_score < 5.0: consejo concreto para mejorar; '
+    'si >= 5.0: cadena vacía>",\n'
     '  "content_summary": "<destilado denso del CONTENIDO del aporte (no de tu evaluación), '
     'máx 240 caracteres, en el mismo idioma del aporte, en tercera persona neutra '
     '(\'se sostiene que…\', \'la idea es…\'). NO copies frases textuales. NO uses '
-    'comillas, prefijos ni metadatos. Si quality_score < 6.0 puede ser cadena vacía>"\n'
+    'comillas, prefijos ni metadatos. Si quality_score < 5.0 puede ser cadena vacía>"\n'
     '}\n\n'
     "CINCO DIMENSIONES (0-2 pts cada una, suma = quality_score):\n\n"
     "1. ORIGINALIDAD: ¿Perspectiva genuina y novedosa?\n"
@@ -315,8 +315,8 @@ JUDGE_SYSTEM_PROMPT = (
     "Un 9+ debe ser extremadamente raro.\n"
     "  0.0-2.9 = basura/spam/sin sentido\n"
     "  3.0-4.9 = mediocre, demasiado genérico o superficial\n"
-    "  5.0-5.9 = aceptable pero sin valor diferencial → RECHAZADO\n"
-    "  6.0-7.4 = bueno: original, claro, con valor real → APROBADO\n"
+    "  5.0-6.9 = válido: aporte aceptable con valor real → APROBADO\n"
+    "  7.0-8.4 = bueno: original, claro, de calidad → APROBADO\n"
     "  7.5-8.9 = excelente: profundo, inspirador y bien expresado\n"
     "  9.0-9.4 = ELITE — conocimiento excepcional (muy raro)\n"
     "  9.5-10.0 = LEGENDARIO — sabiduría que trasciende generaciones (rarísimo)\n\n"
@@ -804,7 +804,7 @@ class Judge:
                 "content_summary": _normalize_content_summary(
                     result.get("content_summary"), contribution_text
                 ),
-                "approved": float(result.get("quality_score", 5.0)) >= 6.0,
+                "approved": float(result.get("quality_score", 5.0)) >= 5.0,
             }
         except (json.JSONDecodeError, KeyError, ValueError):
             return {

@@ -18,6 +18,7 @@ class SynergixStates(StatesGroup):
     awaiting_node_name = State()
     # Providers / crowdfunding (Fase 2)
     awaiting_provider_desc = State()
+    awaiting_provider_payment = State()
     awaiting_project_name = State()
     awaiting_project_goal = State()
     awaiting_project_fund = State()

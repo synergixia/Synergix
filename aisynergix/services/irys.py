@@ -747,6 +747,9 @@ async def read_aporte(tx_id: str) -> Tuple[str, Dict[str, str]]:
             # pre-PR2 aportes (those will be indexed using a truncated raw
             # text fallback in the brain-side code).
             "content_summary": rt.get("content-summary", ""),
+            # Nodo del aporte (§4): permite el boost de memoria por nodo en el
+            # RAG. Vacío para aportes fuera de nodo.
+            "node_id": rt.get("node-id", ""),
         }
     return texto, tags
 
@@ -1356,7 +1359,8 @@ async def list_node_aportes(node_id: str, limit: int = 2000) -> List[Dict[str, s
             {"name": "data-type", "value": "aporte"},
             {"name": "node-id",   "value": node_id},
         ], limit=limit)
-        return [_node_tags(n) for n in nodes]
+        # Incluye el tx id del aporte (clave del contador de impacto).
+        return [{**_node_tags(n), "id": n.get("id", "")} for n in nodes]
     except Exception as exc:
         logger.warning("list_node_aportes %s falló: %s", node_id, exc)
         return []
@@ -1549,6 +1553,29 @@ async def write_provider(
     ]
     tx_id = await _upload(b"{}", tags)
     logger.info("💼 Proveedor %s@%s (%s) sellado en Irys.", uid_hash, node_id, category)
+    return tx_id
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_payment(
+    node_id: str, from_hash: str, to_hash: str, amount: float, memo: str = "",
+) -> str:
+    """Registro append-only de un pago SYNX entre dos usuarios (§6.2, uso 2)."""
+    tags = [
+        {"name": "data-type",  "value": "synx-payment"},
+        {"name": "node-id",    "value": node_id},
+        {"name": "from-hash",  "value": from_hash},
+        {"name": "to-hash",    "value": to_hash},
+        {"name": "amount",     "value": f"{amount:.2f}"},
+        {"name": "memo",       "value": (memo or "")[:120]},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("💸 Pago SYNX %.2f: %s → %s (%s)", amount, from_hash, to_hash, node_id)
     return tx_id
 
 

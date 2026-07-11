@@ -376,7 +376,7 @@ class AIManager:
             # Thinker MUST always consult immortal memory (RAG) before responding
             history, (context, search_results) = await asyncio.gather(
                 self._get_conversation_history(uid),
-                self._rag.query(message, target_language),
+                self._rag.query(message, target_language, node_id=profile.active_node or ""),
             )
 
             # Semaphore matches --parallel 1; extras queue in asyncio (no timeout risk).
@@ -448,7 +448,7 @@ class AIManager:
 
             history, (context, search_results) = await asyncio.gather(
                 self._get_conversation_history(uid),
-                self._rag.query(message, target_language),
+                self._rag.query(message, target_language, node_id=profile.active_node or ""),
             )
 
             # Immortal memory first; if it has nothing relevant, fall back to the
@@ -679,9 +679,15 @@ class AIManager:
                 ]
                 if topics:
                     cov = coverage_from_aportes(topics, node_aportes)
-                    bonus.gap_multiplier = max(
-                        (info["multiplier"] for info in cov.values()), default=1.0
+                    # §9: el bono de vacío corresponde AL TEMA del aporte, no al
+                    # máximo del nodo. Un aporte llena el vacío de SU tema.
+                    topic_key = category.strip().lower()
+                    match = next(
+                        (info for tkey, info in cov.items()
+                         if tkey.strip().lower() == topic_key),
+                        None,
                     )
+                    bonus.gap_multiplier = match["multiplier"] if match else 1.0
                 bonus.first_of_day = rewards.is_first_of_day(node_aportes, today)
                 bonus.virgin_topic = rewards.is_virgin_topic(node_aportes, category)
             except Exception as exc:
@@ -699,8 +705,20 @@ class AIManager:
         except Exception:
             pass
 
+        # §5.4 Juez 3: guardián anti-gaming (ráfaga / plantilla / relleno).
+        # No rechaza (evita castigar falsos positivos como un humano rápido),
+        # pero anula las bonificaciones y el multiplicador de vacío y baja el
+        # trust, de modo que el farmeo deja de ser rentable.
+        from aisynergix.ai.anti_gaming import get_anti_gaming_judge
+        gaming_flagged, gaming_reason = get_anti_gaming_judge().check(
+            profile.uid_hash, content, ts
+        )
+        if gaming_flagged:
+            bonus = rewards.BonusBreakdown()
+
         synx_award = rewards.compute_synx(synx_base, rank_multiplier, bonus)
         node_multiplier = bonus.gap_multiplier
+        trust_delta_final = -trust_decrement if gaming_flagged else trust_increment
 
         try:
             object_path = await write_aporte(
@@ -732,6 +750,7 @@ class AIManager:
             quality_score=quality_score,
             object_name=object_path,
             category=evaluation.get("category", "filosofia"),
+            node_id=node_id or "",
         )
 
         # Seal the reward atomically as deltas on the latest Irys value (never an
@@ -743,7 +762,7 @@ class AIManager:
             contribution=1,
             daily=1,
             synx=synx_award,
-            trust_delta=trust_increment,
+            trust_delta=trust_delta_final,
             streak_days=new_streak,
             last_aporte_date=new_last_date,
         )
@@ -765,6 +784,7 @@ class AIManager:
         oracle_review = (
             quality_score >= REVIEW_MIN_SCORE
             and not object_path.startswith("local:")
+            and not gaming_flagged
         )
         if oracle_review:
             _spawn_bg(create_review(object_path, profile.uid_hash, synx_award))
@@ -787,6 +807,7 @@ class AIManager:
             "synx_bonuses": bonus.active_keys(),
             "streak_days": new_streak,
             "oracle_review": oracle_review,
+            "gaming_flagged": gaming_flagged,
             "node_id": node_id,
             "tier": tier,
             "rank": profile.rank,

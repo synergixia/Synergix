@@ -179,6 +179,31 @@ async def _challenge_broadcast_loop() -> None:
             logger.warning("challenge_broadcast_loop error: %s", exc)
 
 
+async def _notify_oracles_new_review(aporte_tx: str) -> None:
+    """Push a los Oráculos activos cuando se abre una revisión (§5.4).
+
+    El hash de UID es irreversible, así que se recorre hacia adelante: por
+    cada usuario conocido en RAM se calcula su hash y se comprueba si es un
+    Oráculo con stake activo. Best-effort, respeta el rate limit de Telegram.
+    """
+    from aisynergix.bot.identity import _hash_uid as _h
+    sent = 0
+    for uid in list(_known_uids):
+        try:
+            if not await oracle_svc.get_stake(_h(uid)):
+                continue
+            lang = await get_user_language(uid)
+            await bot.send_message(
+                uid, t("oracle_new_review_notify", lang), parse_mode="HTML"
+            )
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
+    if sent:
+        logger.info("🔮 Notificados %d Oráculos de la revisión %s", sent, aporte_tx[:12])
+
+
 # Maps internal Spanish rank key → (rank locale key, benefit locale key)
 _RANK_KEY_MAP: Dict[str, tuple] = {
     "🌱 Iniciado":      ("rank_iniciado",      "benefit_iniciado"),
@@ -1174,6 +1199,18 @@ def get_node_type_kb(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def get_node_lang_kb(lang: str) -> InlineKeyboardMarkup:
+    """Teclado de idioma principal del nodo (§4.4)."""
+    rows, row = [], []
+    for code, name in LANG_NAMES.items():
+        row.append(InlineKeyboardButton(text=name, callback_data=f"node:lang:{code}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def get_node_topics_kb(lang: str, selected: list) -> InlineKeyboardMarkup:
     rows, row = [], []
     for key in nodes_svc.TOPICS:
@@ -1233,6 +1270,7 @@ def _bond_status_text(bond: Optional[dict], lang: str) -> str:
 
 
 async def _render_node_view(node, lang: str) -> str:
+    from aisynergix.nodes.node_stats import node_stats
     type_label = _node_type_label(node.node_type, lang)
     lang_label = get_lang_name(node.language)
     if node.topics:
@@ -1242,11 +1280,13 @@ async def _render_node_view(node, lang: str) -> str:
     else:
         topics_str = t("node_view_no_topics", lang)
         map_str = "—"
+    stats = await node_stats(node.node_id)
     return t(
         "node_view", lang,
         icon=node.icon, name=html.escape(node.name), type=type_label,
         language=lang_label, members=node.member_count, aportes=node.aporte_count,
-        topics=topics_str, map=map_str,
+        synx=f"{stats['synx_circulating']:,.0f}", projects=stats["active_projects"],
+        impacts=stats["verified_impacts"], topics=topics_str, map=map_str,
     )
 
 
@@ -1397,7 +1437,18 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
         draft = await cache.get_state_data(uid) or {}
         if not draft.get("name"):
             await callback.answer(); return
-        draft.update({"node_type": arg, "step": "topics", "topics": draft.get("topics", [])})
+        draft.update({"node_type": arg, "step": "language", "topics": draft.get("topics", [])})
+        await cache.set_state_data(uid, draft)
+        await callback.message.edit_text(
+            t("node_create_ask_language", lang),
+            reply_markup=get_node_lang_kb(lang),
+        )
+
+    elif action == "lang":
+        draft = await cache.get_state_data(uid) or {}
+        if not draft.get("node_type") or arg not in LANG_NAMES:
+            await callback.answer(); return
+        draft.update({"language": arg, "step": "topics", "topics": draft.get("topics", [])})
         await cache.set_state_data(uid, draft)
         sel = draft["topics"]
         selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
@@ -1433,7 +1484,8 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
             await callback.answer(); return
         from aisynergix.services import bonds as bonds_svc
         node = await nodes_svc.create_node(
-            uid, name, draft.get("node_type", "global"), lang, draft.get("topics", []),
+            uid, name, draft.get("node_type", "global"),
+            draft.get("language", lang), draft.get("topics", []),
         )
         await ghost.reset_state(uid)
         if not node:
@@ -1513,9 +1565,12 @@ async def cmd_providers(message: Message) -> None:
 
     provs = await providers_svc.get_providers(node_id)
     text = t("providers_header", lang) + "\n\n"
+    rows: list = []
     if not provs:
         text += t("providers_empty", lang)
     else:
+        from aisynergix.bot.identity import _hash_uid
+        me = _hash_uid(uid)
         for p in provs:
             text += t(
                 "provider_entry", lang,
@@ -1523,10 +1578,15 @@ async def cmd_providers(message: Message) -> None:
                 category=t("prov_" + p.get("category", "otros"), lang),
                 desc=html.escape(p.get("description", "")),
             ) + "\n"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=t("btn_provider_register", lang), callback_data="prov:register"),
-    ]])
-    await message.answer(text, reply_markup=kb)
+            phash = p.get("uid-hash", "")
+            if phash and phash != me:  # no ofrecer pagarse a uno mismo
+                rows.append([InlineKeyboardButton(
+                    text=t("btn_provider_pay", lang,
+                           category=t("prov_" + p.get("category", "otros"), lang)),
+                    callback_data=f"prov:pay:{phash}")])
+    rows.append([InlineKeyboardButton(
+        text=t("btn_provider_register", lang), callback_data="prov:register")])
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @dp.callback_query(F.data.startswith("prov:"))
@@ -1566,6 +1626,19 @@ async def handle_provider_callback(callback: CallbackQuery) -> None:
         await cache.set_state_data(uid, {"prov_cat": category, "prov_node": node_id})
         await callback.message.edit_text(t("provider_ask_desc", lang))
 
+    elif action == "pay":
+        provider_hash = parts[2] if len(parts) > 2 else ""
+        node_id = await _active_node_id(uid)
+        if not node_id or not provider_hash:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        ghost = get_ghost_state_manager()
+        cache = get_l1_cache()
+        await ghost.set_state(uid, "awaiting_provider_payment")
+        await cache.set_state_data(
+            uid, {"pay_hash": provider_hash, "pay_node": node_id})
+        await callback.message.answer(t("provider_ask_amount", lang))
+
     await callback.answer()
 
 
@@ -1586,6 +1659,33 @@ async def handle_provider_desc_message(message: Message, uid: int, text: str, la
         await message.answer(t("provider_bad_desc", lang))
     else:
         await message.answer(t("provider_registered", lang, category=_prov_label(category, lang)))
+
+
+async def handle_provider_payment_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    provider_hash = draft.get("pay_hash", "")
+    node_id = draft.get("pay_node", "")
+    await ghost.reset_state(uid)
+
+    from aisynergix.services.rewards import parse_amount, is_valid_amount
+    amount = parse_amount(text)
+    if amount is None or not is_valid_amount(amount) or amount <= 0:
+        await message.answer(t("provider_pay_bad_amount", lang))
+        return
+
+    err = await providers_svc.pay_provider(uid, node_id, provider_hash, amount)
+    if err == "bad_amount":
+        await message.answer(t("provider_pay_bad_amount", lang))
+    elif err == "not_provider":
+        await message.answer(t("provider_pay_not_provider", lang))
+    elif err == "self_payment":
+        await message.answer(t("provider_pay_self", lang))
+    elif err == "insufficient":
+        await message.answer(t("provider_pay_insufficient", lang))
+    else:
+        await message.answer(t("provider_pay_ok", lang, amount=f"{amount:,.2f}"))
 
 
 # ── Financiamiento colectivo ────────────────────────────────────────────────
@@ -2455,7 +2555,8 @@ async def handle_sticker_message(message: Message) -> None:
     if current_state in (
         "awaiting_contribution", "awaiting_buy_amount", "awaiting_sell_amount",
         "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
-        "awaiting_provider_desc", "awaiting_project_name", "awaiting_project_goal",
+        "awaiting_provider_desc", "awaiting_provider_payment",
+        "awaiting_project_name", "awaiting_project_goal",
         "awaiting_project_fund", "awaiting_proposal_text",
         "awaiting_withdraw_address", "awaiting_withdraw_amount",
     ):
@@ -2530,6 +2631,10 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_provider_desc":
         await handle_provider_desc_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_provider_payment":
+        await handle_provider_payment_message(message, uid, text, lang)
         return
 
     if current_state == "awaiting_project_name":
@@ -3106,6 +3211,9 @@ async def on_startup():
 
     # Start background loop that detects new challenges and notifies users
     asyncio.create_task(_challenge_broadcast_loop())
+
+    # Notificación push a Oráculos cuando se abre una revisión (§5.4).
+    oracle_svc.set_review_notifier(_notify_oracles_new_review)
 
     from aisynergix.services.rag_engine import get_rag_engine
     rag = await get_rag_engine()
