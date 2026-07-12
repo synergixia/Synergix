@@ -26,6 +26,10 @@ class SynergixStates(StatesGroup):
     awaiting_bounty_pool = State()
     # Synergix Academy (learn-to-earn)
     awaiting_lesson_answer = State()
+    # Nodos territoriales + Atlas de Problemas
+    awaiting_node_region = State()
+    awaiting_problem_text = State()
+    awaiting_solution_text = State()
     # Governance (Fase 3)
     awaiting_proposal_text = State()
     # Custodia on-chain: retiro de BNB / SYNERGIX

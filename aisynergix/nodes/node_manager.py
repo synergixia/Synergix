@@ -76,6 +76,8 @@ class Node:
     creator: str
     language: str
     topics: List[str] = field(default_factory=list)
+    country: str = ""
+    region: str = ""
     member_count: int = 0
     aporte_count: int = 0
 
@@ -94,6 +96,8 @@ class Node:
             creator=tags.get("creator", ""),
             language=tags.get("language", "es"),
             topics=topics,
+            country=tags.get("country", "") or "",
+            region=tags.get("region", "") or "",
         )
 
 
@@ -113,6 +117,8 @@ async def create_node(
     node_type: str,
     language: str,
     topics: List[str],
+    country: str = "",
+    region: str = "",
 ) -> Optional[Node]:
     """Crea un nodo en Irys, registra al creador como fundador, le acredita el
     bono de bienvenida y lo marca como su nodo activo.
@@ -140,6 +146,9 @@ async def create_node(
                     creator_hash, bonds_svc.BOND_AMOUNT)
         return None
 
+    from aisynergix.nodes.geo import needs_location
+    if not needs_location(node_type):
+        country, region = "", ""
     await write_node(
         node_id=node_id,
         name=clean_name,
@@ -147,6 +156,8 @@ async def create_node(
         creator_hash=creator_hash,
         language=language,
         topics=topics,
+        country=country,
+        region=region,
     )
     await write_node_member(node_id, creator_hash, role="founder", status="active")
 
@@ -163,6 +174,7 @@ async def create_node(
     return Node(
         node_id=node_id, name=clean_name, node_type=node_type,
         creator=creator_hash, language=language, topics=topics,
+        country=country, region=region,
         member_count=1, aporte_count=0,
     )
 
