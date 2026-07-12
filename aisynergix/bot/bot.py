@@ -805,7 +805,8 @@ async def handle_language_selection(callback: CallbackQuery) -> None:
     lang_code = callback.data.split(":", 1)[1]
 
     if lang_code not in LANG_NAMES:
-        await callback.answer("Idioma no soportado")
+        current = await get_user_language(uid)
+        await callback.answer(t("lang_unsupported", current))
         return
 
     ai = get_ai_manager()
@@ -827,7 +828,8 @@ async def handle_language_selection(callback: CallbackQuery) -> None:
 
         await callback.answer()
     else:
-        await callback.answer("Error al cambiar idioma")
+        current = await get_user_language(uid)
+        await callback.answer(t("lang_change_error", current))
 
 
 @dp.callback_query(F.data.startswith("action:"))
@@ -3477,21 +3479,43 @@ async def handle_wallet_signature_message(
     await message.answer(t("verify_success", lang, address=recovered))
 
 
+# Comandos del menú de Telegram: (comando, clave de locale de su descripción).
+_MENU_COMMANDS = [
+    ("start",       "cmd_start"),
+    ("nodos",       "cmd_nodos"),
+    ("crear_nodo",  "cmd_crear_nodo"),
+    ("proveedores", "cmd_proveedores"),
+    ("proyectos",   "cmd_proyectos"),
+    ("bounties",    "cmd_bounties"),
+    ("aprender",    "cmd_aprender"),
+    ("oraculo",     "cmd_oraculo"),
+    ("propuestas",  "cmd_propuestas"),
+    ("pasaporte",   "cmd_pasaporte"),
+    ("canjear",     "cmd_canjear"),
+]
+
+
+def _commands_for(lang: str) -> list:
+    # Telegram limita la descripción a 256 caracteres; las nuestras son cortas.
+    return [BotCommand(command=cmd, description=t(key, lang)[:256])
+            for cmd, key in _MENU_COMMANDS]
+
+
 async def set_bot_commands():
-    commands = [
-        BotCommand(command="start", description="🔥 Iniciar / Despertar a Synergix"),
-        BotCommand(command="nodos", description="🏘️ Nodos de comunidad"),
-        BotCommand(command="crear_nodo", description="➕ Crear un nodo de comunidad"),
-        BotCommand(command="proveedores", description="💼 Proveedores del nodo"),
-        BotCommand(command="proyectos", description="🏗️ Financiamiento colectivo"),
-        BotCommand(command="bounties", description="🎯 Bounties de conocimiento"),
-        BotCommand(command="aprender", description="🎓 Academy: aprende y gana"),
-        BotCommand(command="oraculo", description="🔮 Jurado de Oráculos"),
-        BotCommand(command="propuestas", description="🗳️ Gobernanza del nodo"),
-        BotCommand(command="pasaporte", description="🪪 Mi Passport on-chain"),
-        BotCommand(command="canjear", description="💱 Canjear SYNX por SYNERGIX"),
-    ]
-    await bot.set_my_commands(commands)
+    """Publica el menú de comandos en los 10 idiomas (§ i18n total).
+
+    Telegram muestra a cada usuario el menú de su idioma de interfaz
+    (language_code); el menú por defecto (sin código) queda en español para
+    cualquier idioma fuera de los 10 soportados.
+    """
+    await bot.set_my_commands(_commands_for("es"))  # default global
+    for lang_code in LANG_NAMES:
+        try:
+            await bot.set_my_commands(
+                _commands_for(lang_code), language_code=lang_code,
+            )
+        except Exception as exc:
+            logger.warning("set_my_commands(%s) falló: %s", lang_code, exc)
 
 
 async def on_startup():
