@@ -62,7 +62,24 @@ def test_bounties_summary_empty():
 
 
 def test_version_bumped():
-    assert pp.PASSPORT_VERSION == "1.1"
+    assert pp.PASSPORT_VERSION == "1.2"
+
+
+def test_academy_credentials_filters_and_sorts():
+    creds = [
+        {"domain": "salud", "level": "1", "lessons-passed": "3"},
+        {"domain": "empleo", "level": "2", "lessons-passed": "12"},
+        {"domain": "economia", "level": "0", "lessons-passed": "1"},  # sin nivel → fuera
+        {"domain": "", "level": "3", "lessons-passed": "30"},         # sin dominio → fuera
+    ]
+    out = pp.academy_credentials(creds)
+    assert [c["domain"] for c in out] == ["empleo", "salud"]   # nivel desc
+    assert out[0] == {"domain": "empleo", "level": 2, "lessons": 12}
+
+
+def test_academy_credentials_ignores_garbage():
+    assert pp.academy_credentials([{"domain": "x", "level": "abc"}]) == []
+    assert pp.academy_credentials([]) == []
 
 
 if __name__ == "__main__":

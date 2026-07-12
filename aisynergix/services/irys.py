@@ -1862,6 +1862,77 @@ async def write_api_usage(
     return await _upload(b"{}", tags)
 
 
+# ── Synergix Academy: micro-credenciales de aprendizaje ──────────────────
+# `credential` es versionada por (uid-hash, domain): última versión gana con
+# el nivel y las lecciones aprobadas. `lesson-result` es append-only (audit).
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_credential(
+    uid_hash: str, domain: str, level: int, lessons_passed: int,
+) -> str:
+    tags = [
+        {"name": "data-type",      "value": "credential"},
+        {"name": "uid-hash",       "value": uid_hash},
+        {"name": "domain",         "value": (domain or "")[:40]},
+        {"name": "level",          "value": str(int(level))},
+        {"name": "lessons-passed", "value": str(int(lessons_passed))},
+        {"name": "Content-Type",   "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🎖️ Credencial %s/%s nivel %d sellada en Irys.", uid_hash, domain, level)
+    return tx_id
+
+
+async def read_credential(uid_hash: str, domain: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "credential"},
+            {"name": "uid-hash",  "value": uid_hash},
+            {"name": "domain",    "value": domain},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_credential %s/%s falló: %s", uid_hash, domain, exc)
+    return None
+
+
+async def list_credentials(uid_hash: str, limit: int = 200) -> List[Dict[str, str]]:
+    """Credenciales vigentes de un usuario (última versión por dominio)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "credential"},
+            {"name": "uid-hash",  "value": uid_hash},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "domain")
+    except Exception as exc:
+        logger.warning("list_credentials %s falló: %s", uid_hash, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_lesson_result(
+    uid_hash: str, domain: str, score: float, passed: bool,
+) -> str:
+    tags = [
+        {"name": "data-type", "value": "lesson-result"},
+        {"name": "uid-hash",  "value": uid_hash},
+        {"name": "domain",    "value": (domain or "")[:40]},
+        {"name": "score",     "value": f"{float(score):.1f}"},
+        {"name": "passed",    "value": "yes" if passed else "no"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
 async def list_pending_api_usage(limit: int = 200) -> List[Dict[str, str]]:
     """Eventos de uso de la API aún no liquidados (última versión = pending)."""
     try:

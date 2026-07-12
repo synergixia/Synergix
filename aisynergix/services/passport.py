@@ -20,7 +20,26 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-PASSPORT_VERSION = "1.1"
+PASSPORT_VERSION = "1.2"
+
+
+def academy_credentials(credential_tags: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+    """Micro-credenciales de la Academy para el Passport (función pura).
+
+    Solo se incluyen dominios con nivel ≥ 1; ordenadas por nivel descendente.
+    """
+    out: List[Dict[str, Any]] = []
+    for c in credential_tags:
+        try:
+            level = int(c.get("level", 0) or 0)
+            lessons = int(c.get("lessons-passed", 0) or 0)
+        except (ValueError, TypeError):
+            continue
+        domain = (c.get("domain") or "").strip().lower()
+        if domain and level >= 1:
+            out.append({"domain": domain, "level": level, "lessons": lessons})
+    out.sort(key=lambda c: (-c["level"], -c["lessons"], c["domain"]))
+    return out
 
 
 def _aporte_tags(a: Any) -> Dict[str, str]:
@@ -157,6 +176,11 @@ async def build_passport(uid: int) -> Optional[Dict[str, Any]]:
         bounty_claims = await list_bounty_claims_by_author(uid_hash)
     except Exception:
         bounty_claims = []
+    try:
+        from aisynergix.services.irys import list_credentials
+        credentials = await list_credentials(uid_hash)
+    except Exception:
+        credentials = []
 
     impacts = aggregate_impacts(counters)
     data: Dict[str, Any] = {
@@ -171,6 +195,8 @@ async def build_passport(uid: int) -> Optional[Dict[str, Any]]:
         # Proof-of-Knowledge: experiencia por dominio + bounties cumplidos.
         "domains": domain_breakdown(aportes),
         "bounties": bounties_summary(bounty_claims),
+        # Academy: micro-credenciales de aprendizaje verificado.
+        "academy": academy_credentials(credentials),
         "synx_earned": round(profile.synx_earned_total, 2),
         "human_verified": profile.human_verified,
         "oracle": {
@@ -201,6 +227,7 @@ __all__ = [
     "average_score",
     "domain_breakdown",
     "bounties_summary",
+    "academy_credentials",
     "build_passport",
     "get_passport",
 ]
