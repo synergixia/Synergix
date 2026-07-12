@@ -1233,6 +1233,8 @@ async def write_node(
     creator_hash: str,
     language: str,
     topics: List[str],
+    country: str = "",
+    region: str = "",
     extra: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Sube (o re-versiona) el registro de un nodo a Irys. Retorna el txId."""
@@ -1243,6 +1245,8 @@ async def write_node(
         "creator": creator_hash,
         "language": language,
         "topics": topics,
+        "country": country,
+        "region": region,
         "created_at": int(datetime.now(timezone.utc).timestamp()),
         **(extra or {}),
     }
@@ -1254,6 +1258,9 @@ async def write_node(
         {"name": "creator",      "value": creator_hash},
         {"name": "language",     "value": language},
         {"name": "topics",       "value": ",".join(topics)[:300]},
+        # Ubicación territorial (país → región); vacía en nodos a-geográficos.
+        {"name": "country",      "value": (country or "")[:10]},
+        {"name": "region",       "value": (region or "")[:80]},
         {"name": "Content-Type", "value": "application/json"},
     ]
     content = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -1860,6 +1867,103 @@ async def write_api_usage(
         {"name": "Content-Type", "value": "application/json"},
     ]
     return await _upload(b"{}", tags)
+
+
+# ── Atlas de Problemas y Soluciones (nodos territoriales) ─────────────────
+# `problem` versionado por problem-id (open → solving → solved, última versión
+# gana); `problem-confirm` append-only con kind=problem|solution.
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_problem(
+    problem_id: str, node_id: str, reporter_hash: str, text: str,
+    status: str, solver: str = "", solution: str = "",
+) -> str:
+    tags = [
+        {"name": "data-type",      "value": "problem"},
+        {"name": "problem-id",     "value": problem_id},
+        {"name": "node-id",        "value": node_id},
+        {"name": "reporter",       "value": reporter_hash},
+        {"name": "problem-text",   "value": (text or "")[:300]},
+        {"name": "problem-status", "value": status},
+        {"name": "solver",         "value": solver},
+        {"name": "solution",       "value": (solution or "")[:300]},
+        {"name": "Content-Type",   "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🚩 Problema %s (%s) sellado en Irys.", problem_id, status)
+    return tx_id
+
+
+async def read_problem(problem_id: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type",  "value": "problem"},
+            {"name": "problem-id", "value": problem_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_problem %s falló: %s", problem_id, exc)
+    return None
+
+
+async def list_node_problems(node_id: str, limit: int = 200) -> List[Dict[str, str]]:
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "problem"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "problem-id")
+    except Exception as exc:
+        logger.warning("list_node_problems %s falló: %s", node_id, exc)
+        return []
+
+
+async def list_solved_problems(limit: int = 500) -> List[Dict[str, str]]:
+    """Problemas resueltos de TODA la red (para el atlas público)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "problem"},
+        ], limit=limit)
+        latest = _dedupe_latest(nodes, "problem-id")
+        return [p for p in latest if p.get("problem-status") == "solved"]
+    except Exception as exc:
+        logger.warning("list_solved_problems falló: %s", exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_problem_confirm(problem_id: str, uid_hash: str, kind: str) -> str:
+    """Confirmación append-only: kind=problem (es real) | solution (funciona)."""
+    tags = [
+        {"name": "data-type",   "value": "problem-confirm"},
+        {"name": "problem-id",  "value": problem_id},
+        {"name": "uid-hash",    "value": uid_hash},
+        {"name": "confirm-kind", "value": kind},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_problem_confirms(problem_id: str, kind: str, limit: int = 1000) -> List[Dict[str, str]]:
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",   "value": "problem-confirm"},
+            {"name": "problem-id",  "value": problem_id},
+            {"name": "confirm-kind", "value": kind},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_problem_confirms %s falló: %s", problem_id, exc)
+        return []
 
 
 # ── Synergix Academy: micro-credenciales de aprendizaje ──────────────────

@@ -129,6 +129,57 @@ async def node_bounties(request: Request) -> JSONResponse:
         return JSONResponse({"error": "unavailable"}, status_code=503)
 
 
+async def node_problems(request: Request) -> JSONResponse:
+    """Problemas de un nodo (abiertos, en solución y resueltos)."""
+    from aisynergix.services.problems import list_problems
+    node_id = request.path_params["node_id"]
+    try:
+        items = await list_problems(node_id)
+        return JSONResponse({"node_id": node_id, "problems": [
+            {
+                "problem_id": p.get("problem-id", ""),
+                "text": p.get("problem-text", ""),
+                "status": p.get("problem-status", "open"),
+                "solution": p.get("solution", ""),
+            }
+            for p in items
+        ]})
+    except Exception as exc:
+        logger.warning("node_problems %s failed: %s", node_id, exc)
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+
+
+async def atlas(request: Request) -> JSONResponse:
+    """Atlas público de Problemas y Soluciones resueltos, filtrable por país.
+
+    El registro cívico permanente: qué estuvo roto en cada territorio y cómo
+    se arregló — verificado por la comunidad y sellado en Arweave.
+    """
+    from aisynergix.services.irys import list_solved_problems, get_node_record
+    country = (request.query_params.get("country", "") or "").strip()
+    try:
+        solved = await list_solved_problems()
+        out = []
+        for p in solved[:100]:
+            node_id = p.get("node-id", "")
+            node = await get_node_record(node_id) if node_id else None
+            node_country = (node or {}).get("country", "")
+            if country and node_country != country:
+                continue
+            out.append({
+                "problem_id": p.get("problem-id", ""),
+                "text": p.get("problem-text", ""),
+                "solution": p.get("solution", ""),
+                "node_id": node_id,
+                "country": node_country,
+                "region": (node or {}).get("region", ""),
+            })
+        return JSONResponse({"country": country or "all", "solved": out})
+    except Exception as exc:
+        logger.warning("atlas failed: %s", exc)
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+
+
 _API_ERROR_STATUS = {
     "bad_key": 401, "inactive": 403, "insufficient_credit": 402, "bad_query": 400,
 }
@@ -212,6 +263,8 @@ routes = [
     Route("/api/nodes", nodes_index),
     Route("/api/nodes/{node_id}", node_detail),
     Route("/api/nodes/{node_id}/bounties", node_bounties),
+    Route("/api/nodes/{node_id}/problems", node_problems),
+    Route("/api/atlas", atlas),
     Route("/api/ask", ask, methods=["POST"]),
     Route("/api/passport/{ghost_id}", passport),
     Route("/api/impact/{aporte_tx}", impact),

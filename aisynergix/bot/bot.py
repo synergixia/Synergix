@@ -1220,7 +1220,22 @@ def get_nodes_menu_kb(lang: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=t("btn_node_explore", lang), callback_data="node:explore"),
             InlineKeyboardButton(text=t("btn_node_mine", lang), callback_data="node:mine"),
         ],
+        [InlineKeyboardButton(text=t("btn_nodes_by_country", lang), callback_data="geo:countries")],
     ])
+
+
+def get_country_kb(prefix: str) -> InlineKeyboardMarkup:
+    """Teclado de países (endónimo + bandera; sin traducción necesaria)."""
+    from aisynergix.nodes import geo
+    rows, row = [], []
+    for code, label in geo.COUNTRIES.items():
+        row.append(InlineKeyboardButton(text=label, callback_data=f"{prefix}:{code}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="🌐 …", callback_data=f"{prefix}:{geo.OTHER_COUNTRY}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_node_type_kb(lang: str) -> InlineKeyboardMarkup:
@@ -1306,7 +1321,11 @@ def _bond_status_text(bond: Optional[dict], lang: str) -> str:
 
 async def _render_node_view(node, lang: str) -> str:
     from aisynergix.nodes.node_stats import node_stats
+    from aisynergix.nodes import geo
     type_label = _node_type_label(node.node_type, lang)
+    location = geo.location_label(node.country, node.region)
+    if location:
+        type_label += f" · {location}"
     lang_label = get_lang_name(node.language)
     if node.topics:
         topics_str = ", ".join(_topic_label(k, lang) for k in node.topics)
@@ -1398,6 +1417,79 @@ async def handle_node_name_message(message: Message, uid: int, text: str, lang: 
     )
 
 
+@dp.callback_query(F.data.startswith("geo:"))
+async def handle_geo_callback(callback: CallbackQuery) -> None:
+    """Exploración territorial: países con nodos → nodos de un país."""
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    from aisynergix.nodes import geo
+    from aisynergix.services.irys import list_node_records
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    arg = parts[2] if len(parts) > 2 else ""
+
+    if action == "countries":
+        records = await list_node_records(limit=200)
+        grouped = geo.group_by_country(records)
+        if not grouped:
+            await callback.message.edit_text(
+                t("geo_no_countries", lang), reply_markup=get_nodes_menu_kb(lang))
+        else:
+            rows = [[InlineKeyboardButton(
+                text=f"{geo.country_label(code)} ({count})",
+                callback_data=f"geo:country:{code}",
+            )] for code, count in grouped[:20]]
+            rows.append([InlineKeyboardButton(
+                text=t("btn_node_back", lang), callback_data="node:menu")])
+            await callback.message.edit_text(
+                t("geo_countries_header", lang),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            )
+
+    elif action == "country":
+        records = await list_node_records(limit=200)
+        mine = [r for r in records if (r.get("country", "") or "").strip() == arg]
+        rows = []
+        for r in mine[:15]:
+            icon = nodes_svc.NODE_TYPES.get(r.get("node-type", ""), "🌐")
+            name = r.get("node-name", "")
+            region = (r.get("region", "") or "").strip()
+            label = f"{icon} {name}" + (f" · {region}" if region else "")
+            rows.append([InlineKeyboardButton(
+                text=label, callback_data=f"node:view:{r.get('node-id', '')}")])
+        rows.append([InlineKeyboardButton(
+            text=t("btn_node_back", lang), callback_data="geo:countries")])
+        await callback.message.edit_text(
+            t("geo_country_header", lang, country=geo.country_label(arg)),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    await callback.answer()
+
+
+async def handle_node_region_message(message: Message, uid: int, text: str, lang: str) -> None:
+    """Paso región/ciudad de la creación de un nodo barrio."""
+    from aisynergix.nodes import geo
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    region = geo.normalize_region(text)
+    if not region:
+        await message.answer(t("node_region_invalid", lang))
+        return
+    await ghost.reset_state(uid)
+    draft.update({"region": region, "step": "topics", "topics": draft.get("topics", [])})
+    await cache.set_state_data(uid, draft)
+    sel = draft["topics"]
+    selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
+    await message.answer(
+        t("node_create_ask_topics", lang, selected=selected),
+        reply_markup=get_node_topics_kb(lang, sel),
+    )
+
+
 @dp.callback_query(F.data.startswith("node:"))
 async def handle_node_callback(callback: CallbackQuery) -> None:
     if not callback.from_user or not callback.data or not callback.message:
@@ -1480,17 +1572,49 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
         )
 
     elif action == "lang":
+        from aisynergix.nodes import geo
         draft = await cache.get_state_data(uid) or {}
         if not draft.get("node_type") or arg not in LANG_NAMES:
             await callback.answer(); return
-        draft.update({"language": arg, "step": "topics", "topics": draft.get("topics", [])})
-        await cache.set_state_data(uid, draft)
-        sel = draft["topics"]
-        selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
-        await callback.message.edit_text(
-            t("node_create_ask_topics", lang, selected=selected),
-            reply_markup=get_node_topics_kb(lang, sel),
-        )
+        draft["language"] = arg
+        if geo.needs_location(draft.get("node_type", "")):
+            # Nodo territorial: primero el país (y luego la región si es barrio).
+            draft["step"] = "country"
+            await cache.set_state_data(uid, draft)
+            await callback.message.edit_text(
+                t("node_create_ask_country", lang),
+                reply_markup=get_country_kb("node:country"),
+            )
+        else:
+            draft.update({"step": "topics", "topics": draft.get("topics", [])})
+            await cache.set_state_data(uid, draft)
+            sel = draft["topics"]
+            selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
+            await callback.message.edit_text(
+                t("node_create_ask_topics", lang, selected=selected),
+                reply_markup=get_node_topics_kb(lang, sel),
+            )
+
+    elif action == "country":
+        from aisynergix.nodes import geo
+        draft = await cache.get_state_data(uid) or {}
+        if not draft.get("node_type") or not geo.is_valid_country(arg):
+            await callback.answer(); return
+        draft["country"] = arg
+        if geo.needs_region(draft.get("node_type", "")):
+            draft["step"] = "region"
+            await cache.set_state_data(uid, draft)
+            await ghost.set_state(uid, "awaiting_node_region")
+            await callback.message.edit_text(t("node_create_ask_region", lang))
+        else:
+            draft.update({"step": "topics", "topics": draft.get("topics", [])})
+            await cache.set_state_data(uid, draft)
+            sel = draft["topics"]
+            selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
+            await callback.message.edit_text(
+                t("node_create_ask_topics", lang, selected=selected),
+                reply_markup=get_node_topics_kb(lang, sel),
+            )
 
     elif action == "topic":
         draft = await cache.get_state_data(uid) or {}
@@ -1521,6 +1645,7 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
         node = await nodes_svc.create_node(
             uid, name, draft.get("node_type", "global"),
             draft.get("language", lang), draft.get("topics", []),
+            country=draft.get("country", ""), region=draft.get("region", ""),
         )
         await ghost.reset_state(uid)
         if not node:
@@ -2067,6 +2192,200 @@ async def handle_bounty_pool_message(message: Message, uid: int, text: str, lang
             pool=f"{pool:.0f}",
             reward=int(bounties_svc.REWARD_MIN),
             days=bounties_svc.DEFAULT_DURATION_DAYS,
+        ))
+
+
+# ── Atlas de Problemas y Soluciones ─────────────────────────────────────────
+
+from aisynergix.services import problems as problems_svc
+
+_PROBLEM_STATUS_ICON = {"open": "🚩", "solving": "🛠️", "solved": "✅"}
+
+
+async def _problem_view(callback: CallbackQuery, pid: str, lang: str, uid: int) -> None:
+    from aisynergix.services.irys import read_problem, list_problem_confirms
+    record = await read_problem(pid)
+    if not record:
+        await callback.message.edit_text(t("problem_not_found", lang))
+        return
+    status = problems_svc.status_of(record)
+    confirms = problems_svc.distinct_confirmers(
+        await list_problem_confirms(pid, kind="problem"))
+    text = t(
+        "problem_view", lang,
+        icon=_PROBLEM_STATUS_ICON.get(status, "🚩"),
+        text=html.escape(record.get("problem-text", "")),
+        status=t("problem_status_" + status, lang),
+        confirms=confirms,
+    )
+    solution = (record.get("solution", "") or "").strip()
+    if solution:
+        text += "\n\n" + t("problem_solution_line", lang, solution=html.escape(solution))
+    uid_hash = _hash_uid_bot(uid)
+    rows = []
+    if status != "solved":
+        if record.get("reporter", "") != uid_hash:
+            rows.append([InlineKeyboardButton(
+                text=t("btn_problem_confirm", lang), callback_data=f"prob:confirm:{pid}")])
+        rows.append([InlineKeyboardButton(
+            text=t("btn_problem_solve", lang), callback_data=f"prob:solve:{pid}")])
+    if status == "solving" and record.get("solver", "") != uid_hash:
+        rows.append([InlineKeyboardButton(
+            text=t("btn_solution_works", lang, needed=problems_svc.SOLVED_THRESHOLD),
+            callback_data=f"prob:works:{pid}")])
+    await callback.message.edit_text(
+        text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None,
+    )
+
+
+@dp.message(Command("problemas"))
+async def cmd_problems(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        await message.answer(t("need_active_node", lang))
+        return
+
+    records = await problems_svc.list_problems(node_id)
+    order = {"open": 0, "solving": 1, "solved": 2}
+    records.sort(key=lambda r: order.get(r.get("problem-status", "open"), 0))
+    rows = []
+    for r in records[:10]:
+        pid = r.get("problem-id", "")
+        icon = _PROBLEM_STATUS_ICON.get(r.get("problem-status", "open"), "🚩")
+        preview = (r.get("problem-text", "") or "")[:40]
+        rows.append([InlineKeyboardButton(
+            text=f"{icon} {preview}", callback_data=f"prob:view:{pid}")])
+    rows.append([InlineKeyboardButton(
+        text=t("btn_problem_report", lang), callback_data="prob:report")])
+    text = t("problems_atlas_header", lang) if records else t("problems_atlas_empty", lang)
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data.startswith("prob:"))
+async def handle_problem_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    pid = parts[2] if len(parts) > 2 else ""
+
+    if action == "report":
+        node_id = await _active_node_id(uid)
+        if not node_id:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        await ghost.set_state(uid, "awaiting_problem_text")
+        await cache.set_state_data(uid, {"prob_node": node_id})
+        await callback.message.edit_text(t(
+            "problem_ask_text", lang,
+            min=problems_svc.MIN_TEXT_LEN, max=problems_svc.MAX_TEXT_LEN,
+        ))
+
+    elif action == "view":
+        await _problem_view(callback, pid, lang, uid)
+
+    elif action == "confirm":
+        count, err = await problems_svc.confirm_problem(uid, pid)
+        if err == "own_problem":
+            await callback.answer(t("problem_own", lang), show_alert=True)
+            return
+        if err in ("not_found", "closed"):
+            await callback.answer(t("problem_closed", lang))
+            return
+        await callback.answer(t("problem_confirmed", lang, count=count))
+        return
+
+    elif action == "solve":
+        await ghost.set_state(uid, "awaiting_solution_text")
+        await cache.set_state_data(uid, {"prob_id": pid})
+        await callback.message.edit_text(t(
+            "problem_ask_solution", lang,
+            min=problems_svc.MIN_TEXT_LEN, max=problems_svc.MAX_TEXT_LEN,
+        ))
+
+    elif action == "works":
+        status, err = await problems_svc.confirm_solution(uid, pid)
+        if err == "own_solution":
+            await callback.answer(t("solution_own", lang), show_alert=True)
+            return
+        if err in ("not_found", "not_solving"):
+            await callback.answer(t("problem_closed", lang))
+            return
+        if status == "solved":
+            await callback.message.edit_text(t(
+                "problem_solved", lang,
+                reward=int(problems_svc.SOLVER_REWARD_SYNX),
+            ))
+        else:
+            await callback.answer(t(
+                "solution_vote_recorded", lang,
+                needed=problems_svc.SOLVED_THRESHOLD,
+            ))
+        return
+
+    await callback.answer()
+
+
+async def handle_problem_text_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    node_id = draft.get("prob_node", "")
+    await ghost.reset_state(uid)
+
+    pid, err = await problems_svc.report_problem(uid, node_id, text)
+    if err == "bad_text":
+        await message.answer(t(
+            "problem_bad_text", lang,
+            min=problems_svc.MIN_TEXT_LEN, max=problems_svc.MAX_TEXT_LEN,
+        ))
+        return
+    if err == "not_member":
+        await message.answer(t("need_active_node", lang))
+        return
+    await message.answer(t("problem_reported", lang))
+
+    # Atlas translingüe: ¿la red ya conoce este problema (en cualquier idioma)?
+    try:
+        matches = await problems_svc.find_similar(text, lang)
+    except Exception:
+        matches = []
+    if matches:
+        out = t("atlas_related_header", lang) + "\n"
+        for m in matches:
+            out += "\n" + t("atlas_entry", lang, excerpt=html.escape(m["excerpt"]))
+        await message.answer(out)
+
+
+async def handle_solution_text_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    pid = draft.get("prob_id", "")
+    await ghost.reset_state(uid)
+
+    err = await problems_svc.propose_solution(uid, pid, text)
+    if err == "bad_text":
+        await message.answer(t(
+            "problem_bad_text", lang,
+            min=problems_svc.MIN_TEXT_LEN, max=problems_svc.MAX_TEXT_LEN,
+        ))
+    elif err in ("not_found", "already_solved"):
+        await message.answer(t("problem_closed", lang))
+    else:
+        await message.answer(t(
+            "solution_proposed", lang, needed=problems_svc.SOLVED_THRESHOLD,
         ))
 
 
@@ -2873,6 +3192,7 @@ async def handle_sticker_message(message: Message) -> None:
         "awaiting_provider_desc", "awaiting_provider_payment",
         "awaiting_project_name", "awaiting_project_goal",
         "awaiting_project_fund", "awaiting_bounty_pool", "awaiting_lesson_answer",
+        "awaiting_node_region", "awaiting_problem_text", "awaiting_solution_text",
         "awaiting_proposal_text",
         "awaiting_withdraw_address", "awaiting_withdraw_amount",
     ):
@@ -2971,6 +3291,18 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_lesson_answer":
         await handle_lesson_answer_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_node_region":
+        await handle_node_region_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_problem_text":
+        await handle_problem_text_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_solution_text":
+        await handle_solution_text_message(message, uid, text, lang)
         return
 
     if current_state == "awaiting_proposal_text":
@@ -3486,6 +3818,7 @@ _MENU_COMMANDS = [
     ("crear_nodo",  "cmd_crear_nodo"),
     ("proveedores", "cmd_proveedores"),
     ("proyectos",   "cmd_proyectos"),
+    ("problemas",   "cmd_problemas"),
     ("bounties",    "cmd_bounties"),
     ("aprender",    "cmd_aprender"),
     ("oraculo",     "cmd_oraculo"),
