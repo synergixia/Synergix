@@ -47,8 +47,23 @@ OTHER_COUNTRY = "other"          # cubeta para países fuera de la lista
 MAX_REGION_LEN = 60
 MIN_REGION_LEN = 2
 
+# Granularidad geográfica sub-país (clave interna → icono). Etiqueta legible
+# vía locales con la clave ``geo_scope_<key>``. Permite filtrar y seleccionar
+# nodos por el nivel exacto del territorio.
+GEO_SCOPES: Dict[str, str] = {
+    "ciudad":     "🏙️",
+    "barrio":     "🏘️",
+    "zona_rural": "🌾",
+    "region":     "🗺️",
+}
+
 # Tipos de nodo que llevan ubicación (el resto son a-geográficos).
-GEO_NODE_TYPES = ("barrio", "pais")
+#   * individual → el nodo personal de un creador, geolocalizado.
+#   * barrio     → comunidad local (pide scope + lugar).
+#   * pais       → nodo de alcance nacional (solo país).
+GEO_NODE_TYPES = ("individual", "barrio", "pais")
+# Tipos que además eligen granularidad (ciudad/barrio/zona rural/región) y lugar.
+SCOPED_NODE_TYPES = ("individual", "barrio")
 
 
 def country_label(code: str) -> str:
@@ -78,16 +93,51 @@ def needs_location(node_type: str) -> bool:
     return node_type in GEO_NODE_TYPES
 
 
+def needs_scope(node_type: str) -> bool:
+    """Los nodos individuales y de barrio eligen granularidad y lugar; un
+    nodo-país ES el país (sin sub-nivel)."""
+    return node_type in SCOPED_NODE_TYPES
+
+
 def needs_region(node_type: str) -> bool:
-    """Solo los barrios piden región/ciudad; un nodo-país ES el país."""
-    return node_type == "barrio"
+    """Piden el nombre del lugar los mismos que eligen granularidad."""
+    return node_type in SCOPED_NODE_TYPES
 
 
-def location_label(country: str, region: str) -> str:
-    """'📍 Región · 🇪🇨 Ecuador' — vacío si el nodo no tiene ubicación."""
+def is_valid_scope(scope: str) -> bool:
+    return (scope or "").strip() in GEO_SCOPES
+
+
+def scope_icon(scope: str) -> str:
+    return GEO_SCOPES.get((scope or "").strip(), "📍")
+
+
+def location_label(country: str, region: str, scope: str = "") -> str:
+    """'🏘️ Barrio San Juan · 🇪🇨 Ecuador' — vacío si no hay ubicación."""
     country_txt = country_label(country)
-    parts = [p for p in ((region or "").strip(), country_txt) if p]
+    place = (region or "").strip()
+    if place and scope:
+        place = f"{scope_icon(scope)} {place}"
+    parts = [p for p in (place, country_txt) if p]
     return ("📍 " + " · ".join(parts)) if parts else ""
+
+
+def filter_by(records: List[Dict[str, str]], country: str = "", scope: str = "") -> List[Dict[str, str]]:
+    """Filtra registros de nodo por país y/o granularidad (selección geográfica)."""
+    out = []
+    for r in records:
+        if country and (r.get("country", "") or "").strip() != country:
+            continue
+        if scope and (r.get("geo-scope", "") or "").strip() != scope:
+            continue
+        out.append(r)
+    return out
+
+
+def scopes_present(records: List[Dict[str, str]]) -> List[str]:
+    """Granularidades presentes en un conjunto de nodos (para los filtros)."""
+    present = {(r.get("geo-scope", "") or "").strip() for r in records}
+    return [s for s in GEO_SCOPES if s in present]
 
 
 def group_by_country(records: List[Dict[str, str]]) -> List[Tuple[str, int]]:
@@ -104,8 +154,10 @@ def group_by_country(records: List[Dict[str, str]]) -> List[Tuple[str, int]]:
 
 
 __all__ = [
-    "COUNTRIES", "OTHER_COUNTRY", "GEO_NODE_TYPES",
-    "MAX_REGION_LEN", "MIN_REGION_LEN",
+    "COUNTRIES", "OTHER_COUNTRY", "GEO_NODE_TYPES", "SCOPED_NODE_TYPES",
+    "GEO_SCOPES", "MAX_REGION_LEN", "MIN_REGION_LEN",
     "country_label", "is_valid_country", "normalize_region",
-    "needs_location", "needs_region", "location_label", "group_by_country",
+    "needs_location", "needs_scope", "needs_region",
+    "is_valid_scope", "scope_icon",
+    "location_label", "group_by_country", "filter_by", "scopes_present",
 ]

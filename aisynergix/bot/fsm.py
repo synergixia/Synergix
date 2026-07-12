@@ -22,6 +22,7 @@ class SynergixStates(StatesGroup):
     awaiting_project_name = State()
     awaiting_project_goal = State()
     awaiting_project_fund = State()
+    awaiting_project_evidence = State()   # verificación obligatoria de proyecto
     # Bounties de conocimiento (Proof-of-Knowledge)
     awaiting_bounty_pool = State()
     # Synergix Academy (learn-to-earn)

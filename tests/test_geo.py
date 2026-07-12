@@ -55,6 +55,45 @@ def test_group_by_country_sorted_and_skips_empty():
     assert grouped == [("EC", 2), ("PE", 1)]
 
 
+def test_scope_validation_and_icon():
+    assert geo.is_valid_scope("ciudad") is True
+    assert geo.is_valid_scope("zona_rural") is True
+    assert geo.is_valid_scope("continente") is False
+    assert geo.scope_icon("barrio") == "🏘️"
+    assert geo.scope_icon("desconocido") == "📍"
+
+
+def test_needs_scope_by_type():
+    assert geo.needs_scope("individual") is True
+    assert geo.needs_scope("barrio") is True
+    assert geo.needs_scope("pais") is False       # nodo-país: solo país
+    assert geo.needs_scope("global") is False
+    # individual y barrio están geolocalizados
+    assert geo.needs_location("individual") is True
+
+
+def test_location_label_with_scope():
+    assert geo.location_label("EC", "San Juan", "barrio") == "📍 🏘️ San Juan · 🇪🇨 Ecuador"
+    assert geo.location_label("PE", "El Valle", "zona_rural") == "📍 🌾 El Valle · 🇵🇪 Perú"
+
+
+def test_filter_by_country_and_scope():
+    recs = [
+        {"country": "EC", "geo-scope": "ciudad"},
+        {"country": "EC", "geo-scope": "barrio"},
+        {"country": "PE", "geo-scope": "ciudad"},
+    ]
+    assert len(geo.filter_by(recs, country="EC")) == 2
+    assert len(geo.filter_by(recs, country="EC", scope="barrio")) == 1
+    assert len(geo.filter_by(recs, scope="ciudad")) == 2
+
+
+def test_scopes_present_ordered():
+    recs = [{"geo-scope": "region"}, {"geo-scope": "ciudad"}, {"geo-scope": ""}]
+    # respeta el orden de GEO_SCOPES (ciudad antes que region)
+    assert geo.scopes_present(recs) == ["ciudad", "region"]
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
