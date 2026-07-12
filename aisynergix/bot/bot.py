@@ -52,6 +52,7 @@ from aisynergix.services import wallet as wallet_svc
 from aisynergix.services import providers as providers_svc
 from aisynergix.services import projects as projects_svc
 from aisynergix.services import oracle as oracle_svc
+from aisynergix.services import bounties as bounties_svc
 from aisynergix.services import agent as agent_svc
 from aisynergix.services import governance as gov_svc
 from aisynergix.services import passport as passport_svc
@@ -177,6 +178,19 @@ async def _challenge_broadcast_loop() -> None:
             logger.info("📢 Reto [%s] enviado a %d usuarios.", challenge_id, sent)
         except Exception as exc:
             logger.warning("challenge_broadcast_loop error: %s", exc)
+
+
+async def _api_settlement_loop() -> None:
+    """Liquida en segundo plano los royalties de la API a los autores citados
+    (Proof-of-Knowledge ③). El bot es dueño del ledger SYNX, así que el pago a
+    los humanos se hace aquí, no en el proceso read-only de la API."""
+    from aisynergix.services.knowledge_api import settle_pending_usage
+    while True:
+        await asyncio.sleep(300)  # cada 5 minutos
+        try:
+            await settle_pending_usage(limit=50)
+        except Exception as exc:
+            logger.warning("api_settlement_loop error: %s", exc)
 
 
 async def _notify_oracles_new_review(aporte_tx: str) -> None:
@@ -1901,6 +1915,159 @@ async def handle_project_fund_message(message: Message, uid: int, text: str, lan
         await message.answer(t("project_funded", lang, amount=f"{amount:.0f}"))
 
 
+# ── Bounties de Conocimiento (Proof-of-Knowledge) ───────────────────────────
+
+_BOUNTY_STATUS_ICON = {"open": "🎯", "closed": "✅", "expired": "⌛"}
+
+
+def _bounty_row_label(b: dict, lang: str) -> str:
+    icon = _BOUNTY_STATUS_ICON.get(b.get("bounty-status", "open"), "🎯")
+    topic = _topic_label(b.get("topic", ""), lang)
+    rem = bounties_svc.remaining_pool(b)
+    return f"{icon} {topic} · {rem:.0f} SYNX"
+
+
+async def _bounty_view(callback: CallbackQuery, bounty_id: str, lang: str) -> None:
+    from aisynergix.services.irys import read_bounty
+    b = await read_bounty(bounty_id)
+    if not b:
+        await callback.message.edit_text(t("bounty_not_found", lang))
+        return
+    now = int(datetime.now(timezone.utc).timestamp())
+    deadline = int(b.get("deadline", 0) or 0)
+    date = datetime.fromtimestamp(deadline, tz=timezone.utc).strftime("%Y-%m-%d") if deadline else "—"
+    status_key = b.get("bounty-status", "open")
+    if status_key == "open" and not bounties_svc.is_open(b, now):
+        status_key = "expired"
+    text = t(
+        "bounty_view", lang,
+        topic=_topic_label(b.get("topic", ""), lang),
+        status=t("bounty_status_" + status_key, lang),
+        reward=f"{float(b.get('reward', 0)):.0f}",
+        remaining=f"{bounties_svc.remaining_pool(b):.0f}",
+        pool=f"{float(b.get('pool', 0)):.0f}",
+        paid=int(b.get("paid-count", 0) or 0),
+        slots=bounties_svc.max_recipients(b),
+        date=date,
+    )
+    await callback.message.edit_text(text)
+
+
+@dp.message(Command("bounties"))
+async def cmd_bounties(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        await message.answer(t("need_active_node", lang))
+        return
+
+    records = await bounties_svc.list_bounties(node_id)
+    records.sort(key=lambda b: (not b.get("open"), b.get("topic", "")))
+    rows = []
+    for b in records[:10]:
+        rows.append([InlineKeyboardButton(
+            text=_bounty_row_label(b, lang),
+            callback_data=f"bounty:view:{b.get('bounty-id', '')}",
+        )])
+    rows.append([InlineKeyboardButton(
+        text=t("btn_bounty_create", lang), callback_data="bounty:create")])
+    text = t("bounties_header", lang) if records else t("bounties_empty", lang)
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data.startswith("bounty:"))
+async def handle_bounty_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    arg = parts[2] if len(parts) > 2 else ""
+
+    if action == "create":
+        node_id = await _active_node_id(uid)
+        if not node_id:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        node = await nodes_svc.get_node(node_id)
+        topics = node.topics if node else []
+        if not topics:
+            await callback.answer(t("bounty_no_topics", lang), show_alert=True)
+            return
+        rows, row = [], []
+        for key in topics:
+            row.append(InlineKeyboardButton(
+                text=_topic_label(key, lang), callback_data=f"bounty:topic:{key}"))
+            if len(row) == 2:
+                rows.append(row); row = []
+        if row:
+            rows.append(row)
+        await callback.message.edit_text(
+            t("bounty_ask_topic", lang),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    elif action == "topic":
+        node_id = await _active_node_id(uid)
+        if not node_id or not arg:
+            await callback.answer(); return
+        await ghost.set_state(uid, "awaiting_bounty_pool")
+        await cache.set_state_data(uid, {"bty_node": node_id, "bty_topic": arg})
+        await callback.message.edit_text(
+            t("bounty_ask_pool", lang,
+              min=int(bounties_svc.BOUNTY_MIN_POOL),
+              reward=int(bounties_svc.REWARD_MIN),
+              days=bounties_svc.DEFAULT_DURATION_DAYS)
+        )
+
+    elif action == "view":
+        await _bounty_view(callback, arg, lang)
+
+    await callback.answer()
+
+
+async def handle_bounty_pool_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    node_id = draft.get("bty_node", "")
+    topic = draft.get("bty_topic", "")
+    await ghost.reset_state(uid)
+
+    from aisynergix.services.rewards import parse_amount, is_valid_amount
+    pool = parse_amount(text)
+    if pool is None or not is_valid_amount(pool):
+        await message.answer(t("invalid_amount", lang))
+        return
+    bounty_id, err = await bounties_svc.create_bounty(uid, node_id, topic, pool)
+    if err == "not_member":
+        await message.answer(t("need_active_node", lang))
+    elif err == "pool_too_small":
+        await message.answer(t("bounty_pool_too_small", lang,
+                               min=int(bounties_svc.BOUNTY_MIN_POOL)))
+    elif err in ("bad_reward", "bad_duration"):
+        await message.answer(t("bounty_bad_params", lang))
+    elif err == "insufficient":
+        await message.answer(t("bounty_insufficient", lang))
+    else:
+        await message.answer(t(
+            "bounty_created", lang,
+            topic=_topic_label(topic, lang),
+            pool=f"{pool:.0f}",
+            reward=int(bounties_svc.REWARD_MIN),
+            days=bounties_svc.DEFAULT_DURATION_DAYS,
+        ))
+
+
 # ── Jueces Oráculos ─────────────────────────────────────────────────────────
 
 @dp.message(Command("oraculo"))
@@ -2579,7 +2746,7 @@ async def handle_sticker_message(message: Message) -> None:
         "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
         "awaiting_provider_desc", "awaiting_provider_payment",
         "awaiting_project_name", "awaiting_project_goal",
-        "awaiting_project_fund", "awaiting_proposal_text",
+        "awaiting_project_fund", "awaiting_bounty_pool", "awaiting_proposal_text",
         "awaiting_withdraw_address", "awaiting_withdraw_amount",
     ):
         return
@@ -2669,6 +2836,10 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_project_fund":
         await handle_project_fund_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_bounty_pool":
+        await handle_bounty_pool_message(message, uid, text, lang)
         return
 
     if current_state == "awaiting_proposal_text":
@@ -3184,6 +3355,7 @@ async def set_bot_commands():
         BotCommand(command="crear_nodo", description="➕ Crear un nodo de comunidad"),
         BotCommand(command="proveedores", description="💼 Proveedores del nodo"),
         BotCommand(command="proyectos", description="🏗️ Financiamiento colectivo"),
+        BotCommand(command="bounties", description="🎯 Bounties de conocimiento"),
         BotCommand(command="oraculo", description="🔮 Jurado de Oráculos"),
         BotCommand(command="propuestas", description="🗳️ Gobernanza del nodo"),
         BotCommand(command="pasaporte", description="🪪 Mi Passport on-chain"),
@@ -3236,6 +3408,9 @@ async def on_startup():
 
     # Notificación push a Oráculos cuando se abre una revisión (§5.4).
     oracle_svc.set_review_notifier(_notify_oracles_new_review)
+
+    # Liquidación de royalties de la API de Conocimiento a los autores (③).
+    asyncio.create_task(_api_settlement_loop())
 
     from aisynergix.services.rag_engine import get_rag_engine
     rag = await get_rag_engine()

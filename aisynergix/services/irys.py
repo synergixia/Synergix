@@ -1795,6 +1795,86 @@ async def list_bounty_claims(bounty_id: str, limit: int = 2000) -> List[Dict[str
         return []
 
 
+async def list_bounty_claims_by_author(author_hash: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Todos los bounties que un autor ha cobrado (para el Passport)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",  "value": "bounty-claim"},
+            {"name": "author-uid", "value": author_hash},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_bounty_claims_by_author %s falló: %s", author_hash, exc)
+        return []
+
+
+# ── API de Conocimiento que paga a humanos (Proof-of-Knowledge ③) ─────────
+# `api-key` versionado (última versión = saldo vigente); `api-usage`
+# versionado (pending → settled) para la liquidación idempotente.
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_api_key(key_hash: str, owner: str, balance: float, status: str = "active") -> str:
+    tags = [
+        {"name": "data-type",  "value": "api-key"},
+        {"name": "key-hash",   "value": key_hash},
+        {"name": "owner",      "value": owner},
+        {"name": "balance",    "value": f"{balance:.4f}"},
+        {"name": "key-status", "value": status},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def read_api_key(key_hash: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "api-key"},
+            {"name": "key-hash",  "value": key_hash},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_api_key falló: %s", exc)
+    return None
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_api_usage(
+    usage_id: str, key_hash: str, price: float, authors: str, status: str = "pending",
+) -> str:
+    tags = [
+        {"name": "data-type",    "value": "api-usage"},
+        {"name": "usage-id",     "value": usage_id},
+        {"name": "key-hash",     "value": key_hash},
+        {"name": "price",        "value": f"{price:.4f}"},
+        {"name": "authors",      "value": authors[:1000]},
+        {"name": "usage-status", "value": status},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_pending_api_usage(limit: int = 200) -> List[Dict[str, str]]:
+    """Eventos de uso de la API aún no liquidados (última versión = pending)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "api-usage"},
+        ], limit=limit)
+        latest = _dedupe_latest(nodes, "usage-id")
+        return [u for u in latest if u.get("usage-status", "pending") == "pending"]
+    except Exception as exc:
+        logger.warning("list_pending_api_usage falló: %s", exc)
+        return []
+
+
 @retry(
     retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
     stop=stop_after_attempt(3),

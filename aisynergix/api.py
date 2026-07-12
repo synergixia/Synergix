@@ -100,6 +100,72 @@ async def node_detail(request: Request) -> JSONResponse:
         return JSONResponse({"error": "unavailable"}, status_code=503)
 
 
+async def node_bounties(request: Request) -> JSONResponse:
+    """Bounties de conocimiento de un nodo (Proof-of-Knowledge, §7.4).
+
+    Deja a una organización externa ver qué vacíos tienen pool activo y cuánto
+    queda — la superficie de demanda del protocolo.
+    """
+    from aisynergix.services.bounties import list_bounties
+    node_id = request.path_params["node_id"]
+    try:
+        items = await list_bounties(node_id)
+        return JSONResponse({"node_id": node_id, "bounties": [
+            {
+                "bounty_id": b.get("bounty-id", ""),
+                "topic": b.get("topic", ""),
+                "status": b.get("bounty-status", "open"),
+                "open": bool(b.get("open")),
+                "pool": float(b.get("pool", 0) or 0),
+                "reward": float(b.get("reward", 0) or 0),
+                "remaining": float(b.get("remaining", 0) or 0),
+                "paid_count": int(b.get("paid-count", 0) or 0),
+                "deadline": int(b.get("deadline", 0) or 0),
+            }
+            for b in items
+        ]})
+    except Exception as exc:
+        logger.warning("node_bounties %s failed: %s", node_id, exc)
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+
+
+_API_ERROR_STATUS = {
+    "bad_key": 401, "inactive": 403, "insufficient_credit": 402, "bad_query": 400,
+}
+
+
+async def ask(request: Request) -> JSONResponse:
+    """API de Conocimiento que paga a humanos (Proof-of-Knowledge ③).
+
+    POST con cabecera ``X-API-Key`` y cuerpo JSON ``{"question": "...",
+    "top_k": 5}``. Devuelve fragmentos fundamentados + citas (autor + tx
+    Arweave), cobra a la key y registra el reparto; los autores citados se
+    liquidan en el proceso del bot.
+    """
+    from aisynergix.services.knowledge_api import answer_query, DEFAULT_TOP_K
+    api_key = request.headers.get("x-api-key", "")
+    if not api_key:
+        return JSONResponse({"error": "missing_api_key"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad_json"}, status_code=400)
+    question = (body or {}).get("question", "")
+    try:
+        top_k = int((body or {}).get("top_k", DEFAULT_TOP_K))
+    except (ValueError, TypeError):
+        top_k = DEFAULT_TOP_K
+    top_k = max(1, min(10, top_k))
+    try:
+        answer, err = await answer_query(api_key, question, top_k)
+    except Exception as exc:
+        logger.warning("ask failed: %s", exc)
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+    if err:
+        return JSONResponse({"error": err}, status_code=_API_ERROR_STATUS.get(err, 400))
+    return JSONResponse(answer)
+
+
 async def passport(request: Request) -> JSONResponse:
     """Passport público por Ghost ID — reputación verificable sin identidad."""
     from aisynergix.services.passport import get_passport
@@ -145,6 +211,8 @@ routes = [
     Route("/api/top10", top10),
     Route("/api/nodes", nodes_index),
     Route("/api/nodes/{node_id}", node_detail),
+    Route("/api/nodes/{node_id}/bounties", node_bounties),
+    Route("/api/ask", ask, methods=["POST"]),
     Route("/api/passport/{ghost_id}", passport),
     Route("/api/impact/{aporte_tx}", impact),
 ]
@@ -154,7 +222,7 @@ app = Starlette(
     middleware=[
         Middleware(
             CORSMiddleware,
-            allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"],
+            allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"],
         ),
     ],
 )

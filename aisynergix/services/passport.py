@@ -20,7 +20,63 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-PASSPORT_VERSION = "1.0"
+PASSPORT_VERSION = "1.1"
+
+
+def _aporte_tags(a: Any) -> Dict[str, str]:
+    if isinstance(a, dict):
+        return a.get("tags", a) if isinstance(a.get("tags"), dict) else a
+    return {}
+
+
+def _aporte_category(a: Any) -> str:
+    tags = _aporte_tags(a)
+    return (tags.get("category") or tags.get("topic") or "").strip().lower()
+
+
+def domain_breakdown(aporte_tags: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+    """Desglose de conocimiento por dominio (§10.2, Proof-of-Knowledge).
+
+    Devuelve una lista ordenada por nº de aportes descendente:
+    ``[{domain, contributions, avg_score}, …]``. Función pura y testeable —
+    convierte el Passport en una credencial de experiencia por dominio
+    ("contribuidor verificado en Salud: 12 aportes, score medio 7.8").
+    """
+    agg: Dict[str, Dict[str, float]] = {}
+    for a in aporte_tags:
+        domain = _aporte_category(a)
+        if not domain:
+            continue
+        bucket = agg.setdefault(domain, {"n": 0.0, "score_sum": 0.0, "scored": 0.0})
+        bucket["n"] += 1
+        raw = _aporte_tags(a).get("quality-score") or _aporte_tags(a).get("quality_score")
+        try:
+            if raw is not None:
+                bucket["score_sum"] += float(raw)
+                bucket["scored"] += 1
+        except (ValueError, TypeError):
+            pass
+    out: List[Dict[str, Any]] = []
+    for domain, b in agg.items():
+        avg = round(b["score_sum"] / b["scored"], 2) if b["scored"] else None
+        out.append({
+            "domain": domain,
+            "contributions": int(b["n"]),
+            "avg_score": avg,
+        })
+    out.sort(key=lambda d: (-d["contributions"], d["domain"]))
+    return out
+
+
+def bounties_summary(claim_tags: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Resumen de bounties cumplidos: nº y SYNX ganados (función pura)."""
+    total = 0.0
+    for c in claim_tags:
+        try:
+            total += float(c.get("amount", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+    return {"fulfilled": len(claim_tags), "synx_earned": round(total, 2)}
 
 
 def aggregate_impacts(counter_tags: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -78,7 +134,7 @@ async def build_passport(uid: int) -> Optional[Dict[str, Any]]:
     from aisynergix.bot.identity import get_identity_manager, _hash_uid
     from aisynergix.services.irys import (
         list_aportes, list_impact_counters_by_author, read_oracle_stake,
-        write_passport,
+        list_bounty_claims_by_author, write_passport,
     )
 
     identity = get_identity_manager()
@@ -97,6 +153,10 @@ async def build_passport(uid: int) -> Optional[Dict[str, Any]]:
         stake_tags = await read_oracle_stake(uid_hash)
     except Exception:
         stake_tags = None
+    try:
+        bounty_claims = await list_bounty_claims_by_author(uid_hash)
+    except Exception:
+        bounty_claims = []
 
     impacts = aggregate_impacts(counters)
     data: Dict[str, Any] = {
@@ -108,6 +168,9 @@ async def build_passport(uid: int) -> Optional[Dict[str, Any]]:
         "contributions": max(profile.contribution_count, len(aportes)),
         "avg_quality_score": average_score(aportes),
         "impacts": impacts,
+        # Proof-of-Knowledge: experiencia por dominio + bounties cumplidos.
+        "domains": domain_breakdown(aportes),
+        "bounties": bounties_summary(bounty_claims),
         "synx_earned": round(profile.synx_earned_total, 2),
         "human_verified": profile.human_verified,
         "oracle": {
@@ -136,6 +199,8 @@ __all__ = [
     "aggregate_impacts",
     "oracle_accuracy",
     "average_score",
+    "domain_breakdown",
+    "bounties_summary",
     "build_passport",
     "get_passport",
 ]
