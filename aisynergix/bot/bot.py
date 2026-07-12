@@ -2068,6 +2068,130 @@ async def handle_bounty_pool_message(message: Message, uid: int, text: str, lang
         ))
 
 
+# ── Synergix Academy: aprende y gana ────────────────────────────────────────
+
+from aisynergix.services import academy as academy_svc
+
+
+@dp.message(Command("aprender"))
+async def cmd_learn(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    if not academy_svc.can_take_lesson(uid):
+        await message.answer(t("academy_daily_cap", lang, cap=academy_svc.DAILY_LESSON_CAP))
+        return
+    rows, row = [], []
+    for key in nodes_svc.TOPICS:
+        row.append(InlineKeyboardButton(
+            text=_topic_label(key, lang), callback_data=f"learn:topic:{key}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    await message.answer(
+        t("academy_intro", lang, reward=int(academy_svc.LESSON_REWARD_SYNX)),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@dp.callback_query(F.data.startswith("learn:"))
+async def handle_learn_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    topic_key = parts[2] if len(parts) > 2 else ""
+
+    if action == "topic" and topic_key in nodes_svc.TOPICS:
+        if not academy_svc.can_take_lesson(uid):
+            await callback.answer(
+                t("academy_daily_cap", lang, cap=academy_svc.DAILY_LESSON_CAP),
+                show_alert=True,
+            )
+            return
+        await callback.answer()  # responder ya; la generación puede tardar
+        await callback.message.edit_text(t("academy_generating", lang))
+        try:
+            lesson = await academy_svc.generate_lesson(
+                topic_key, _topic_label(topic_key, lang), lang,
+            )
+        except Exception as exc:
+            logger.warning("academy: generación falló (%s): %s", topic_key, exc)
+            lesson = None
+        if not lesson:
+            await callback.message.edit_text(t("academy_no_knowledge", lang))
+            return
+        ghost = get_ghost_state_manager()
+        cache = get_l1_cache()
+        await ghost.set_state(uid, "awaiting_lesson_answer")
+        await cache.set_state_data(uid, {
+            "lesson_topic": topic_key,
+            # tuplas → listas para el estado en cache
+            "lesson_citations": [list(c) for c in lesson["citations"]],
+        })
+        await callback.message.edit_text(t(
+            "academy_lesson", lang,
+            topic=_topic_label(topic_key, lang),
+            lesson=html.escape(lesson["lesson"]),
+            reward=int(academy_svc.LESSON_REWARD_SYNX),
+        ))
+        return
+
+    await callback.answer()
+
+
+async def handle_lesson_answer_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    topic_key = draft.get("lesson_topic", "")
+    citations = [tuple(c) for c in draft.get("lesson_citations", [])]
+
+    if len(text.strip()) < academy_svc.MIN_ANSWER_LEN:
+        # No consumir la lección: dejar que desarrolle la respuesta.
+        await message.answer(t("academy_answer_too_short", lang))
+        return
+
+    await ghost.reset_state(uid)
+    result = await academy_svc.submit_answer(uid, topic_key, text, citations)
+    status = result.get("status")
+    if status == "too_short":
+        await message.answer(t("academy_answer_too_short", lang))
+    elif status == "daily_cap":
+        await message.answer(t("academy_daily_cap", lang, cap=academy_svc.DAILY_LESSON_CAP))
+    elif status == "fail":
+        feedback = result.get("feedback") or ""
+        await message.answer(t(
+            "academy_fail", lang,
+            score=result.get("score", 0), feedback=html.escape(feedback),
+        ))
+    else:  # pass
+        out = t(
+            "academy_pass", lang,
+            score=result.get("score", 0),
+            synx=f"{result.get('reward', 0):.0f}",
+            topic=_topic_label(topic_key, lang),
+            lessons=result.get("lessons", 1),
+            level=result.get("level", 0),
+        )
+        if result.get("authors_credited"):
+            out += "\n" + t("academy_authors_note", lang)
+        await message.answer(out)
+        if result.get("leveled_up"):
+            await message.answer(t(
+                "academy_levelup", lang,
+                level=result.get("level", 1),
+                topic=_topic_label(topic_key, lang),
+            ))
+
+
 # ── Jueces Oráculos ─────────────────────────────────────────────────────────
 
 @dp.message(Command("oraculo"))
@@ -2746,7 +2870,8 @@ async def handle_sticker_message(message: Message) -> None:
         "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
         "awaiting_provider_desc", "awaiting_provider_payment",
         "awaiting_project_name", "awaiting_project_goal",
-        "awaiting_project_fund", "awaiting_bounty_pool", "awaiting_proposal_text",
+        "awaiting_project_fund", "awaiting_bounty_pool", "awaiting_lesson_answer",
+        "awaiting_proposal_text",
         "awaiting_withdraw_address", "awaiting_withdraw_amount",
     ):
         return
@@ -2840,6 +2965,10 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_bounty_pool":
         await handle_bounty_pool_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_lesson_answer":
+        await handle_lesson_answer_message(message, uid, text, lang)
         return
 
     if current_state == "awaiting_proposal_text":
@@ -3356,6 +3485,7 @@ async def set_bot_commands():
         BotCommand(command="proveedores", description="💼 Proveedores del nodo"),
         BotCommand(command="proyectos", description="🏗️ Financiamiento colectivo"),
         BotCommand(command="bounties", description="🎯 Bounties de conocimiento"),
+        BotCommand(command="aprender", description="🎓 Academy: aprende y gana"),
         BotCommand(command="oraculo", description="🔮 Jurado de Oráculos"),
         BotCommand(command="propuestas", description="🗳️ Gobernanza del nodo"),
         BotCommand(command="pasaporte", description="🪪 Mi Passport on-chain"),
