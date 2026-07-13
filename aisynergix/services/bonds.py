@@ -32,8 +32,9 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-# BOND por nodo (SYNERGIX real) y ventana de unbonding.  Configurables.
-BOND_AMOUNT: float = float(_int_env("SYNERGIX_NODE_BOND", 200_000))
+# BOND por nodo (SYNERGIX real, anti-spam) y ventana de unbonding.  20 000
+# SYNERGIX inmoviliza crear nodos en masa sin ser una barrera prohibitiva.
+BOND_AMOUNT: float = float(_int_env("SYNERGIX_NODE_BOND", 20_000))
 UNBOND_DAYS: int = _int_env("SYNERGIX_UNBOND_DAYS", 7)
 UNBOND_SECONDS: int = UNBOND_DAYS * 86_400
 
@@ -80,14 +81,35 @@ def sum_locked(bonds: List[Dict[str, str]], now: Optional[int] = None) -> float:
 
 # ── E/S (Irys + custodia) ────────────────────────────────────────────────
 
-async def locked_synergix(uid: int) -> float:
-    """Total de SYNERGIX bloqueado por bonds activos del usuario."""
-    from aisynergix.services.irys import list_user_bonds
+async def oracle_stake_locked(uid_hash: str) -> float:
+    """SYNERGIX real bloqueado por el stake de Oráculo activo del usuario."""
+    from aisynergix.services.irys import read_oracle_stake
     try:
-        bonds = await list_user_bonds(_hash_uid(uid))
+        st = await read_oracle_stake(uid_hash)
+    except Exception:
+        return 0.0
+    if st and st.get("stake-status") == "active":
+        try:
+            return float(st.get("amount", 0) or 0)
+        except (ValueError, TypeError):
+            return 0.0
+    return 0.0
+
+
+async def locked_synergix(uid: int) -> float:
+    """Total de SYNERGIX real bloqueado: bonds de nodo + stake de Oráculo.
+
+    bonds.py es el libro contable de TODO el SYNERGIX inmovilizado, así retiro
+    y venta (available_synergix) respetan cualquier bloqueo — sin doble gasto.
+    """
+    from aisynergix.services.irys import list_user_bonds
+    uid_hash = _hash_uid(uid)
+    try:
+        bonds = await list_user_bonds(uid_hash)
     except Exception:
         bonds = []
-    return sum_locked(bonds)
+    total = sum_locked(bonds) + await oracle_stake_locked(uid_hash)
+    return round(total, 4)
 
 
 async def available_synergix(uid: int, onchain_balance: float) -> float:
@@ -175,6 +197,7 @@ __all__ = [
     "UNBOND_SECONDS",
     "is_bond_active",
     "sum_locked",
+    "oracle_stake_locked",
     "locked_synergix",
     "available_synergix",
     "can_afford_bond",

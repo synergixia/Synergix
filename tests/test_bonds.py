@@ -44,7 +44,7 @@ def test_sum_locked_empty():
 
 
 def test_bond_constants():
-    assert bd.BOND_AMOUNT == 200000.0
+    assert bd.BOND_AMOUNT == 20000.0
     assert bd.UNBOND_DAYS == 7
     assert bd.UNBOND_SECONDS == 7 * 86400
 
@@ -61,17 +61,15 @@ def test_available_math_via_sum():
     assert max(0.0, balance - bd.sum_locked(bonds2, NOW)) == 0.0
 
 
-def test_node_creation_is_free_no_bond():
-    """Crear un nodo es GRATIS: el flujo de creación no menciona ningún bond."""
+def test_node_bond_is_20k_anti_spam():
+    """El bond anti-spam de nodo es 20 000 SYNERGIX y el flujo lo menciona."""
+    assert bd.BOND_AMOUNT == 20000.0
     import json
     base = Path(__file__).resolve().parent.parent / "aisynergix/bot/locales"
     for lang in ("es", "en"):
         d = json.loads((base / f"{lang}.json").read_text(encoding="utf-8"))
-        assert "node_created" in d and "node_create_ask_name" in d
-        # El bond ya no existe: ni placeholder ni la palabra en el flujo.
-        assert "{bond}" not in d["node_created"]
-        assert "{bond}" not in d["node_create_ask_name"]
-        assert "bond" not in d["node_create_ask_name"].lower()
+        assert "{bond}" in d["node_created"]
+        assert "{bond}" in d["node_create_ask_name"]
 
 
 def test_coverage_stale_flag():

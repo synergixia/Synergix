@@ -89,8 +89,9 @@ def test_wrong_streak_reset_on_correct_vote():
 
 
 def test_oracle_constants_match_design():
-    # §6.2 uso 5 + §5.4: stake 500, +15 correcto, −50 sistemático, 3 votos, 24 h.
-    assert oc.STAKE_MIN_SYNX == 500.0
+    # Stake de Oráculo: 100 000 SYNERGIX real bloqueado (anti-Sybil).
+    # Recompensa/penalización de votos siguen en SYNX (+15 / −50).
+    assert oc.STAKE_SYNERGIX == 100000.0
     assert oc.VOTE_REWARD_SYNX == 15.0
     assert oc.PENALTY_SYNX == 50.0
     assert oc.REQUIRED_VOTES == 3
