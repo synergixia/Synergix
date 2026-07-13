@@ -141,12 +141,12 @@ async def create_node(
     creator_hash = _hash_uid(uid)
     node_id = generate_node_id(creator_hash, clean_name)
 
-    # Bond en SYNERGIX real: crear un nodo exige bloquear BOND_AMOUNT (anti-Sybil).
-    # Se bloquea ANTES de escribir el nodo; si no alcanza el saldo disponible,
-    # no se crea nada.
+    # Anti-spam: crear un nodo bloquea BOND_AMOUNT (20 000) de SYNERGIX real
+    # de la wallet del creador. Se bloquea ANTES de escribir el nodo; si no
+    # alcanza el saldo disponible, no se crea nada.
     from aisynergix.services import bonds as bonds_svc
     if not await bonds_svc.lock_node_bond(uid, node_id):
-        logger.info("create_node: %s sin bond suficiente (%.0f SYNERGIX)",
+        logger.info("create_node: %s sin SYNERGIX suficiente (%.0f)",
                     creator_hash, bonds_svc.BOND_AMOUNT)
         return None
 

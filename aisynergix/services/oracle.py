@@ -23,7 +23,22 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-STAKE_MIN_SYNX = 500.0
+import os
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except (ValueError, TypeError):
+        return default
+
+
+# El stake de Oráculo bloquea SYNERGIX REAL (skin in the game anti-Sybil):
+# 100 000 SYNERGIX inmovilizados de la wallet del usuario mientras es juez.
+# El principal NO se mueve ni se debita; se bloquea (como el bond de nodo) y
+# retiro/venta lo respetan. Las recompensas/penalizaciones por votar siguen
+# siendo en SYNX (son ganancias/conducta, no el principal).
+STAKE_SYNERGIX = float(_int_env("SYNERGIX_ORACLE_STAKE", 100_000))
 VOTE_REWARD_SYNX = 15.0
 PENALTY_SYNX = 50.0
 WRONG_STREAK_LIMIT = 3
@@ -101,11 +116,14 @@ async def get_stake(uid_hash: str) -> Optional[Dict[str, str]]:
 
 
 async def stake(uid: int) -> Optional[str]:
-    """Convierte al usuario en Oráculo. Retorna clave de error o None.
+    """Convierte al usuario en Oráculo bloqueando STAKE_SYNERGIX real.
 
     Errores: "not_eligible" | "already_staked" | "insufficient".
     """
     from aisynergix.services.irys import write_oracle_stake
+    from aisynergix.services import bonds as bonds_svc
+    from aisynergix.services.wallet import ensure_custodial_wallet
+    from aisynergix.services.trading import get_token_balance
     identity = _identity()
     profile = await identity.get_profile(uid)
     if profile.points < ELIGIBLE_MIN_POINTS:
@@ -113,20 +131,25 @@ async def stake(uid: int) -> Optional[str]:
     uid_hash = _hash_uid(uid)
     if await get_stake(uid_hash):
         return "already_staked"
-    debited = await identity.debit_synx(uid_hash, STAKE_MIN_SYNX)
-    if debited is None:
+    # Verificar SYNERGIX real DISPONIBLE (descontando otros bloqueos) y bloquearlo.
+    addr = await ensure_custodial_wallet(uid)
+    bal = (await get_token_balance(addr) or 0.0) if addr else 0.0
+    if await bonds_svc.available_synergix(uid, bal) < STAKE_SYNERGIX:
         return "insufficient"
     try:
-        await write_oracle_stake(uid_hash, debited, status="active", wrong_streak=0)
+        await write_oracle_stake(uid_hash, STAKE_SYNERGIX, status="active", wrong_streak=0)
     except Exception:
-        await identity.credit_synx(uid_hash, debited)
         return "insufficient"
-    logger.info("🔮 Nuevo Oráculo: %s (stake %.0f SYNX)", uid_hash, debited)
+    logger.info("🔮 Nuevo Oráculo: %s (stake %.0f SYNERGIX bloqueado)", uid_hash, STAKE_SYNERGIX)
     return None
 
 
 async def unstake(uid: int) -> Optional[str]:
-    """Retira el stake y devuelve los SYNX. Error: "not_staked"."""
+    """Retira el stake y LIBERA el SYNERGIX bloqueado. Error: "not_staked".
+
+    El principal no se movió (estaba bloqueado, no debitado): al marcar
+    'withdrawn' deja de contar como bloqueado y vuelve a estar disponible.
+    """
     from aisynergix.services.irys import write_oracle_stake
     uid_hash = _hash_uid(uid)
     current = await get_stake(uid_hash)
@@ -138,9 +161,7 @@ async def unstake(uid: int) -> Optional[str]:
         votes_total=int(current.get("votes-total", 0) or 0),
         votes_correct=int(current.get("votes-correct", 0) or 0),
     )
-    if amount > 0:
-        await _identity().credit_synx(uid_hash, amount)
-    logger.info("🔮 Oráculo retirado: %s (+%.0f SYNX devueltos)", uid_hash, amount)
+    logger.info("🔮 Oráculo retirado: %s (%.0f SYNERGIX liberados)", uid_hash, amount)
     return None
 
 
@@ -288,7 +309,7 @@ async def _resolve(
 
 
 __all__ = [
-    "STAKE_MIN_SYNX",
+    "STAKE_SYNERGIX",
     "VOTE_REWARD_SYNX",
     "PENALTY_SYNX",
     "WRONG_STREAK_LIMIT",

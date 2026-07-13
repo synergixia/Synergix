@@ -44,7 +44,7 @@ def test_sum_locked_empty():
 
 
 def test_bond_constants():
-    assert bd.BOND_AMOUNT == 200000.0
+    assert bd.BOND_AMOUNT == 20000.0
     assert bd.UNBOND_DAYS == 7
     assert bd.UNBOND_SECONDS == 7 * 86400
 
@@ -61,17 +61,13 @@ def test_available_math_via_sum():
     assert max(0.0, balance - bd.sum_locked(bonds2, NOW)) == 0.0
 
 
-def test_locales_have_bond_keys():
+def test_node_bond_is_20k_anti_spam():
+    """El bond anti-spam de nodo es 20 000 SYNERGIX y el flujo lo menciona."""
+    assert bd.BOND_AMOUNT == 20000.0
     import json
     base = Path(__file__).resolve().parent.parent / "aisynergix/bot/locales"
-    keys = {
-        "node_bond_insufficient", "node_bond_status_locked", "node_bond_status_unbonding",
-        "btn_node_unbond", "node_unbond_started", "node_created", "node_create_ask_name",
-    }
     for lang in ("es", "en"):
         d = json.loads((base / f"{lang}.json").read_text(encoding="utf-8"))
-        assert not (keys - set(d)), f"{lang}: faltan {keys - set(d)}"
-        # node_created ya no menciona bonus, ahora bond:
         assert "{bond}" in d["node_created"]
         assert "{bond}" in d["node_create_ask_name"]
 

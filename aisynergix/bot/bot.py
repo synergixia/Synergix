@@ -1300,7 +1300,7 @@ def get_node_view_kb(
         ])
     else:
         rows.append([InlineKeyboardButton(text=t("btn_node_join", lang), callback_data=f"node:join:{node_id}")])
-    # El fundador con bond bloqueado puede iniciar el unbonding.
+    # El fundador con bond bloqueado puede iniciar el unbonding para recuperarlo.
     if is_founder and bond and bond.get("bond-status") == "locked":
         rows.append([InlineKeyboardButton(text=t("btn_node_unbond", lang), callback_data=f"node:unbond:{node_id}")])
     rows.append([InlineKeyboardButton(text=t("btn_node_back", lang), callback_data="node:explore")])
@@ -1309,7 +1309,6 @@ def get_node_view_kb(
 
 def _bond_status_text(bond: Optional[dict], lang: str) -> str:
     """Línea de estado del bond para la vista del nodo (solo fundador)."""
-    from aisynergix.services import bonds as bonds_svc
     if not bond:
         return ""
     status = bond.get("bond-status", "locked")
@@ -1366,7 +1365,7 @@ async def _begin_node_creation(uid: int) -> None:
 
 
 async def _bond_insufficient_msg(uid: int, lang: str) -> Optional[str]:
-    """Mensaje de bond insuficiente, o None si el usuario puede pagarlo."""
+    """Mensaje de SYNERGIX insuficiente para el bond, o None si puede pagarlo."""
     from aisynergix.services import bonds as bonds_svc
     if await bonds_svc.can_afford_bond(uid):
         return None
@@ -1382,7 +1381,7 @@ async def _bond_insufficient_msg(uid: int, lang: str) -> Optional[str]:
 
 
 async def _start_node_creation_text(uid: int, lang: str) -> str:
-    """Comprueba el bond y arranca la creación. Devuelve el texto a enviar."""
+    """Comprueba el bond (anti-spam) y arranca la creación. Devuelve el texto."""
     from aisynergix.services import bonds as bonds_svc
     msg = await _bond_insufficient_msg(uid, lang)
     if msg:
@@ -1693,7 +1692,7 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
         )
         await ghost.reset_state(uid)
         if not node:
-            # Casi siempre: bond insuficiente (el nombre ya se validó antes).
+            # Casi siempre: SYNERGIX insuficiente para el bond (nombre ya validado).
             msg = await _bond_insufficient_msg(uid, lang) or t("node_name_too_short", lang)
             await callback.message.edit_text(msg)
         else:
@@ -2608,14 +2607,14 @@ async def cmd_oracle(message: Message) -> None:
     else:
         text = t(
             "oracle_menu_intro", lang,
-            stake=int(oracle_svc.STAKE_MIN_SYNX),
+            stake=int(oracle_svc.STAKE_SYNERGIX),
             points=oracle_svc.ELIGIBLE_MIN_POINTS,
             reward=int(oracle_svc.VOTE_REWARD_SYNX),
             penalty=int(oracle_svc.PENALTY_SYNX),
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
-                text=t("btn_oracle_stake", lang, stake=int(oracle_svc.STAKE_MIN_SYNX)),
+                text=t("btn_oracle_stake", lang, stake=int(oracle_svc.STAKE_SYNERGIX)),
                 callback_data="orc:stake",
             ),
         ]])
@@ -2644,7 +2643,7 @@ async def handle_oracle_callback(callback: CallbackQuery) -> None:
             return
         if err == "insufficient":
             await callback.answer(
-                t("oracle_insufficient", lang, stake=int(oracle_svc.STAKE_MIN_SYNX)),
+                t("oracle_insufficient", lang, stake=int(oracle_svc.STAKE_SYNERGIX)),
                 show_alert=True,
             )
             return
