@@ -28,6 +28,7 @@ class SynergixStates(StatesGroup):
     # Synergix Academy (learn-to-earn)
     awaiting_lesson_answer = State()
     # Nodos territoriales + Atlas de Problemas
+    awaiting_node_country = State()
     awaiting_node_region = State()
     awaiting_problem_text = State()
     awaiting_solution_text = State()

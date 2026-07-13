@@ -1224,8 +1224,9 @@ def get_nodes_menu_kb(lang: str) -> InlineKeyboardMarkup:
     ])
 
 
-def get_country_kb(prefix: str) -> InlineKeyboardMarkup:
-    """Teclado de países (endónimo + bandera; sin traducción necesaria)."""
+def get_country_kb(prefix: str, lang: str = "es") -> InlineKeyboardMarkup:
+    """Teclado de países (endónimo + bandera) + 'otro país' para escribir uno
+    libremente (libertad total de selección)."""
     from aisynergix.nodes import geo
     rows, row = [], []
     for code, label in geo.COUNTRIES.items():
@@ -1234,7 +1235,8 @@ def get_country_kb(prefix: str) -> InlineKeyboardMarkup:
             rows.append(row); row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text="🌐 …", callback_data=f"{prefix}:{geo.OTHER_COUNTRY}")])
+    rows.append([InlineKeyboardButton(
+        text=t("btn_country_other", lang), callback_data=f"{prefix}:{geo.OTHER_COUNTRY}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1497,8 +1499,46 @@ async def handle_geo_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+async def _node_after_country(msg: Message, uid: int, lang: str, draft: dict, edit: bool) -> None:
+    """Tras elegir país: pide granularidad (ciudad/barrio/zona rural/región)
+    si el tipo la usa, o salta a los temas. `edit` reutiliza el mensaje inline."""
+    from aisynergix.nodes import geo
+    cache = get_l1_cache()
+    if geo.needs_scope(draft.get("node_type", "")):
+        draft["step"] = "scope"
+        await cache.set_state_data(uid, draft)
+        send = msg.edit_text if edit else msg.answer
+        await send(t("node_create_ask_scope", lang), reply_markup=get_scope_kb(lang))
+    else:
+        draft.update({"step": "topics", "topics": draft.get("topics", [])})
+        await cache.set_state_data(uid, draft)
+        sel = draft["topics"]
+        selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
+        send = msg.edit_text if edit else msg.answer
+        await send(
+            t("node_create_ask_topics", lang, selected=selected),
+            reply_markup=get_node_topics_kb(lang, sel),
+        )
+
+
+async def handle_node_country_message(message: Message, uid: int, text: str, lang: str) -> None:
+    """Paso de país libre: el usuario escribe cualquier país no listado."""
+    from aisynergix.nodes import geo
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    country = geo.normalize_country(text)
+    if not country:
+        await message.answer(t("node_country_invalid", lang))
+        return
+    await ghost.reset_state(uid)
+    draft["country"] = country
+    await cache.set_state_data(uid, draft)
+    await _node_after_country(message, uid, lang, draft, edit=False)
+
+
 async def handle_node_region_message(message: Message, uid: int, text: str, lang: str) -> None:
-    """Paso región/ciudad de la creación de un nodo barrio."""
+    """Paso región/lugar de la creación de un nodo (nombre del lugar)."""
     from aisynergix.nodes import geo
     ghost = get_ghost_state_manager()
     cache = get_l1_cache()
@@ -1611,7 +1651,7 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
             await cache.set_state_data(uid, draft)
             await callback.message.edit_text(
                 t("node_create_ask_country", lang),
-                reply_markup=get_country_kb("node:country"),
+                reply_markup=get_country_kb("node:country", lang),
             )
         else:
             draft.update({"step": "topics", "topics": draft.get("topics", [])})
@@ -1628,24 +1668,16 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
         draft = await cache.get_state_data(uid) or {}
         if not draft.get("node_type") or not geo.is_valid_country(arg):
             await callback.answer(); return
-        draft["country"] = arg
-        if geo.needs_scope(draft.get("node_type", "")):
-            # Elegir la granularidad exacta: ciudad / barrio / zona rural / región.
-            draft["step"] = "scope"
+        if arg == geo.OTHER_COUNTRY:
+            # Libertad total: escribir cualquier país que no esté en la lista.
+            draft["step"] = "country_free"
             await cache.set_state_data(uid, draft)
-            await callback.message.edit_text(
-                t("node_create_ask_scope", lang),
-                reply_markup=get_scope_kb(lang),
-            )
+            await ghost.set_state(uid, "awaiting_node_country")
+            await callback.message.edit_text(t("node_create_ask_country_free", lang))
         else:
-            draft.update({"step": "topics", "topics": draft.get("topics", [])})
+            draft["country"] = arg
             await cache.set_state_data(uid, draft)
-            sel = draft["topics"]
-            selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
-            await callback.message.edit_text(
-                t("node_create_ask_topics", lang, selected=selected),
-                reply_markup=get_node_topics_kb(lang, sel),
-            )
+            await _node_after_country(callback.message, uid, lang, draft, edit=True)
 
     elif action == "scope":
         from aisynergix.nodes import geo
@@ -3274,7 +3306,8 @@ async def handle_sticker_message(message: Message) -> None:
         "awaiting_project_name", "awaiting_project_goal",
         "awaiting_project_fund", "awaiting_project_evidence",
         "awaiting_bounty_pool", "awaiting_lesson_answer",
-        "awaiting_node_region", "awaiting_problem_text", "awaiting_solution_text",
+        "awaiting_node_country", "awaiting_node_region",
+        "awaiting_problem_text", "awaiting_solution_text",
         "awaiting_proposal_text",
         "awaiting_withdraw_address", "awaiting_withdraw_amount",
     ):
@@ -3377,6 +3410,10 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_lesson_answer":
         await handle_lesson_answer_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_node_country":
+        await handle_node_country_message(message, uid, text, lang)
         return
 
     if current_state == "awaiting_node_region":
