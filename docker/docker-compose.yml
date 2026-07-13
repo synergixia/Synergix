@@ -320,9 +320,11 @@ services:
       BSC_RPC_URL: ${BSC_RPC_URL:-https://bsc-dataseed1.binance.org}
       # Slippage (%) de los swaps custodiales comprar/vender SYNERGIX.
       SYNERGIX_SWAP_SLIPPAGE: ${SYNERGIX_SWAP_SLIPPAGE:-12}
-      # Bond de nodos: SYNERGIX real bloqueado para crear un nodo (anti-Sybil).
-      SYNERGIX_NODE_BOND: ${SYNERGIX_NODE_BOND:-200000}
+      # Bond de nodos: SYNERGIX real bloqueado para crear un nodo (anti-spam).
+      SYNERGIX_NODE_BOND: ${SYNERGIX_NODE_BOND:-20000}
       SYNERGIX_UNBOND_DAYS: ${SYNERGIX_UNBOND_DAYS:-7}
+      # Stake de Oráculo: SYNERGIX real bloqueado para ser juez (anti-Sybil).
+      SYNERGIX_ORACLE_STAKE: ${SYNERGIX_ORACLE_STAKE:-100000}
       # Canje SYNX → SYNERGIX real: gate anti-Sybil. APAGADO hasta Fase C.
       SYNERGIX_REDEEM_ENABLED: ${SYNERGIX_REDEEM_ENABLED:-false}
       SYNERGIX_REDEEM_MIN_CONTRIBUTIONS: ${SYNERGIX_REDEEM_MIN_CONTRIBUTIONS:-5}
