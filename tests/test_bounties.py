@@ -221,6 +221,21 @@ def test_reward_no_bounty_for_topic():
     assert asyncio.run(bt.reward_aporte("n1", "salud", "hashA", "local:x", now=NOW)) is None
 
 
+def test_list_bounties_lazy_expiration_refunds():
+    """Listar bounties cierra los vencidos y reembolsa al patrocinador."""
+    ident = _FakeIdentity({"hash9": 100.0})
+    store, claims = {}, []
+    _install(ident, store, claims)
+    bid, _ = asyncio.run(bt.create_bounty(9, "n1", "salud", 100.0, reward=10.0, days=1))
+    # Forzar el vencimiento en el registro sellado:
+    store[bid]["deadline"] = str(NOW)  # muy en el pasado respecto a ahora
+    items = asyncio.run(bt.list_bounties("n1"))
+    assert store[bid]["bounty-status"] == "expired"
+    assert ident.bal["hash9"] == 100.0        # 100 debitados, 100 reembolsados
+    entry = next(i for i in items if i["bounty-id"] == bid)
+    assert entry["remaining"] == 0.0 and entry["open"] is False
+
+
 def test_expire_refunds_remaining():
     ident = _FakeIdentity({"hash9": 100.0})
     store, claims = {}, []

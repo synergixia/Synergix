@@ -34,6 +34,10 @@ SOLVED_THRESHOLD = 3          # confirmaciones distintas para marcar resuelto
 SOLVER_REWARD_SYNX = 10.0     # recompensa al autor de la solución verificada
 ATLAS_MAX_MATCHES = 2         # coincidencias del atlas mostradas al reportar
 ATLAS_MIN_SCORE = 0.55        # relevancia mínima para mostrar una coincidencia
+REPORTS_DAILY_CAP = 5         # reportes por usuario y día (anti-spam de Irys)
+
+# Contador diario de reportes en RAM: uid -> (fecha_iso, count).
+_daily_reports: Dict[int, Tuple[str, int]] = {}
 
 _locks: Dict[str, asyncio.Lock] = {}
 # Estados resueltos por este proceso (anti doble pago con lag de Irys).
@@ -116,27 +120,50 @@ def atlas_index_text(problem_text: str, solution_text: str) -> str:
     return f"Problema: {problem_text}\nSolución verificada: {solution_text}"
 
 
+def reports_today(uid: int, today: str) -> int:
+    date, count = _daily_reports.get(uid, ("", 0))
+    return count if date == today else 0
+
+
+def _note_report(uid: int, today: str) -> None:
+    _daily_reports[uid] = (today, reports_today(uid, today) + 1)
+    if len(_daily_reports) > 10_000:
+        _daily_reports.pop(next(iter(_daily_reports)), None)
+
+
+async def _is_active_member(node_id: str, uid_hash: str) -> bool:
+    """Toda acción del Atlas exige membresía activa del nodo (anti-Sybil:
+    las cuentas de paja no pueden confirmar ni resolver sin unirse al nodo,
+    y cada acción queda ligada a un Ghost ID miembro)."""
+    from aisynergix.services.irys import get_node_member
+    member = await get_node_member(node_id, uid_hash)
+    return bool(member and member.get("member-status", "active") == "active")
+
+
 # ── Orquestación (con red) ───────────────────────────────────────────────
 
 async def report_problem(uid: int, node_id: str, text: str) -> Tuple[Optional[str], Optional[str]]:
     """Reporta un problema del nodo. Devuelve (problem_id, error).
 
-    Errores: "bad_text" | "not_member".
+    Errores: "bad_text" | "not_member" | "daily_cap".
     """
-    from aisynergix.services.irys import get_node_member, write_problem
+    from aisynergix.services.irys import write_problem
     clean = validate_text(text)
     if not clean:
         return None, "bad_text"
     uid_hash = _hash_uid(uid)
-    member = await get_node_member(node_id, uid_hash)
-    if not member or member.get("member-status", "active") != "active":
+    if not await _is_active_member(node_id, uid_hash):
         return None, "not_member"
+    today = datetime.now(timezone.utc).date().isoformat()
+    if reports_today(uid, today) >= REPORTS_DAILY_CAP:
+        return None, "daily_cap"
     ts = int(datetime.now(timezone.utc).timestamp())
     pid = generate_problem_id(node_id, uid_hash, ts)
     await write_problem(
         pid, node_id, uid_hash, clean, status="open",
         solver="", solution="",
     )
+    _note_report(uid, today)
     logger.info("🚩 Problema %s reportado en %s por %s", pid, node_id, uid_hash)
     return pid, None
 
@@ -144,7 +171,9 @@ async def report_problem(uid: int, node_id: str, text: str) -> Tuple[Optional[st
 async def confirm_problem(uid: int, problem_id: str) -> Tuple[Optional[int], Optional[str]]:
     """Confirma que un problema es real. Devuelve (nº confirmaciones, error).
 
-    Errores: "not_found" | "closed" | "own_problem".
+    Solo miembros activos del nodo; idempotente (confirmar dos veces no
+    escribe dos veces en Irys). Errores: "not_found" | "closed" |
+    "own_problem" | "not_member".
     """
     from aisynergix.services.irys import (
         read_problem, write_problem_confirm, list_problem_confirms,
@@ -156,8 +185,12 @@ async def confirm_problem(uid: int, problem_id: str) -> Tuple[Optional[int], Opt
     ok, reason = can_confirm(record, uid_hash)
     if not ok:
         return None, reason
-    await write_problem_confirm(problem_id, uid_hash, kind="problem")
+    if not await _is_active_member(record.get("node-id", ""), uid_hash):
+        return None, "not_member"
     confirms = await list_problem_confirms(problem_id, kind="problem")
+    if uid_hash not in {c.get("uid-hash") for c in confirms}:
+        await write_problem_confirm(problem_id, uid_hash, kind="problem")
+        confirms.append({"uid-hash": uid_hash})
     count = distinct_confirmers(confirms)
     return max(count, 1), None
 
@@ -165,7 +198,9 @@ async def confirm_problem(uid: int, problem_id: str) -> Tuple[Optional[int], Opt
 async def propose_solution(uid: int, problem_id: str, text: str) -> Optional[str]:
     """Propone la solución de un problema (open → solving). Devuelve error o None.
 
-    Errores: "bad_text" | "not_found" | "already_solved".
+    Solo miembros activos del nodo pueden proponer (la recompensa al resolver
+    exige piel en el juego). Errores: "bad_text" | "not_found" |
+    "already_solved" | "not_member".
     """
     from aisynergix.services.irys import read_problem, write_problem
     clean = validate_text(text)
@@ -178,6 +213,8 @@ async def propose_solution(uid: int, problem_id: str, text: str) -> Optional[str
         if status_of(record) == "solved":
             return "already_solved"
         uid_hash = _hash_uid(uid)
+        if not await _is_active_member(record.get("node-id", ""), uid_hash):
+            return "not_member"
         await write_problem(
             problem_id, record.get("node-id", ""), record.get("reporter", ""),
             record.get("problem-text", ""), status="solving",
@@ -205,11 +242,13 @@ async def confirm_solution(uid: int, problem_id: str) -> Tuple[Optional[str], Op
         ok, reason = can_confirm_solution(record, uid_hash)
         if not ok:
             return None, reason
-        await write_problem_confirm(problem_id, uid_hash, kind="solution")
+        if not await _is_active_member(record.get("node-id", ""), uid_hash):
+            return None, "not_member"
         confirms = await list_problem_confirms(problem_id, kind="solution")
-        count = distinct_confirmers(confirms)
         if uid_hash not in {c.get("uid-hash") for c in confirms}:
-            count += 1  # por si Irys aún no indexó el nuestro
+            await write_problem_confirm(problem_id, uid_hash, kind="solution")
+            confirms.append({"uid-hash": uid_hash})
+        count = distinct_confirmers(confirms)
         if not is_solved(count):
             return "solving", None
 
@@ -300,7 +339,8 @@ async def list_problems(node_id: str, limit: int = 50) -> List[Dict[str, str]]:
 
 __all__ = [
     "MIN_TEXT_LEN", "MAX_TEXT_LEN", "SOLVED_THRESHOLD", "SOLVER_REWARD_SYNX",
-    "ATLAS_MAX_MATCHES", "ATLAS_MIN_SCORE",
+    "ATLAS_MAX_MATCHES", "ATLAS_MIN_SCORE", "REPORTS_DAILY_CAP",
+    "reports_today",
     "generate_problem_id", "validate_text", "status_of",
     "can_confirm", "can_confirm_solution", "distinct_confirmers", "is_solved",
     "atlas_index_text",

@@ -184,6 +184,52 @@ def test_solution_lifecycle_to_solved():
     assert ident.bal.get("hash2") == pb.SOLVER_REWARD_SYNX
 
 
+def test_confirm_and_solve_require_membership():
+    """Anti-Sybil: cuentas fuera del nodo no pueden confirmar ni resolver."""
+    pb._resolved.clear()
+    ident, problems, confirms = _FakeIdentity(), {}, []
+    _install(ident, problems, confirms, member=True)
+    pid, _ = _run(pb.report_problem(1, "n1", TEXT))
+    # Mismo estado, pero ahora nadie es miembro:
+    _install(ident, problems, confirms, member=False)
+    _c, err = _run(pb.confirm_problem(2, pid))
+    assert err == "not_member"
+    assert _run(pb.propose_solution(2, pid, SOLUTION)) == "not_member"
+    # Volver a miembro, proponer, y confirmar solución como no-miembro:
+    _install(ident, problems, confirms, member=True)
+    assert _run(pb.propose_solution(2, pid, SOLUTION)) is None
+    _install(ident, problems, confirms, member=False)
+    _s, err = _run(pb.confirm_solution(3, pid))
+    assert err == "not_member"
+    assert ident.bal == {}   # nadie cobró
+
+
+def test_report_daily_cap():
+    """Anti-spam: máximo REPORTS_DAILY_CAP reportes por usuario y día."""
+    pb._resolved.clear(); pb._daily_reports.clear()
+    ident, problems, confirms = _FakeIdentity(), {}, []
+    _install(ident, problems, confirms)
+    for _ in range(pb.REPORTS_DAILY_CAP):
+        pid, err = _run(pb.report_problem(1, "n1", TEXT))
+        assert err is None
+    _pid, err = _run(pb.report_problem(1, "n1", TEXT))
+    assert err == "daily_cap"
+    pb._daily_reports.clear()
+
+
+def test_confirm_idempotent_single_write():
+    """Confirmar dos veces no escribe dos DataItems (ahorro de Irys)."""
+    pb._resolved.clear()
+    ident, problems, confirms = _FakeIdentity(), {}, []
+    _install(ident, problems, confirms)
+    pid, _ = _run(pb.report_problem(1, "n1", TEXT))
+    c1, _ = _run(pb.confirm_problem(2, pid))
+    c2, _ = _run(pb.confirm_problem(2, pid))
+    assert c1 == 1 and c2 == 1
+    writes = [c for c in confirms if c.get("confirm-kind") == "problem"]
+    assert len(writes) == 1    # una sola escritura sellada
+
+
 def test_solution_requires_open_problem():
     pb._resolved.clear()
     ident, problems, confirms = _FakeIdentity(), {}, []
