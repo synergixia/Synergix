@@ -17,7 +17,7 @@ Telegram User
       ├── Judge 1  (Qwen2.5-1.5B-Q8 @ :8080)    — local quality scoring 0–10 (approve ≥ 5.0)
       ├── Judge 2  (Oracle Jury)                — human 🔮 Oráculo stakers vote on disputes
       ├── Judge 3  (anti_gaming.py)             — pure-code anti-gaming / Sybil / farming guard
-      ├── Thinker  (Qwen2.5-Coder-3B-Q4 @ :8081) — conversation + RAG generation
+      ├── Thinker  (Qwen2.5-7B-Instruct-Q4 @ :8081) — conversation + RAG generation
       │
       ├── irys-uploader (:8083)                 — Node.js microservice (all on-chain signing)
       │     └── @irys/upload-ethereum SDK
@@ -218,7 +218,7 @@ Nodes can be a-geographic (thematic/global) or geolocated. Creation flow: **name
 ## AI Conversation
 
 ### Streaming Response
-All free-conversation messages are handled via token-streaming from Qwen2.5-Coder-3B. The bot shows a live typing preview that updates every ~0.9 s and performs a final clean edit at stream end. Supports reasoning-model think-traces (`<think>…</think>`) transparently.
+All free-conversation messages are handled via token-streaming from Qwen2.5-7B-Instruct. The bot shows a live typing preview that updates every ~0.9 s and performs a final clean edit at stream end. Supports reasoning-model think-traces (`<think>…</think>`) transparently.
 
 ### Immortal Memory (RAG)
 On every conversation turn, Synergix searches the FAISS index across 4 specialised brains in parallel:
@@ -310,8 +310,8 @@ Language is persisted in the `user-profile` DataItem and auto-detected from the 
 
 | Service | Model | Port | Role | Resources |
 |---------|-------|------|------|-----------|
-| Thinker | `qwen2.5-coder-3b-instruct-q4_k_m.gguf` | 8081 | Conversations, Oracle, RAG generation | 4 CPU / 4 GB RAM |
-| Judge | `qwen2.5-1.5b-q8.gguf` | 8080 | Quality scoring, contribution validation | 1 CPU / 2.5 GB RAM |
+| Thinker | `qwen2.5-7b-instruct-q4_k_m.gguf` | 8081 | Conversations, Oracle, RAG generation | 6–12 CPU / 6–12 GB RAM |
+| Judge | `qwen2.5-1.5b-q8.gguf` | 8080 | Quality scoring, contribution validation | 1–6 CPU / 2–4 GB RAM |
 | irys-uploader | Node.js 20 | 8083 | Irys DataItem signing via `@irys/upload-ethereum` | 0.5 CPU / 512 MB RAM |
 | api | Starlette / uvicorn | 8090 | Read-only public Knowledge API over Irys (bound to `127.0.0.1`) | 0.5 CPU / 512 MB RAM |
 
