@@ -278,14 +278,29 @@ async def expire_and_refund(bounty_id: str, now: Optional[int] = None) -> Option
 
 
 async def list_bounties(node_id: str) -> List[Dict[str, Any]]:
-    """Bounties de un nodo con el pool restante calculado (para UI/API)."""
+    """Bounties de un nodo con el pool restante calculado (para UI/API).
+
+    Expiración PEREZOSA: al listar, cualquier bounty 'open' cuyo plazo ya
+    venció se cierra y su sobrante se reembolsa al patrocinador — sin esto,
+    los fondos del pool quedarían atascados en el escrow para siempre.
+    """
     from aisynergix.services.irys import list_node_bounties
     now = int(datetime.now(timezone.utc).timestamp())
+    records = await list_node_bounties(node_id)
     out: List[Dict[str, Any]] = []
-    for b in await list_node_bounties(node_id):
+    for b in records:
+        deadline = _i(b.get("deadline", 0))
+        if (b.get("bounty-status") == "open" and deadline and now >= deadline):
+            try:
+                await expire_and_refund(b.get("bounty-id", ""), now=now)
+                b = {**b, "bounty-status": "expired"}
+            except Exception as exc:
+                logger.warning("list_bounties: expiración de %s falló: %s",
+                               b.get("bounty-id", ""), exc)
         out.append({
             **b,
-            "remaining": remaining_pool(b),
+            # Cerrado/expirado → 0 (lo sobrante ya volvió al patrocinador).
+            "remaining": remaining_pool(b) if b.get("bounty-status") == "open" else 0.0,
             "open": is_open(b, now),
         })
     return out

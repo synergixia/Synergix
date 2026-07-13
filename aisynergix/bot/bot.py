@@ -1677,13 +1677,14 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
             pass
 
     elif action == "topics_done":
+        from aisynergix.services import bonds as bonds_svc
         draft = await cache.get_state_data(uid) or {}
         name = draft.get("name", "")
         if not name:
-            await callback.message.edit_text(t("node_create_ask_name", lang))
+            await callback.message.edit_text(
+                t("node_create_ask_name", lang, bond=f"{bonds_svc.BOND_AMOUNT:,.0f}"))
             await _begin_node_creation(uid)
             await callback.answer(); return
-        from aisynergix.services import bonds as bonds_svc
         node = await nodes_svc.create_node(
             uid, name, draft.get("node_type", "global"),
             draft.get("language", lang), draft.get("topics", []),
@@ -2369,6 +2370,9 @@ async def handle_problem_callback(callback: CallbackQuery) -> None:
         if err == "own_problem":
             await callback.answer(t("problem_own", lang), show_alert=True)
             return
+        if err == "not_member":
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
         if err in ("not_found", "closed"):
             await callback.answer(t("problem_closed", lang))
             return
@@ -2387,6 +2391,9 @@ async def handle_problem_callback(callback: CallbackQuery) -> None:
         status, err = await problems_svc.confirm_solution(uid, pid)
         if err == "own_solution":
             await callback.answer(t("solution_own", lang), show_alert=True)
+            return
+        if err == "not_member":
+            await callback.answer(t("need_active_node", lang), show_alert=True)
             return
         if err in ("not_found", "not_solving"):
             await callback.answer(t("problem_closed", lang))
@@ -2423,6 +2430,9 @@ async def handle_problem_text_message(message: Message, uid: int, text: str, lan
     if err == "not_member":
         await message.answer(t("need_active_node", lang))
         return
+    if err == "daily_cap":
+        await message.answer(t("academy_daily_cap", lang, cap=problems_svc.REPORTS_DAILY_CAP))
+        return
     await message.answer(t("problem_reported", lang))
 
     # Atlas translingüe: ¿la red ya conoce este problema (en cualquier idioma)?
@@ -2450,6 +2460,8 @@ async def handle_solution_text_message(message: Message, uid: int, text: str, la
             "problem_bad_text", lang,
             min=problems_svc.MIN_TEXT_LEN, max=problems_svc.MAX_TEXT_LEN,
         ))
+    elif err == "not_member":
+        await message.answer(t("need_active_node", lang))
     elif err in ("not_found", "already_solved"):
         await message.answer(t("problem_closed", lang))
     else:

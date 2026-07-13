@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 API_QUERY_PRICE = 1.0        # SYNX por consulta (precio plano, predecible)
 AUTHOR_SHARE_PCT = 0.70     # 70% para los humanos citados; 30% protocolo
 DEFAULT_TOP_K = 5
+MAX_QUESTION_LEN = 500      # tope duro: preguntas enormes = DoS del embedder
 
 # Locks por key en el proceso de la API para que dos consultas concurrentes
 # no gasten el mismo saldo (un solo proceso → asyncio.Lock basta).
@@ -142,9 +143,21 @@ async def answer_query(
     Devuelve (respuesta, None) o (None, error). No credita a los autores aquí
     (eso lo hace la liquidación en el proceso del bot); registra el evento.
     """
-    question = (question or "").strip()
+    question = (question or "").strip()[:MAX_QUESTION_LEN]
     if len(question) < 3:
         return None, "bad_query"
+
+    # Pre-validar la key ANTES de gastar cómputo en el RAG: sin esto, un
+    # atacante sin key válida podría quemar CPU del embedder gratis (DoS).
+    # El cobro real (con lock) ocurre después; esta lectura es solo el gate.
+    from aisynergix.services.irys import read_api_key
+    pre = await read_api_key(hash_api_key(raw_key))
+    if not pre:
+        return None, "bad_key"
+    if pre.get("key-status", "active") != "active":
+        return None, "inactive"
+    if _f(pre.get("balance", 0)) + 1e-9 < API_QUERY_PRICE:
+        return None, "insufficient_credit"
 
     # Recuperar conocimiento fundamentado (RAG). Import perezoso: mantiene la
     # API ligera si el motor no está cargado en este proceso.
@@ -248,7 +261,7 @@ async def settle_pending_usage(limit: int = 50) -> Dict[str, Any]:
 
 
 __all__ = [
-    "API_QUERY_PRICE", "AUTHOR_SHARE_PCT", "DEFAULT_TOP_K",
+    "API_QUERY_PRICE", "AUTHOR_SHARE_PCT", "DEFAULT_TOP_K", "MAX_QUESTION_LEN",
     "hash_api_key", "generate_usage_id", "price_for", "distribute",
     "encode_distribution", "decode_distribution",
     "verify_and_charge", "answer_query", "settle_pending_usage",
