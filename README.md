@@ -1,6 +1,8 @@
-# Synergix — Sovereign Ghost Node AI
+# Synergix — Sovereign Ghost Node AI & Proof-of-Knowledge Protocol
 
 Synergix is a decentralized Telegram bot powered by local LLMs and **Irys** (permanent decentralized storage on Arweave) as its only persistent database. The server holds no mutable state: every user profile, contribution, rank, and configuration lives as a DataItem on the Irys network. If the server is wiped, the node reconstructs itself entirely from Irys by querying tags.
+
+On top of the sovereign bot sits the **Proof-of-Knowledge protocol** — a set of products that turn verified human knowledge into an economy: territorial/individual **nodes**, **Knowledge Bounties**, a learn-to-earn **Academy**, an **Atlas of Problems & Solutions**, a public **Knowledge API** that pays the humans it cites, and a portable **Passport** credential. All reasoning runs on **local LLMs**; the only external AI dependency is image generation (Fal.ai).
 
 ---
 
@@ -12,11 +14,15 @@ Telegram User
       ▼
  aiogram 3 Bot  ──── FSM (L1 RAM cache + Irys fallback)
       │
-      ├── Judge  (Qwen2.5-1.5B-Q8 @ :8080)     — quality scoring 0–10
-      ├── Thinker (Qwen2.5-Coder-3B-Q4 @ :8081) — conversation + RAG
+      ├── Judge 1  (Qwen2.5-1.5B-Q8 @ :8080)    — local quality scoring 0–10 (approve ≥ 5.0)
+      ├── Judge 2  (Oracle Jury)                — human 🔮 Oráculo stakers vote on disputes
+      ├── Judge 3  (anti_gaming.py)             — pure-code anti-gaming / Sybil / farming guard
+      ├── Thinker  (Qwen2.5-7B-Instruct-Q4 @ :8081) — conversation + RAG generation
       │
-      ├── irys-uploader (:8083)                 — Node.js microservice
-      │     └── @irys/upload-ethereum SDK       — handles all on-chain signing
+      ├── irys-uploader (:8083)                 — Node.js microservice (all on-chain signing)
+      │     └── @irys/upload-ethereum SDK
+      │
+      ├── public API (:8090)                    — read-only Knowledge API over Irys (Starlette)
       │
       ▼
  FAISS Vector Index (multilingual, 4 specialised brains)
@@ -27,6 +33,8 @@ Telegram User
 ```
 
 **Ghost Protocol:** Telegram UIDs are never stored on-chain. Every UID is hashed once — `SHA-256("Synergix_" + uid)[:12]` — before touching the storage layer. The real identity behind any profile is permanently unknowable from the blockchain.
+
+**Three Judges:** every contribution is validated by (1) a **local Qwen Judge** that scores quality 0–10 and approves at ≥ 5.0, (2) an **Oracle Jury** of human 🔮 Oráculo stakers for disputed cases, and (3) `anti_gaming.py`, a deterministic code-only guard against self-voting, Sybil rings, and reward farming.
 
 **irys-uploader microservice:** All Irys DataItem signing is delegated to a Node.js container running `@irys/upload-ethereum`. The Python bot sends `{data: base64, tags: [...]}` via HTTP and receives the `txId`. This eliminates all Web3 cryptography from Python.
 
@@ -39,17 +47,37 @@ All data is stored as immutable DataItems on Irys. Records are discovered by que
 | `data-type` tag | Content-Type | Description |
 |-----------------|-------------|-------------|
 | `user-profile` | `application/json` | Points, rank, language, trust score, daily count |
+| `user-profile-pointer` | `application/json` | Latest profile DataItem per Ghost ID |
 | `aporte` | `text/plain; charset=utf-8` | Contribution text + author uid + category |
 | `emergency-lock` | `application/json` | Presence = all writes blocked |
 | `system-config` | `application/json` | Quality thresholds, trust deltas |
 | `ai-guard` | `text/plain; charset=utf-8` | Anti-jailbreak pattern list |
 | `challenge` | `application/json` | Weekly challenge description |
-| `brain-pointer` | `application/json` | Latest FAISS index version per brain |
+| `brain-pointer` / `brain-pointer-global` | `application/json` | Latest FAISS index version per brain |
 | `brain-index` | `application/octet-stream` | Serialised FAISS index binary |
 | `brain-meta` | `application/json` | FAISS index metadata (doc count, etc.) |
 | `log` | `application/gzip` | Daily compressed log archive |
 
-Every DataItem also receives the tag `App-Name: Synergix` for global namespace isolation.
+**Proof-of-Knowledge & economy DataItems**
+
+| `data-type` tag | Description |
+|-----------------|-------------|
+| `node` / `node-member` / `node-bond` | Territorial/individual node, its members, and its locked 20k SYNERGIX anti-spam bond |
+| `bounty` / `bounty-claim` | Knowledge Bounty pool + approved claims against it |
+| `problem` / `problem-confirm` | Atlas problem report + distinct confirmations (Sybil-guarded) |
+| `project` / `project-fund` / `project-vote` | Community project, its funding, and votes (creator-first payout, evidence-gated release) |
+| `provider` | Registered SYNX-paid service provider |
+| `proposal` / `proposal-vote` | Governance proposal + votes |
+| `oracle-stake` / `oracle-vote` / `oracle-review` | 100k SYNERGIX Oracle stake, jury votes, and reviews |
+| `credential` / `passport` | Verified skill credential + portable Ghost-ID Passport |
+| `lesson-result` | Academy lesson grade + reward record |
+| `knowledge-gap` | Detected topic gap driving bounty/gap multipliers |
+| `impact-counter` / `impact-royalty` | Proof of Impact Real: per-`aporte` usage counter + perpetual royalties |
+| `api-key` / `api-usage` | Knowledge API access keys + paid-query settlement ledger |
+| `synx-payment` / `redemption` | SYNX transfers and SYNERGIX redemptions |
+| `custodial-wallet` | Sealed keystore V3 for the user's custodial wallet |
+
+Every DataItem also receives the tag `App-Name: Synergix` for global namespace isolation. All GraphQL queries filter by `owners` (the bot wallet) so forged DataItems from other wallets are ignored.
 
 ---
 
@@ -80,7 +108,7 @@ User text
     ▼
 Judge LLM (Qwen2.5-1.5B-Q8)
     ├─ quality_score  0.0 – 10.0
-    ├─ approved       bool  (threshold ≥ 6.0)
+    ├─ approved       bool  (threshold ≥ 5.0)
     ├─ category       string
     ├─ impact_index   float
     └─ constructive_feedback  string (when rejected)
@@ -121,10 +149,76 @@ The Judge automatically rejects (quality_score = 0.0) any contribution that:
 
 ---
 
+## Proof-of-Knowledge Protocol
+
+Six products turn verified human knowledge into a self-sustaining economy. All AI runs locally (Judge, Thinker, RAG); the only external AI call is image generation.
+
+| Product | What it does | Reward / gate |
+|---------|--------------|---------------|
+| **Nodes** | Territorial or individual knowledge communities (see below) | 20k SYNERGIX anti-spam bond to create |
+| **Knowledge Bounties** | Anyone funds a SYNX pool for answers on a topic; approved contributions are paid from it | pool ≥ 50 SYNX, reward ≥ 5 SYNX/claim; auto-refund on expiry |
+| **Academy** | Learn-to-earn: the Thinker generates a RAG-grounded lesson, the user answers, the Judge grades it | pass ≥ 5.0 → +2 SYNX, credential + PIR; cap 5 rewarded lessons/day |
+| **Atlas of Problems & Solutions** | Geolocated map of reported problems and verified solutions | active membership required; 5 reports/day cap; solved at 3 distinct confirmations → +10 SYNX |
+| **Knowledge API** | Public paid endpoint answering questions from the collective brain | 1 SYNX/query, **70% paid to the humans cited**, 30% to the protocol |
+| **Passport** | Portable, verifiable credential of a Ghost ID's skills and impact | issued from earned `credential` DataItems |
+
+**Proof of Impact Real (PIR):** every `aporte` carries an `impact-counter`. Each time it is cited (RAG answer, API query, lesson) the counter increments and `impact-royalty` pays the original author perpetual royalties — knowledge keeps earning long after it is written.
+
+---
+
+## Token Economy
+
+Two distinct units keep accounting and real value cleanly separated:
+
+| Unit | Nature | Lives in |
+|------|--------|----------|
+| **SYNX** | Internal accounting balance (points-of-value for rewards, bounties, API, Academy) | Irys DataItems (`synx-payment`) |
+| **SYNERGIX** | Real ERC-20 on BNB Chain — `0xbe5df4a40ac939ef641430e86a2dce94d071e0f6` (fee-on-transfer) | On-chain; custodial wallet 1:1 |
+
+**Real-SYNERGIX utility**
+
+| Mechanism | Amount | Purpose |
+|-----------|--------|---------|
+| Node bond | **20,000 SYNERGIX** | Locked to create a node — anti-spam, refundable after a 7-day unbond timer |
+| Oracle stake | **100,000 SYNERGIX** | Locked to become a 🔮 Oráculo juror (Judge 2); +15 SYNX per correct vote, −50 SYNX penalty for wrong votes |
+| Membership tiers | see below | Holding real SYNERGIX in the custodial wallet grants daily-quota bonuses and funding priority |
+
+**Membership tiers ("Tenencia con beneficios")** — computed from the custodial-wallet SYNERGIX balance (cached 300 s):
+
+| Tier | Min held | Daily bonus | Funding priority |
+|------|----------|-------------|------------------|
+| 💎 Diamante | 200,000 | +30 aportes/day | ✅ |
+| 🥇 Oro | 50,000 | +15 | ✅ |
+| 🥈 Plata | 10,000 | +7 | — |
+| 🥉 Bronce | 1,000 | +3 | — |
+
+Node bonds and Oracle stakes share a **single lock ledger** (`bonds.locked_synergix = sum(node bonds) + oracle stake`) so every withdraw/sell respects all active locks. Custodial wallets use keystore V3 with an HMAC-derived password, sealed to Irys; swaps run through PancakeSwap V2 `...SupportingFeeOnTransferTokens`.
+
+---
+
+## Territorial & Individual Nodes
+
+Nodes can be a-geographic (thematic/global) or geolocated. Creation flow: **name → type → language → country → scope → place → topics**, with free country selection (type any country, canonised to ISO if it matches the built-in list).
+
+| Node type | Icon | Geo | Scope asked |
+|-----------|------|-----|-------------|
+| `individual` | 👤 | ✅ | ✅ (personal geolocated node) |
+| `barrio` | 🏘️ | ✅ | ✅ (local community) |
+| `pais` | 🌍 | ✅ | country only |
+| `tematico` | 📚 | — | — |
+| `profesional` | 💼 | — | — |
+| `global` | 🌐 | — | — |
+
+**Geographic scopes:** 🏙️ ciudad · 🏘️ barrio · 🌾 zona_rural · 🗺️ region. Nodes and the Atlas can be filtered by country and scope, so problems and projects are discoverable exactly where they occur.
+
+**Community projects** pay the owner/creator **first**, and no funds are released until a mandatory verification step: the creator must submit **evidence** (milestones/documentation, 20–400 chars) via `request_completion` before `project-fund` is disbursed.
+
+---
+
 ## AI Conversation
 
 ### Streaming Response
-All free-conversation messages are handled via token-streaming from Qwen2.5-Coder-3B. The bot shows a live typing preview that updates every ~0.9 s and performs a final clean edit at stream end. Supports reasoning-model think-traces (`<think>…</think>`) transparently.
+All free-conversation messages are handled via token-streaming from Qwen2.5-7B-Instruct. The bot shows a live typing preview that updates every ~0.9 s and performs a final clean edit at stream end. Supports reasoning-model think-traces (`<think>…</think>`) transparently.
 
 ### Immortal Memory (RAG)
 On every conversation turn, Synergix searches the FAISS index across 4 specialised brains in parallel:
@@ -216,9 +310,10 @@ Language is persisted in the `user-profile` DataItem and auto-detected from the 
 
 | Service | Model | Port | Role | Resources |
 |---------|-------|------|------|-----------|
-| Thinker | `qwen2.5-coder-3b-instruct-q4_k_m.gguf` | 8081 | Conversations, Oracle, RAG generation | 4 CPU / 4 GB RAM |
-| Judge | `qwen2.5-1.5b-q8.gguf` | 8080 | Quality scoring, contribution validation | 1 CPU / 2.5 GB RAM |
+| Thinker | `qwen2.5-7b-instruct-q4_k_m.gguf` | 8081 | Conversations, Oracle, RAG generation | 6–12 CPU / 6–12 GB RAM |
+| Judge | `qwen2.5-1.5b-q8.gguf` | 8080 | Quality scoring, contribution validation | 1–6 CPU / 2–4 GB RAM |
 | irys-uploader | Node.js 20 | 8083 | Irys DataItem signing via `@irys/upload-ethereum` | 0.5 CPU / 512 MB RAM |
+| api | Starlette / uvicorn | 8090 | Read-only public Knowledge API over Irys (bound to `127.0.0.1`) | 0.5 CPU / 512 MB RAM |
 
 All LLMs run as `llama.cpp` server containers (`ghcr.io/ggml-org/llama.cpp:server`). The bot and irys-uploader communicate over the Docker internal network (`synergix-net`, subnet `172.28.0.0/16`).
 
@@ -267,10 +362,25 @@ Synergix/
 │   │   ├── identity.py         # UserProfile dataclass, UserCache (TTL 30 s), IdentityManager
 │   │   ├── locales.py          # i18n loader
 │   │   └── locales/            # JSON string tables (10 languages)
+│   ├── nodes/
+│   │   ├── node_manager.py     # Node dataclass, NODE_TYPES, TOPICS, create_node (+bond lock)
+│   │   └── geo.py              # Countries, scopes, free country selection, geo filtering
+│   ├── api.py                  # Starlette read-only public Knowledge API (:8090)
 │   └── services/
 │       ├── irys.py             # Primary storage layer: Irys DataItem read/write
 │       ├── rag_engine.py       # FAISS index + sentence-transformers, 4-brain architecture
 │       ├── wallet_verify.py    # BscScan nonce challenge + ecrecover verification
+│       ├── custody.py          # Custodial wallets (keystore V3), PancakeSwap V2 swaps
+│       ├── bonds.py            # Unified SYNERGIX lock ledger (node bonds + oracle stakes)
+│       ├── oracle.py           # 🔮 Oráculo staking (100k) + jury voting (Judge 2)
+│       ├── tiers.py            # Membership tiers by real SYNERGIX held
+│       ├── bounties.py         # Knowledge Bounties (pool + claims + lazy expiry refund)
+│       ├── academy.py          # Learn-to-earn lessons, grading, credentials, PIR
+│       ├── problems.py         # Atlas of Problems & Solutions (membership-gated)
+│       ├── projects.py         # Community projects (creator-first, evidence-gated)
+│       ├── governance.py       # Proposals + votes
+│       ├── impact.py           # Proof of Impact Real: counters + royalties
+│       ├── knowledge_api.py    # Paid Q&A engine (70% to cited authors)
 │       ├── trading.py          # PancakeSwap V2 read-only + deep-links
 │       ├── dexscreener.py      # DexScreener market data API
 │       └── four_meme.py        # Bonding curve progress
@@ -351,6 +461,9 @@ delivers mentions, replies and commands to the bot.
 | `SYNERGIX_ADMIN_IDS` | — | Comma-separated Telegram UIDs for `/admin` commands |
 | `SYNERGIX_CACHE_TTL` | `12` | Hours for miscellaneous cache TTL |
 | `BSC_RPC_URL` | `https://bsc-dataseed1.binance.org` | BSC RPC for on-chain price reads |
+| `SYNERGIX_NODE_BOND` | `20000` | Real SYNERGIX locked to create a node (anti-spam) |
+| `SYNERGIX_ORACLE_STAKE` | `100000` | Real SYNERGIX locked to become a 🔮 Oráculo juror |
+| `SYNERGIX_UNBOND_DAYS` | `7` | Unbonding timer before a released node bond returns |
 
 ---
 
@@ -362,8 +475,8 @@ delivers mentions, replies and commands to the bot.
 - GGUF model files placed in `aisynergix/ai/models/`:
   - `qwen2.5-7b-instruct-q4_k_m.gguf` (Thinker)
   - `qwen2.5-1.5b-q8.gguf` (Judge)
-- Image generation runs on a remote **RunPod GPU** — see
-  [Image generation (RunPod GPU)](#image-generation-runpod-gpu) below.
+- Image generation runs through the managed **Fal.ai** API — see
+  [Image generation (Fal.ai)](#image-generation-falai) below.
 - A BNB wallet with enough BNB on Irys to cover uploads (`scripts/irys_fund.py`)
 
 ### Steps
@@ -439,6 +552,26 @@ Every successful upload logs `TxID generado: <id>` to stdout. The Python layer l
 
 ---
 
+## Public Knowledge API
+
+A read-only Starlette service (`aisynergix/api.py`, `uvicorn aisynergix.api:app --port 8090`) exposes the collective brain over HTTP. Everything it serves is already public on Arweave; it simply makes it queryable without touching GraphQL. Bound to `127.0.0.1` behind a reverse proxy.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Service liveness |
+| `/api/stats` | GET | Global network stats |
+| `/api/top10` | GET | Leaderboard |
+| `/api/nodes` | GET | All nodes (filterable by country/scope) |
+| `/api/nodes/{node_id}` | GET | Node detail + knowledge map |
+| `/api/nodes/{node_id}/bounties` | GET | Open bounties for a node |
+| `/api/nodes/{node_id}/problems` | GET | Atlas problems for a node |
+| `/api/atlas` | GET | Global problems & solutions map |
+| `/api/ask` | POST | Paid Q&A — 1 SYNX/query, **70% to the humans cited** |
+| `/api/passport/{ghost_id}` | GET | Portable credential for a Ghost ID |
+| `/api/impact/{aporte_tx}` | GET | Proof of Impact Real for a contribution |
+
+---
+
 ## Key Design Decisions
 
 | Constraint | Solution |
@@ -452,3 +585,10 @@ Every successful upload logs `TxID generado: <id>` to stdout. The Python layer l
 | FAISS index persistence | Serialised binary uploaded to Irys as `brain-index` DataItem; rebuilt from it on startup |
 | Model name prefix in responses | Post-processing pipeline strips `"Synergix: "` prefix that small LLMs emit |
 | Cross-lingual RAG | Same-language results ranked first; cross-lingual fragments annotated with `[lang]` tag |
+| SYNX vs SYNERGIX | Internal accounting (SYNX in Irys) kept separate from the real ERC-20 (SYNERGIX on BSC); custodial wallet bridges 1:1 |
+| Node/oracle locks must never double-spend | Single `bonds.locked_synergix` ledger sums node bonds + oracle stakes; every withdraw/sell respects it |
+| No external AI except images | Judge/Thinker/RAG all run locally; only image generation calls out (Fal.ai) |
+| Atlas Sybil farming | Confirmations/solutions require active node membership and are idempotent; reports capped at 5/day |
+| Bounty escrow stuck on expiry | `list_bounties` lazily expires + auto-refunds pools past their deadline |
+| Knowledge API compute DoS | API key validated and question length capped (500) **before** any RAG compute |
+| Funds released without proof | Community-project payout is creator-first and gated on mandatory evidence (20–400 chars) |
