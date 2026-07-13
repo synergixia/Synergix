@@ -66,19 +66,46 @@ GEO_NODE_TYPES = ("individual", "barrio", "pais")
 SCOPED_NODE_TYPES = ("individual", "barrio")
 
 
+MIN_COUNTRY_LEN = 2
+MAX_COUNTRY_LEN = 40
+
+
 def country_label(code: str) -> str:
-    """Etiqueta legible de un país ('' si no hay país)."""
+    """Etiqueta legible de un país ('' si no hay país).
+
+    Códigos ISO conocidos → bandera + endónimo; ISO desconocido (2 letras) →
+    el código; país libre escrito por el usuario (texto) → '🌍 Nombre'.
+    """
     code = (code or "").strip()
     if not code:
         return ""
     if code == OTHER_COUNTRY:
         return "🌐"
-    return COUNTRIES.get(code.upper(), code.upper())
+    up = code.upper()
+    if up in COUNTRIES:
+        return COUNTRIES[up]
+    if len(code) == 2:
+        return up
+    return "🌍 " + code
 
 
 def is_valid_country(code: str) -> bool:
     code = (code or "").strip()
     return code == OTHER_COUNTRY or code.upper() in COUNTRIES
+
+
+def normalize_country(text: str) -> Optional[str]:
+    """Normaliza un país escrito libremente. None si es inválido.
+
+    Da libertad total de selección de país cuando no está en la lista rápida.
+    """
+    country = " ".join((text or "").split())
+    if not (MIN_COUNTRY_LEN <= len(country) <= MAX_COUNTRY_LEN):
+        return None
+    if country == OTHER_COUNTRY or country.upper() in COUNTRIES:
+        # Un país libre que coincide con la lista: usar su código canónico.
+        return country.upper() if country.upper() in COUNTRIES else country
+    return country
 
 
 def normalize_region(text: str) -> Optional[str]:
@@ -156,7 +183,8 @@ def group_by_country(records: List[Dict[str, str]]) -> List[Tuple[str, int]]:
 __all__ = [
     "COUNTRIES", "OTHER_COUNTRY", "GEO_NODE_TYPES", "SCOPED_NODE_TYPES",
     "GEO_SCOPES", "MAX_REGION_LEN", "MIN_REGION_LEN",
-    "country_label", "is_valid_country", "normalize_region",
+    "MIN_COUNTRY_LEN", "MAX_COUNTRY_LEN",
+    "country_label", "is_valid_country", "normalize_country", "normalize_region",
     "needs_location", "needs_scope", "needs_region",
     "is_valid_scope", "scope_icon",
     "location_label", "group_by_country", "filter_by", "scopes_present",

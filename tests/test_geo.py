@@ -94,6 +94,24 @@ def test_scopes_present_ordered():
     assert geo.scopes_present(recs) == ["ciudad", "region"]
 
 
+def test_normalize_country_free_selection():
+    # libertad total: cualquier país escrito libremente
+    assert geo.normalize_country("  Kenia  ") == "Kenia"
+    assert geo.normalize_country("Papúa Nueva   Guinea") == "Papúa Nueva Guinea"
+    assert geo.normalize_country("K") is None            # muy corto
+    assert geo.normalize_country("x" * 41) is None       # muy largo
+    assert geo.normalize_country("") is None
+    # si coincide con la lista rápida, se canoniza al código ISO
+    assert geo.normalize_country("ec") == "EC"
+
+
+def test_country_label_free_text():
+    assert geo.country_label("Kenia") == "🌍 Kenia"     # país libre
+    assert geo.country_label("EC") == "🇪🇨 Ecuador"      # ISO conocido
+    assert geo.country_label("ZZ") == "ZZ"              # ISO desconocido (2 letras)
+    assert geo.country_label("") == ""
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
