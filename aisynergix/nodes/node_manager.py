@@ -141,15 +141,8 @@ async def create_node(
     creator_hash = _hash_uid(uid)
     node_id = generate_node_id(creator_hash, clean_name)
 
-    # Bond en SYNERGIX real: crear un nodo exige bloquear BOND_AMOUNT (anti-Sybil).
-    # Se bloquea ANTES de escribir el nodo; si no alcanza el saldo disponible,
-    # no se crea nada.
-    from aisynergix.services import bonds as bonds_svc
-    if not await bonds_svc.lock_node_bond(uid, node_id):
-        logger.info("create_node: %s sin bond suficiente (%.0f SYNERGIX)",
-                    creator_hash, bonds_svc.BOND_AMOUNT)
-        return None
-
+    # Crear un nodo es GRATIS: no hay bond ni bloqueo de SYNERGIX. Cada
+    # creador puede tener su propio nodo sin barrera de entrada.
     from aisynergix.nodes.geo import needs_location, needs_scope
     if not needs_location(node_type):
         country, region, geo_scope = "", "", ""
@@ -176,8 +169,8 @@ async def create_node(
         logger.warning("create_node: no se pudo marcar nodo activo para %s: %s",
                        creator_hash, exc)
 
-    logger.info("🏘️ Nodo creado %s '%s' por %s (bond %.0f SYNERGIX)",
-                node_id, clean_name, creator_hash, bonds_svc.BOND_AMOUNT)
+    logger.info("🏘️ Nodo creado %s '%s' por %s (sin bond)",
+                node_id, clean_name, creator_hash)
     return Node(
         node_id=node_id, name=clean_name, node_type=node_type,
         creator=creator_hash, language=language, topics=topics,

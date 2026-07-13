@@ -61,19 +61,17 @@ def test_available_math_via_sum():
     assert max(0.0, balance - bd.sum_locked(bonds2, NOW)) == 0.0
 
 
-def test_locales_have_bond_keys():
+def test_node_creation_is_free_no_bond():
+    """Crear un nodo es GRATIS: el flujo de creación no menciona ningún bond."""
     import json
     base = Path(__file__).resolve().parent.parent / "aisynergix/bot/locales"
-    keys = {
-        "node_bond_insufficient", "node_bond_status_locked", "node_bond_status_unbonding",
-        "btn_node_unbond", "node_unbond_started", "node_created", "node_create_ask_name",
-    }
     for lang in ("es", "en"):
         d = json.loads((base / f"{lang}.json").read_text(encoding="utf-8"))
-        assert not (keys - set(d)), f"{lang}: faltan {keys - set(d)}"
-        # node_created ya no menciona bonus, ahora bond:
-        assert "{bond}" in d["node_created"]
-        assert "{bond}" in d["node_create_ask_name"]
+        assert "node_created" in d and "node_create_ask_name" in d
+        # El bond ya no existe: ni placeholder ni la palabra en el flujo.
+        assert "{bond}" not in d["node_created"]
+        assert "{bond}" not in d["node_create_ask_name"]
+        assert "bond" not in d["node_create_ask_name"].lower()
 
 
 def test_coverage_stale_flag():
