@@ -1238,6 +1238,20 @@ def get_country_kb(prefix: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def get_scope_kb(lang: str) -> InlineKeyboardMarkup:
+    """Teclado de granularidad geográfica (ciudad/barrio/zona rural/región)."""
+    from aisynergix.nodes import geo
+    rows, row = [], []
+    for key, icon in geo.GEO_SCOPES.items():
+        row.append(InlineKeyboardButton(
+            text=f"{icon} {t('geo_scope_' + key, lang)}", callback_data=f"node:scope:{key}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def get_node_type_kb(lang: str) -> InlineKeyboardMarkup:
     rows, row = [], []
     for key in nodes_svc.NODE_TYPES:
@@ -1323,7 +1337,7 @@ async def _render_node_view(node, lang: str) -> str:
     from aisynergix.nodes.node_stats import node_stats
     from aisynergix.nodes import geo
     type_label = _node_type_label(node.node_type, lang)
-    location = geo.location_label(node.country, node.region)
+    location = geo.location_label(node.country, node.region, node.geo_scope)
     if location:
         type_label += f" · {location}"
     lang_label = get_lang_name(node.language)
@@ -1449,20 +1463,35 @@ async def handle_geo_callback(callback: CallbackQuery) -> None:
             )
 
     elif action == "country":
-        records = await list_node_records(limit=200)
-        mine = [r for r in records if (r.get("country", "") or "").strip() == arg]
+        # arg = "<code>" o "<code>|<scope>" para filtrar por granularidad.
+        code, _, scope = arg.partition("|")
+        records = geo.filter_by(await list_node_records(limit=200), country=code)
         rows = []
-        for r in mine[:15]:
+        # Chips de filtro por granularidad (ciudad/barrio/zona rural/región).
+        scopes = geo.scopes_present(records)
+        if scopes:
+            chip = []
+            for s in scopes:
+                mark = "✓ " if s == scope else ""
+                chip.append(InlineKeyboardButton(
+                    text=f"{mark}{geo.scope_icon(s)} {t('geo_scope_' + s, lang)}",
+                    callback_data=f"geo:country:{code}|{'' if s == scope else s}"))
+            for i in range(0, len(chip), 2):
+                rows.append(chip[i:i + 2])
+        shown = geo.filter_by(records, scope=scope) if scope else records
+        for r in shown[:15]:
             icon = nodes_svc.NODE_TYPES.get(r.get("node-type", ""), "🌐")
             name = r.get("node-name", "")
             region = (r.get("region", "") or "").strip()
-            label = f"{icon} {name}" + (f" · {region}" if region else "")
+            sc = (r.get("geo-scope", "") or "").strip()
+            place = (f"{geo.scope_icon(sc)} {region}" if region else "")
+            label = f"{icon} {name}" + (f" · {place}" if place else "")
             rows.append([InlineKeyboardButton(
                 text=label, callback_data=f"node:view:{r.get('node-id', '')}")])
         rows.append([InlineKeyboardButton(
             text=t("btn_node_back", lang), callback_data="geo:countries")])
         await callback.message.edit_text(
-            t("geo_country_header", lang, country=geo.country_label(arg)),
+            t("geo_country_header", lang, country=geo.country_label(code)),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         )
 
@@ -1601,11 +1630,14 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
         if not draft.get("node_type") or not geo.is_valid_country(arg):
             await callback.answer(); return
         draft["country"] = arg
-        if geo.needs_region(draft.get("node_type", "")):
-            draft["step"] = "region"
+        if geo.needs_scope(draft.get("node_type", "")):
+            # Elegir la granularidad exacta: ciudad / barrio / zona rural / región.
+            draft["step"] = "scope"
             await cache.set_state_data(uid, draft)
-            await ghost.set_state(uid, "awaiting_node_region")
-            await callback.message.edit_text(t("node_create_ask_region", lang))
+            await callback.message.edit_text(
+                t("node_create_ask_scope", lang),
+                reply_markup=get_scope_kb(lang),
+            )
         else:
             draft.update({"step": "topics", "topics": draft.get("topics", [])})
             await cache.set_state_data(uid, draft)
@@ -1615,6 +1647,17 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
                 t("node_create_ask_topics", lang, selected=selected),
                 reply_markup=get_node_topics_kb(lang, sel),
             )
+
+    elif action == "scope":
+        from aisynergix.nodes import geo
+        draft = await cache.get_state_data(uid) or {}
+        if not draft.get("node_type") or not geo.is_valid_scope(arg):
+            await callback.answer(); return
+        draft.update({"geo_scope": arg, "step": "region"})
+        await cache.set_state_data(uid, draft)
+        await ghost.set_state(uid, "awaiting_node_region")
+        await callback.message.edit_text(
+            t("node_create_ask_place", lang, scope=t("geo_scope_" + arg, lang)))
 
     elif action == "topic":
         draft = await cache.get_state_data(uid) or {}
@@ -1646,6 +1689,7 @@ async def handle_node_callback(callback: CallbackQuery) -> None:
             uid, name, draft.get("node_type", "global"),
             draft.get("language", lang), draft.get("topics", []),
             country=draft.get("country", ""), region=draft.get("region", ""),
+            geo_scope=draft.get("geo_scope", ""),
         )
         await ghost.reset_state(uid)
         if not node:
@@ -1872,6 +1916,13 @@ async def _project_view(callback: CallbackQuery, project_id: str, lang: str, uid
         goal=f"{proj['goal']:.0f}",
         funders=len(proj["funders"]),
     )
+    # Al liberar, los fondos van PRIMERO al creador/propietario (§ prioridad).
+    text += "\n" + t("project_beneficiary_note", lang)
+    # Evidencia de cumplimiento visible para que los financiadores verifiquen
+    # ANTES de votar la liberación (verificación obligatoria).
+    evidence = (proj.get("evidence", "") or "").strip()
+    if evidence and proj["status"] in ("voting", "completed"):
+        text += "\n\n" + t("project_evidence_shown", lang, evidence=html.escape(evidence))
     rows = []
     if proj["status"] == "active":
         rows.append([InlineKeyboardButton(text=t("btn_project_fund", lang), callback_data=f"proj:fund:{project_id}")])
@@ -1951,16 +2002,14 @@ async def handle_project_callback(callback: CallbackQuery) -> None:
         )
 
     elif action == "done":
-        err = await projects_svc.request_completion(uid, pid)
-        if err == "not_creator":
-            await callback.answer(t("project_only_creator", lang), show_alert=True)
-            return
-        if err in ("not_active", "no_funds"):
-            await callback.answer(t("project_not_active", lang), show_alert=True)
-            return
-        await callback.message.edit_text(
-            t("project_voting_started", lang, hours=projects_svc.VOTING_WINDOW_H)
-        )
+        # Verificación obligatoria: el creador debe adjuntar evidencia de
+        # cumplimiento (hitos/documentación) antes de abrir la votación.
+        await ghost.set_state(uid, "awaiting_project_evidence")
+        await cache.set_state_data(uid, {"proj_id": pid})
+        await callback.message.edit_text(t(
+            "project_ask_evidence", lang,
+            min=projects_svc.MIN_EVIDENCE_LEN, max=projects_svc.MAX_EVIDENCE_LEN,
+        ))
 
     elif action == "vote":
         approve = (parts[3] if len(parts) > 3 else "0") == "1"
@@ -2018,6 +2067,27 @@ async def handle_project_goal_message(message: Message, uid: int, text: str, lan
         "project_created", lang,
         title=html.escape(proj["title"]), goal=f"{goal:.0f}",
     ))
+
+
+async def handle_project_evidence_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    pid = draft.get("proj_id", "")
+    await ghost.reset_state(uid)
+    err = await projects_svc.request_completion(uid, pid, text)
+    if err == "bad_evidence":
+        await message.answer(t(
+            "project_evidence_bad", lang,
+            min=projects_svc.MIN_EVIDENCE_LEN, max=projects_svc.MAX_EVIDENCE_LEN,
+        ))
+    elif err == "not_creator":
+        await message.answer(t("project_only_creator", lang))
+    elif err in ("not_active", "no_funds"):
+        await message.answer(t("project_not_active", lang))
+    else:
+        await message.answer(
+            t("project_voting_started", lang, hours=projects_svc.VOTING_WINDOW_H))
 
 
 async def handle_project_fund_message(message: Message, uid: int, text: str, lang: str) -> None:
@@ -3191,7 +3261,8 @@ async def handle_sticker_message(message: Message) -> None:
         "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
         "awaiting_provider_desc", "awaiting_provider_payment",
         "awaiting_project_name", "awaiting_project_goal",
-        "awaiting_project_fund", "awaiting_bounty_pool", "awaiting_lesson_answer",
+        "awaiting_project_fund", "awaiting_project_evidence",
+        "awaiting_bounty_pool", "awaiting_lesson_answer",
         "awaiting_node_region", "awaiting_problem_text", "awaiting_solution_text",
         "awaiting_proposal_text",
         "awaiting_withdraw_address", "awaiting_withdraw_amount",
@@ -3279,6 +3350,10 @@ async def handle_free_conversation(message: Message) -> None:
 
     if current_state == "awaiting_project_goal":
         await handle_project_goal_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_project_evidence":
+        await handle_project_evidence_message(message, uid, text, lang)
         return
 
     if current_state == "awaiting_project_fund":

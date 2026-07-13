@@ -46,6 +46,16 @@ def test_project_id_shape():
     assert pid.startswith("proj_") and len(pid) == len("proj_") + 12
 
 
+def test_validate_evidence_mandatory():
+    # verificación obligatoria: la evidencia debe ser sustancial
+    assert pj.validate_evidence("  Se   instaló el filtro y hay fotos ") == \
+        "Se instaló el filtro y hay fotos"
+    assert pj.validate_evidence("hecho") is None            # muy corta
+    assert pj.validate_evidence("x" * (pj.MAX_EVIDENCE_LEN + 1)) is None
+    assert pj.validate_evidence("") is None
+    assert pj.validate_evidence(None) is None
+
+
 def test_project_constants_sane():
     assert pj.GOAL_MIN_SYNX > 0
     assert pj.FUND_MIN_SYNX > 0

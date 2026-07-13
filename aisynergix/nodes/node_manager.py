@@ -22,6 +22,7 @@ FOUNDER_BONUS_SYNX: float = 100.0
 # Tipos de nodo (clave interna → icono).  La etiqueta legible se traduce vía
 # locales con la clave ``node_type_<key>``.
 NODE_TYPES: Dict[str, str] = {
+    "individual":  "👤",
     "barrio":      "🏘️",
     "pais":        "🌍",
     "tematico":    "📚",
@@ -78,6 +79,7 @@ class Node:
     topics: List[str] = field(default_factory=list)
     country: str = ""
     region: str = ""
+    geo_scope: str = ""
     member_count: int = 0
     aporte_count: int = 0
 
@@ -98,6 +100,7 @@ class Node:
             topics=topics,
             country=tags.get("country", "") or "",
             region=tags.get("region", "") or "",
+            geo_scope=tags.get("geo-scope", "") or "",
         )
 
 
@@ -119,6 +122,7 @@ async def create_node(
     topics: List[str],
     country: str = "",
     region: str = "",
+    geo_scope: str = "",
 ) -> Optional[Node]:
     """Crea un nodo en Irys, registra al creador como fundador, le acredita el
     bono de bienvenida y lo marca como su nodo activo.
@@ -146,9 +150,11 @@ async def create_node(
                     creator_hash, bonds_svc.BOND_AMOUNT)
         return None
 
-    from aisynergix.nodes.geo import needs_location
+    from aisynergix.nodes.geo import needs_location, needs_scope
     if not needs_location(node_type):
-        country, region = "", ""
+        country, region, geo_scope = "", "", ""
+    elif not needs_scope(node_type):
+        region, geo_scope = "", ""  # nodo-país: solo país
     await write_node(
         node_id=node_id,
         name=clean_name,
@@ -158,6 +164,7 @@ async def create_node(
         topics=topics,
         country=country,
         region=region,
+        geo_scope=geo_scope,
     )
     await write_node_member(node_id, creator_hash, role="founder", status="active")
 
@@ -174,7 +181,7 @@ async def create_node(
     return Node(
         node_id=node_id, name=clean_name, node_type=node_type,
         creator=creator_hash, language=language, topics=topics,
-        country=country, region=region,
+        country=country, region=region, geo_scope=geo_scope,
         member_count=1, aporte_count=0,
     )
 

@@ -130,6 +130,7 @@ async def get_project(project_id: str) -> Optional[Dict[str, Any]]:
         "goal": float(record.get("goal", 0) or 0),
         "status": _status_of(record, project_id),
         "voting_until": int(record.get("voting-until", 0) or 0),
+        "evidence": record.get("evidence", ""),
         "raised": round(sum(funds.values()), 2),
         "funders": funds,
     }
@@ -171,12 +172,31 @@ async def fund_project(uid: int, project_id: str, amount: float) -> Optional[str
         return None
 
 
-async def request_completion(uid: int, project_id: str) -> Optional[str]:
-    """El creador declara el proyecto completado → abre votación de 72 h.
+MIN_EVIDENCE_LEN = 20         # verificación obligatoria: hitos/documentación
+MAX_EVIDENCE_LEN = 400
 
-    Errores: "not_creator" | "not_active" | "no_funds".
+
+def validate_evidence(text: str) -> Optional[str]:
+    """Normaliza la evidencia de cumplimiento, o None si es insuficiente."""
+    clean = " ".join((text or "").split())
+    if not (MIN_EVIDENCE_LEN <= len(clean) <= MAX_EVIDENCE_LEN):
+        return None
+    return clean
+
+
+async def request_completion(uid: int, project_id: str, evidence: str) -> Optional[str]:
+    """El creador declara el proyecto completado → abre la votación de 72 h.
+
+    VERIFICACIÓN OBLIGATORIA: debe adjuntar evidencia de cumplimiento
+    (hitos alcanzados, documentación, enlace a pruebas). Sin evidencia válida
+    no se abre la votación ni se libera nada.
+
+    Errores: "not_creator" | "not_active" | "no_funds" | "bad_evidence".
     """
     from aisynergix.services.irys import read_project, list_project_funds, write_project
+    proof = validate_evidence(evidence)
+    if not proof:
+        return "bad_evidence"
     async with _lock_for(project_id):
         record = await read_project(project_id)
         if not record or _status_of(record, project_id) != "active":
@@ -190,8 +210,10 @@ async def request_completion(uid: int, project_id: str) -> Optional[str]:
         await write_project(
             project_id, record.get("node-id", ""), record.get("creator", ""),
             record.get("title", ""), float(record.get("goal", 0) or 0),
-            status="voting", voting_until=voting_until,
+            status="voting", voting_until=voting_until, evidence=proof,
         )
+        logger.info("📋 Proyecto %s → verificación con evidencia (%d financiadores)",
+                    project_id, len(funds))
         return None
 
 
@@ -282,7 +304,7 @@ async def _resolve(
         await write_project(
             project_id, record.get("node-id", ""), record.get("creator", ""),
             record.get("title", ""), float(record.get("goal", 0) or 0),
-            status=status,
+            status=status, evidence=record.get("evidence", ""),
         )
     except Exception as exc:
         logger.error("sellado de %s (%s) falló: %s", project_id, status, exc)
@@ -293,8 +315,11 @@ __all__ = [
     "GOAL_MIN_SYNX",
     "FUND_MIN_SYNX",
     "VOTING_WINDOW_H",
+    "MIN_EVIDENCE_LEN",
+    "MAX_EVIDENCE_LEN",
     "resolve_outcome",
     "funds_by_user",
+    "validate_evidence",
     "generate_project_id",
     "create_project",
     "get_project",

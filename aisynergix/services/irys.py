@@ -1235,6 +1235,7 @@ async def write_node(
     topics: List[str],
     country: str = "",
     region: str = "",
+    geo_scope: str = "",
     extra: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Sube (o re-versiona) el registro de un nodo a Irys. Retorna el txId."""
@@ -1247,6 +1248,7 @@ async def write_node(
         "topics": topics,
         "country": country,
         "region": region,
+        "geo_scope": geo_scope,
         "created_at": int(datetime.now(timezone.utc).timestamp()),
         **(extra or {}),
     }
@@ -1258,9 +1260,11 @@ async def write_node(
         {"name": "creator",      "value": creator_hash},
         {"name": "language",     "value": language},
         {"name": "topics",       "value": ",".join(topics)[:300]},
-        # Ubicación territorial (país → región); vacía en nodos a-geográficos.
+        # Ubicación territorial (país → granularidad → lugar); vacía en nodos
+        # a-geográficos.
         {"name": "country",      "value": (country or "")[:10]},
         {"name": "region",       "value": (region or "")[:80]},
+        {"name": "geo-scope",    "value": (geo_scope or "")[:20]},
         {"name": "Content-Type", "value": "application/json"},
     ]
     content = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -1607,7 +1611,7 @@ async def list_node_providers(node_id: str, limit: int = 500) -> List[Dict[str, 
 )
 async def write_project(
     project_id: str, node_id: str, creator_hash: str, title: str,
-    goal: float, status: str, voting_until: int = 0,
+    goal: float, status: str, voting_until: int = 0, evidence: str = "",
 ) -> str:
     tags = [
         {"name": "data-type",      "value": "project"},
@@ -1618,6 +1622,9 @@ async def write_project(
         {"name": "goal",           "value": f"{goal:.2f}"},
         {"name": "project-status", "value": status},
         {"name": "voting-until",   "value": str(int(voting_until))},
+        # Evidencia de cumplimiento (hitos/documentación) que el creador debe
+        # aportar antes de que se libere el escrow (verificación obligatoria).
+        {"name": "evidence",       "value": (evidence or "")[:400]},
         {"name": "Content-Type",   "value": "application/json"},
     ]
     tx_id = await _upload(b"{}", tags)
