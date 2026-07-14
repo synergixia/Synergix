@@ -46,6 +46,19 @@ from aisynergix.services.wallet_verify import (
 from aisynergix.services import dexscreener as dex_svc
 from aisynergix.services import four_meme as fourmeme_svc
 from aisynergix.services.irys import IRYS_GATEWAY_URL
+from aisynergix.nodes import node_manager as nodes_svc
+from aisynergix.nodes import knowledge_map as kmap_svc
+from aisynergix.services import wallet as wallet_svc
+from aisynergix.services import providers as providers_svc
+from aisynergix.services import projects as projects_svc
+from aisynergix.services import oracle as oracle_svc
+from aisynergix.services import bounties as bounties_svc
+from aisynergix.services import agent as agent_svc
+from aisynergix.services import governance as gov_svc
+from aisynergix.services import passport as passport_svc
+from aisynergix.services import custody as custody_svc
+from aisynergix.services import redemption as redeem_svc
+from aisynergix.services import rewards
 
 
 logger = logging.getLogger("synergix.bot")
@@ -84,6 +97,44 @@ _known_uids: set = set()
 
 # ID of the last challenge that was broadcast to users — avoids re-sending on restart.
 _last_broadcast_challenge_id: Optional[str] = None
+
+# Strong refs to fire-and-forget tasks (custodial wallet creation) so the
+# event loop can't garbage-collect them mid-flight.
+_bot_bg_tasks: set = set()
+
+
+def _spawn_bot_bg(coro) -> None:
+    task = asyncio.create_task(coro)
+    _bot_bg_tasks.add(task)
+    task.add_done_callback(_bot_bg_tasks.discard)
+
+
+async def _ensure_wallet_silent(uid: int) -> None:
+    """Crea la wallet custodial en segundo plano (§3.3: invisible para el usuario)."""
+    try:
+        await wallet_svc.ensure_custodial_wallet(uid)
+    except Exception as exc:
+        logger.warning("ensure_custodial_wallet uid=%s falló: %s", uid, exc)
+
+
+# PIR (§7): fuentes (aporte_tx, autor) de cada respuesta con memoria inmortal,
+# indexadas por (chat_id, message_id) para el botón "✅ útil".  Un solo uso:
+# el callback hace pop.  Se pierde en restart (el botón viejo responde
+# "expirado") — aceptable para una confirmación efímera.
+_impact_sources: Dict[tuple, str] = {}
+_IMPACT_SOURCES_MAX = 500
+
+
+def _register_impact_sources(chat_id: int, message_id: int, payload: str) -> None:
+    _impact_sources[(chat_id, message_id)] = payload
+    while len(_impact_sources) > _IMPACT_SOURCES_MAX:
+        _impact_sources.pop(next(iter(_impact_sources)), None)
+
+
+def _useful_button_kb(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=t("btn_useful", lang), callback_data="impact:useful"),
+    ]])
 
 
 async def _challenge_broadcast_loop() -> None:
@@ -129,14 +180,59 @@ async def _challenge_broadcast_loop() -> None:
             logger.warning("challenge_broadcast_loop error: %s", exc)
 
 
+async def _api_settlement_loop() -> None:
+    """Liquida en segundo plano los royalties de la API a los autores citados
+    (Proof-of-Knowledge ③). El bot es dueño del ledger SYNX, así que el pago a
+    los humanos se hace aquí, no en el proceso read-only de la API."""
+    from aisynergix.services.knowledge_api import settle_pending_usage
+    while True:
+        await asyncio.sleep(300)  # cada 5 minutos
+        try:
+            await settle_pending_usage(limit=50)
+        except Exception as exc:
+            logger.warning("api_settlement_loop error: %s", exc)
+
+
+async def _notify_oracles_new_review(aporte_tx: str) -> None:
+    """Push a los Oráculos activos cuando se abre una revisión (§5.4).
+
+    El hash de UID es irreversible, así que se recorre hacia adelante: por
+    cada usuario conocido en RAM se calcula su hash y se comprueba si es un
+    Oráculo con stake activo. Best-effort, respeta el rate limit de Telegram.
+    """
+    from aisynergix.bot.identity import _hash_uid as _h
+    sent = 0
+    for uid in list(_known_uids):
+        try:
+            if not await oracle_svc.get_stake(_h(uid)):
+                continue
+            lang = await get_user_language(uid)
+            await bot.send_message(
+                uid, t("oracle_new_review_notify", lang), parse_mode="HTML"
+            )
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
+    if sent:
+        logger.info("🔮 Notificados %d Oráculos de la revisión %s", sent, aporte_tx[:12])
+
+
 # Maps internal Spanish rank key → (rank locale key, benefit locale key)
 _RANK_KEY_MAP: Dict[str, tuple] = {
     "🌱 Iniciado":      ("rank_iniciado",      "benefit_iniciado"),
+    "⚡ Explorador":    ("rank_explorador",     "benefit_explorador"),
+    "🔥 Contribuidor":  ("rank_contribuidor",   "benefit_contribuidor"),
+    "💎 Experto":       ("rank_experto",        "benefit_experto"),
+    "🌌 Arquitecto":    ("rank_arquitecto",     "benefit_arquitecto"),
+    "🔮 Oráculo":       ("rank_oraculo",        "benefit_oraculo"),
+    # Legacy (tabla pre-v1.0): perfiles en Irys aún no re-sellados por
+    # sync_brain.hydrate_ranks pueden traer estos nombres — se siguen
+    # traduciendo hasta que la migración por puntos los reescriba.
     "📈 Activo":        ("rank_activo",         "benefit_activo"),
     "🧬 Sincronizado":  ("rank_sincronizado",   "benefit_sincronizado"),
     "🏗️ Arquitecto":   ("rank_arquitecto",     "benefit_arquitecto"),
     "🧠 Mente Colmena": ("rank_mente_colmena",  "benefit_mente_colmena"),
-    "🔮 Oráculo":       ("rank_oraculo",        "benefit_oraculo"),
 }
 
 
@@ -251,6 +347,10 @@ def get_synergix_inline_keyboard(lang: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=t("btn_progress", lang), callback_data="synergix:progress"),
                 InlineKeyboardButton(text=t("btn_market", lang), callback_data="synergix:market"),
+            ],
+            [
+                InlineKeyboardButton(text=t("btn_deposit", lang), callback_data="synergix:deposit"),
+                InlineKeyboardButton(text=t("btn_withdraw", lang), callback_data="synergix:withdraw"),
             ],
         ]
     )
@@ -489,19 +589,32 @@ async def cmd_start(message: Message) -> None:
     detected_lang = await detect_user_language(message)
 
     profile = await identity.get_profile(uid)
-    is_new = profile.points == 0 and profile.total_uses_count == 0
+    # ¿Es realmente nuevo?  Se decide por EXISTENCIA en Irys (base de datos
+    # única), no por actividad: los contadores (puntos/usos) solo crecen al
+    # contribuir, así que un usuario que solo hizo /start seguiría pareciendo
+    # "nuevo" en cada arranque.  has_stored_profile consulta el puntero /
+    # user-profile en Irys y distingue ambos casos de forma fiable.
+    is_new = not await identity.has_stored_profile(uid)
     name = message.from_user.first_name or "Mente"
 
     if is_new:
         profile.set_language(detected_lang)
         identity._cache.set(uid, profile)
         lang = detected_lang
+        # Persistir el perfil en Irys en su PRIMER /start para reconocerlo en
+        # adelante, aunque nunca contribuya o las wallets estén deshabilitadas.
+        _spawn_bot_bg(identity.update_profile(uid, profile))
         welcome_text = t("welcome", lang, name=name)
     else:
         lang = profile.language
         welcome_text = t("welcome_back", lang, name=name)
 
     await ghost.reset_state(uid)
+
+    # Wallet custodial silenciosa (§3.2): se crea en segundo plano para no
+    # retrasar la bienvenida (scrypt + upload a Irys tardan ~1-2 s).
+    if wallet_svc.wallet_enabled():
+        _spawn_bot_bg(_ensure_wallet_silent(uid))
 
     keyboard = get_main_keyboard(lang)
 
@@ -643,8 +756,9 @@ async def handle_memory_button(message: Message) -> None:
                 summary = summary[:120] + "…"
 
             memory_text += (
-                t("memory_entry", lang, num=i, date=date_str, category=category,
-                  quality=quality, summary=summary)
+                t("memory_entry", lang, num=i, date=date_str,
+                  category=html.escape(str(category)), quality=html.escape(str(quality)),
+                  summary=html.escape(summary))
                 + "\n"
             )
         except Exception:
@@ -699,7 +813,8 @@ async def handle_language_selection(callback: CallbackQuery) -> None:
     lang_code = callback.data.split(":", 1)[1]
 
     if lang_code not in LANG_NAMES:
-        await callback.answer("Idioma no soportado")
+        current = await get_user_language(uid)
+        await callback.answer(t("lang_unsupported", current))
         return
 
     ai = get_ai_manager()
@@ -721,7 +836,8 @@ async def handle_language_selection(callback: CallbackQuery) -> None:
 
         await callback.answer()
     else:
-        await callback.answer("Error al cambiar idioma")
+        current = await get_user_language(uid)
+        await callback.answer(t("lang_change_error", current))
 
 
 @dp.callback_query(F.data.startswith("action:"))
@@ -762,6 +878,7 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
         status_text += "\n" + t(
             "status_trust_score", lang, trust_score=f"{status.get('trust_score', 5.0):.1f}"
         )
+        status_text += "\n" + t("status_synx", lang, synx=f"{status.get('synx_balance', 0):.0f}")
         if status.get("human_verified"):
             status_text += "\n" + t("status_verified", lang)
         await callback.message.edit_text(status_text)
@@ -861,7 +978,17 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
             ]])
             await callback.message.edit_text(t("verify_intro", lang), reply_markup=inline_kb)
     elif action == "balance":
-        existing = await get_verified_wallet(uid_hash)
+        # "Mi Saldo" = saldo on-chain de la wallet CUSTODIAL (donde viven los
+        # depósitos, recompensas y desde donde se retira). Es la wallet que
+        # gestiona el bot; la wallet externa verificada solo se usa como
+        # respaldo si la custodial está deshabilitada.
+        existing = None
+        is_custodial = False
+        if wallet_svc.wallet_enabled():
+            existing = await wallet_svc.ensure_custodial_wallet(uid)
+            is_custodial = bool(existing)
+        if not existing:
+            existing = await get_verified_wallet(uid_hash)
         if not existing:
             await callback.message.edit_text(t("balance_no_wallet", lang))
         else:
@@ -875,16 +1002,32 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
             else:
                 price_usd = market["price_usd"] if market else 0.0
                 usd_value = syn_bal * price_usd
-                await callback.message.edit_text(
-                    t(
-                        "balance_info",
-                        lang,
-                        address=existing,
-                        syn=syn_bal,
-                        usd=usd_value,
-                        bnb=bnb_bal,
-                    )
+                balance_text = t(
+                    "balance_info",
+                    lang,
+                    address=existing,
+                    syn=syn_bal,
+                    usd=usd_value,
+                    bnb=bnb_bal,
                 )
+                if is_custodial:
+                    balance_text += "\n\n" + t("balance_custodial_note", lang)
+                    # Membresía por tenencia (Capa 1): el tier se calcula sobre
+                    # el saldo de la custodial, que es justo `syn_bal` aquí.
+                    from aisynergix.services import tiers as tiers_svc
+                    tier = tiers_svc.tier_for(syn_bal)
+                    nxt = tiers_svc.next_tier(syn_bal)
+                    if tier["key"] != "base":
+                        balance_text += "\n\n" + t(
+                            "membership_current", lang,
+                            tier=tier["name"], bonus=tier["daily_bonus"])
+                    else:
+                        balance_text += "\n\n" + t("membership_none", lang)
+                    if nxt:
+                        balance_text += "\n" + t(
+                            "membership_next", lang, tier=nxt["name"],
+                            amount=f"{nxt['min'] - syn_bal:,.0f}", bonus=nxt["daily_bonus"])
+                await callback.message.edit_text(balance_text)
     elif action == "progress":
         progress = await fourmeme_svc.get_curve_progress(trading_svc.SYNERGIX_TOKEN)
         if progress is None:
@@ -905,6 +1048,39 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
                     bar=f"<code>{bar_chars}</code>",
                 )
             )
+    elif action == "deposit":
+        if not wallet_svc.wallet_enabled():
+            await callback.message.edit_text(t("custody_disabled", lang))
+        else:
+            info = await custody_svc.deposit_info(uid)
+            if not info:
+                await callback.message.edit_text(t("custody_disabled", lang))
+            elif not info.get("healthy", True):
+                # La wallet existe pero su keystore no descifra (master key
+                # cambiada): NO mostrar la dirección para depositar; ofrecer
+                # regenerarla bajo la clave actual.
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text=t("btn_wallet_reset", lang), callback_data="wd:reset"),
+                ]])
+                await callback.message.edit_text(t("wallet_unhealthy", lang), reply_markup=kb)
+            else:
+                await callback.message.edit_text(
+                    t("deposit_info", lang,
+                      address=info["address"],
+                      bnb=f"{info['bnb']:.6f}" if info["bnb"] is not None else "?",
+                      synergix=f"{info['synergix']:.4f}" if info["synergix"] is not None else "?"),
+                )
+
+    elif action == "withdraw":
+        if not wallet_svc.wallet_enabled():
+            await callback.message.edit_text(t("custody_disabled", lang))
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=t("btn_withdraw_bnb", lang), callback_data="wd:asset:bnb"),
+                InlineKeyboardButton(text=t("btn_withdraw_syn", lang), callback_data="wd:asset:synergix"),
+            ]])
+            await callback.message.edit_text(t("withdraw_choose_asset", lang), reply_markup=kb)
+
     elif action == "market":
         market = await dex_svc.get_token_market(trading_svc.SYNERGIX_TOKEN)
         if market:
@@ -990,13 +1166,2096 @@ async def handle_trade_callback(callback: CallbackQuery) -> None:
         await callback.answer()
         return
 
+    ttype = trade_data.get("type")
     link = trade_data.get("link", "")
     await ghost.reset_state(uid)
     await cache.set_state_data(uid, {})
+
+    # Ejecutar el swap DESDE la wallet custodial cuando la función está activa.
+    # Si no (o el token aún no cotiza en PancakeSwap), caer al enlace externo.
+    if wallet_svc.wallet_enabled() and ttype in ("buy", "sell"):
+        await callback.answer()  # responder ya; el swap puede tardar (approve+swap)
+        await callback.message.edit_text(t("trade_executing", lang))
+        if ttype == "buy":
+            result = await custody_svc.swap_buy(uid, float(trade_data.get("bnb_in", 0)))
+        else:
+            result = await custody_svc.swap_sell(uid, float(trade_data.get("syn_in", 0)))
+
+        if result.get("ok"):
+            # La tenencia cambió → recalcular el tier de membresía en la
+            # próxima consulta (Capa 1).
+            from aisynergix.services import tiers as tiers_svc
+            tiers_svc.invalidate(uid)
+            tx = result["tx"]
+            tx = tx if tx.startswith("0x") else "0x" + tx
+            await callback.message.edit_text(
+                t("trade_executed", lang, tx=tx, url=f"https://bscscan.com/tx/{tx}"),
+                disable_web_page_preview=True,
+            )
+        elif result.get("error") == "not_graduated":
+            # Aún en bonding curve → enlace externo.
+            await callback.message.edit_text(
+                t("trade_link", lang, link=link, slippage=trading_svc.DEFAULT_SLIPPAGE)
+            )
+        else:
+            await callback.message.edit_text(t("swap_error_" + result.get("error", "broadcast"), lang))
+        return
+
     await callback.message.edit_text(
         t("trade_link", lang, link=link, slippage=trading_svc.DEFAULT_SLIPPAGE)
     )
     await callback.answer()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# COMMUNITY NODES
+# ══════════════════════════════════════════════════════════════════════════
+
+def _topic_label(key: str, lang: str) -> str:
+    icon = nodes_svc.TOPICS.get(key, "🏷️")
+    return f"{icon} {t('topic_' + key, lang)}"
+
+
+def _node_type_label(key: str, lang: str) -> str:
+    icon = nodes_svc.NODE_TYPES.get(key, "🌐")
+    return f"{icon} {t('node_type_' + key, lang)}"
+
+
+def get_nodes_menu_kb(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t("btn_node_create", lang), callback_data="node:create")],
+        [
+            InlineKeyboardButton(text=t("btn_node_explore", lang), callback_data="node:explore"),
+            InlineKeyboardButton(text=t("btn_node_mine", lang), callback_data="node:mine"),
+        ],
+        [InlineKeyboardButton(text=t("btn_nodes_by_country", lang), callback_data="geo:countries")],
+    ])
+
+
+def get_country_kb(prefix: str, lang: str = "es") -> InlineKeyboardMarkup:
+    """Teclado de países (endónimo + bandera) + 'otro país' para escribir uno
+    libremente (libertad total de selección)."""
+    from aisynergix.nodes import geo
+    rows, row = [], []
+    for code, label in geo.COUNTRIES.items():
+        row.append(InlineKeyboardButton(text=label, callback_data=f"{prefix}:{code}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(
+        text=t("btn_country_other", lang), callback_data=f"{prefix}:{geo.OTHER_COUNTRY}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_scope_kb(lang: str) -> InlineKeyboardMarkup:
+    """Teclado de granularidad geográfica (ciudad/barrio/zona rural/región)."""
+    from aisynergix.nodes import geo
+    rows, row = [], []
+    for key, icon in geo.GEO_SCOPES.items():
+        row.append(InlineKeyboardButton(
+            text=f"{icon} {t('geo_scope_' + key, lang)}", callback_data=f"node:scope:{key}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_node_type_kb(lang: str) -> InlineKeyboardMarkup:
+    rows, row = [], []
+    for key in nodes_svc.NODE_TYPES:
+        row.append(InlineKeyboardButton(text=_node_type_label(key, lang), callback_data=f"node:type:{key}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_node_lang_kb(lang: str) -> InlineKeyboardMarkup:
+    """Teclado de idioma principal del nodo (§4.4)."""
+    rows, row = [], []
+    for code, name in LANG_NAMES.items():
+        row.append(InlineKeyboardButton(text=name, callback_data=f"node:lang:{code}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_node_topics_kb(lang: str, selected: list) -> InlineKeyboardMarkup:
+    rows, row = [], []
+    for key in nodes_svc.TOPICS:
+        mark = "✅ " if key in selected else ""
+        row.append(InlineKeyboardButton(text=mark + _topic_label(key, lang), callback_data=f"node:topic:{key}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text=t("btn_node_create_confirm", lang), callback_data="node:topics_done")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_node_view_kb(
+    lang: str, node_id: str, member: bool,
+    is_founder: bool = False, bond: Optional[dict] = None,
+) -> InlineKeyboardMarkup:
+    rows = []
+    if member:
+        rows.append([
+            InlineKeyboardButton(text=t("btn_node_use", lang), callback_data=f"node:use:{node_id}"),
+            InlineKeyboardButton(text=t("btn_node_leave", lang), callback_data=f"node:leave:{node_id}"),
+        ])
+    else:
+        rows.append([InlineKeyboardButton(text=t("btn_node_join", lang), callback_data=f"node:join:{node_id}")])
+    # El fundador con bond bloqueado puede iniciar el unbonding para recuperarlo.
+    if is_founder and bond and bond.get("bond-status") == "locked":
+        rows.append([InlineKeyboardButton(text=t("btn_node_unbond", lang), callback_data=f"node:unbond:{node_id}")])
+    rows.append([InlineKeyboardButton(text=t("btn_node_back", lang), callback_data="node:explore")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _bond_status_text(bond: Optional[dict], lang: str) -> str:
+    """Línea de estado del bond para la vista del nodo (solo fundador)."""
+    if not bond:
+        return ""
+    status = bond.get("bond-status", "locked")
+    try:
+        amount = float(bond.get("amount", 0) or 0)
+    except (ValueError, TypeError):
+        amount = 0.0
+    amt = f"{amount:,.0f}"
+    if status == "locked":
+        return t("node_bond_status_locked", lang, amount=amt)
+    if status == "unbonding":
+        from datetime import datetime, timezone as _tz
+        try:
+            until = int(bond.get("unbond-until", 0) or 0)
+            date = datetime.fromtimestamp(until, tz=_tz.utc).strftime("%Y-%m-%d")
+        except Exception:
+            date = "?"
+        return t("node_bond_status_unbonding", lang, amount=amt, date=date)
+    if status == "slashed":
+        return t("node_bond_status_slashed", lang, amount=amt)
+    return t("node_bond_status_released", lang, amount=amt)
+
+
+async def _render_node_view(node, lang: str) -> str:
+    from aisynergix.nodes.node_stats import node_stats
+    from aisynergix.nodes import geo
+    type_label = _node_type_label(node.node_type, lang)
+    location = geo.location_label(node.country, node.region, node.geo_scope)
+    if location:
+        type_label += f" · {location}"
+    lang_label = get_lang_name(node.language)
+    if node.topics:
+        topics_str = ", ".join(_topic_label(k, lang) for k in node.topics)
+        cov = await kmap_svc.node_knowledge_map(node.node_id, node.topics)
+        map_str = kmap_svc.render_map(cov, lambda k: _topic_label(k, lang))
+    else:
+        topics_str = t("node_view_no_topics", lang)
+        map_str = "—"
+    stats = await node_stats(node.node_id)
+    return t(
+        "node_view", lang,
+        icon=node.icon, name=html.escape(node.name), type=type_label,
+        language=lang_label, members=node.member_count, aportes=node.aporte_count,
+        synx=f"{stats['synx_circulating']:,.0f}", projects=stats["active_projects"],
+        impacts=stats["verified_impacts"], topics=topics_str, map=map_str,
+    )
+
+
+async def _begin_node_creation(uid: int) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    await ghost.enter_node_name_mode(uid)
+    await cache.set_state_data(uid, {"step": "name", "topics": []})
+
+
+async def _bond_insufficient_msg(uid: int, lang: str) -> Optional[str]:
+    """Mensaje de SYNERGIX insuficiente para el bond, o None si puede pagarlo."""
+    from aisynergix.services import bonds as bonds_svc
+    if await bonds_svc.can_afford_bond(uid):
+        return None
+    avail = 0.0
+    try:
+        addr = await wallet_svc.ensure_custodial_wallet(uid)
+        bal = (await trading_svc.get_token_balance(addr) or 0.0) if addr else 0.0
+        avail = await bonds_svc.available_synergix(uid, bal)
+    except Exception:
+        pass
+    return t("node_bond_insufficient", lang,
+             bond=f"{bonds_svc.BOND_AMOUNT:,.0f}", available=f"{avail:,.0f}")
+
+
+async def _start_node_creation_text(uid: int, lang: str) -> str:
+    """Comprueba el bond (anti-spam) y arranca la creación. Devuelve el texto."""
+    from aisynergix.services import bonds as bonds_svc
+    msg = await _bond_insufficient_msg(uid, lang)
+    if msg:
+        return msg
+    await _begin_node_creation(uid)
+    return t("node_create_ask_name", lang, bond=f"{bonds_svc.BOND_AMOUNT:,.0f}")
+
+
+@dp.message(Command("nodos"))
+async def cmd_nodes(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+    await message.answer(t("nodes_menu_title", lang), reply_markup=get_nodes_menu_kb(lang))
+
+
+@dp.message(Command("crear_nodo"))
+async def cmd_create_node(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await message.answer(await _start_node_creation_text(uid, lang))
+
+
+async def handle_node_name_message(message: Message, uid: int, text: str, lang: str) -> None:
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    # Past the name step the flow is inline-only; nudge the user to the buttons.
+    if draft.get("step") and draft["step"] != "name":
+        await message.answer(t("node_use_buttons", lang))
+        return
+    name = text.strip()
+    if not (nodes_svc.MIN_NODE_NAME_LEN <= len(name) <= nodes_svc.MAX_NODE_NAME_LEN):
+        await message.answer(t("node_name_too_short", lang))
+        return
+    draft.update({"name": name, "step": "type", "topics": draft.get("topics", [])})
+    await cache.set_state_data(uid, draft)
+    await message.answer(
+        t("node_create_ask_type", lang, name=html.escape(name)),
+        reply_markup=get_node_type_kb(lang),
+    )
+
+
+@dp.callback_query(F.data.startswith("geo:"))
+async def handle_geo_callback(callback: CallbackQuery) -> None:
+    """Exploración territorial: países con nodos → nodos de un país."""
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    from aisynergix.nodes import geo
+    from aisynergix.services.irys import list_node_records
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    arg = parts[2] if len(parts) > 2 else ""
+
+    if action == "countries":
+        records = await list_node_records(limit=200)
+        grouped = geo.group_by_country(records)
+        if not grouped:
+            await callback.message.edit_text(
+                t("geo_no_countries", lang), reply_markup=get_nodes_menu_kb(lang))
+        else:
+            rows = [[InlineKeyboardButton(
+                text=f"{geo.country_label(code)} ({count})",
+                callback_data=f"geo:country:{code}",
+            )] for code, count in grouped[:20]]
+            rows.append([InlineKeyboardButton(
+                text=t("btn_node_back", lang), callback_data="node:menu")])
+            await callback.message.edit_text(
+                t("geo_countries_header", lang),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            )
+
+    elif action == "country":
+        # arg = "<code>" o "<code>|<scope>" para filtrar por granularidad.
+        code, _, scope = arg.partition("|")
+        records = geo.filter_by(await list_node_records(limit=200), country=code)
+        rows = []
+        # Chips de filtro por granularidad (ciudad/barrio/zona rural/región).
+        scopes = geo.scopes_present(records)
+        if scopes:
+            chip = []
+            for s in scopes:
+                mark = "✓ " if s == scope else ""
+                chip.append(InlineKeyboardButton(
+                    text=f"{mark}{geo.scope_icon(s)} {t('geo_scope_' + s, lang)}",
+                    callback_data=f"geo:country:{code}|{'' if s == scope else s}"))
+            for i in range(0, len(chip), 2):
+                rows.append(chip[i:i + 2])
+        shown = geo.filter_by(records, scope=scope) if scope else records
+        for r in shown[:15]:
+            icon = nodes_svc.NODE_TYPES.get(r.get("node-type", ""), "🌐")
+            name = r.get("node-name", "")
+            region = (r.get("region", "") or "").strip()
+            sc = (r.get("geo-scope", "") or "").strip()
+            place = (f"{geo.scope_icon(sc)} {region}" if region else "")
+            label = f"{icon} {name}" + (f" · {place}" if place else "")
+            rows.append([InlineKeyboardButton(
+                text=label, callback_data=f"node:view:{r.get('node-id', '')}")])
+        rows.append([InlineKeyboardButton(
+            text=t("btn_node_back", lang), callback_data="geo:countries")])
+        await callback.message.edit_text(
+            t("geo_country_header", lang, country=geo.country_label(code)),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    await callback.answer()
+
+
+async def _node_after_country(msg: Message, uid: int, lang: str, draft: dict, edit: bool) -> None:
+    """Tras elegir país: pide granularidad (ciudad/barrio/zona rural/región)
+    si el tipo la usa, o salta a los temas. `edit` reutiliza el mensaje inline."""
+    from aisynergix.nodes import geo
+    cache = get_l1_cache()
+    if geo.needs_scope(draft.get("node_type", "")):
+        draft["step"] = "scope"
+        await cache.set_state_data(uid, draft)
+        send = msg.edit_text if edit else msg.answer
+        await send(t("node_create_ask_scope", lang), reply_markup=get_scope_kb(lang))
+    else:
+        draft.update({"step": "topics", "topics": draft.get("topics", [])})
+        await cache.set_state_data(uid, draft)
+        sel = draft["topics"]
+        selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
+        send = msg.edit_text if edit else msg.answer
+        await send(
+            t("node_create_ask_topics", lang, selected=selected),
+            reply_markup=get_node_topics_kb(lang, sel),
+        )
+
+
+async def handle_node_country_message(message: Message, uid: int, text: str, lang: str) -> None:
+    """Paso de país libre: el usuario escribe cualquier país no listado."""
+    from aisynergix.nodes import geo
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    country = geo.normalize_country(text)
+    if not country:
+        await message.answer(t("node_country_invalid", lang))
+        return
+    await ghost.reset_state(uid)
+    draft["country"] = country
+    await cache.set_state_data(uid, draft)
+    await _node_after_country(message, uid, lang, draft, edit=False)
+
+
+async def handle_node_region_message(message: Message, uid: int, text: str, lang: str) -> None:
+    """Paso región/lugar de la creación de un nodo (nombre del lugar)."""
+    from aisynergix.nodes import geo
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    region = geo.normalize_region(text)
+    if not region:
+        await message.answer(t("node_region_invalid", lang))
+        return
+    await ghost.reset_state(uid)
+    draft.update({"region": region, "step": "topics", "topics": draft.get("topics", [])})
+    await cache.set_state_data(uid, draft)
+    sel = draft["topics"]
+    selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
+    await message.answer(
+        t("node_create_ask_topics", lang, selected=selected),
+        reply_markup=get_node_topics_kb(lang, sel),
+    )
+
+
+@dp.callback_query(F.data.startswith("node:"))
+async def handle_node_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    cache = get_l1_cache()
+    ghost = get_ghost_state_manager()
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    arg = parts[2] if len(parts) > 2 else ""
+
+    if action == "menu":
+        await callback.message.edit_text(t("nodes_menu_title", lang), reply_markup=get_nodes_menu_kb(lang))
+
+    elif action == "create":
+        await callback.message.edit_text(await _start_node_creation_text(uid, lang))
+
+    elif action == "explore":
+        node_list = await nodes_svc.list_nodes(limit=10)
+        if not node_list:
+            await callback.message.edit_text(t("node_explore_empty", lang), reply_markup=get_nodes_menu_kb(lang))
+        else:
+            rows = [[InlineKeyboardButton(text=f"{n.icon} {n.name}", callback_data=f"node:view:{n.node_id}")]
+                    for n in node_list]
+            rows.append([InlineKeyboardButton(text=t("btn_node_back", lang), callback_data="node:menu")])
+            await callback.message.edit_text(t("node_explore_header", lang), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+    elif action == "mine":
+        my_nodes = await nodes_svc.list_user_nodes(uid)
+        if not my_nodes:
+            await callback.message.edit_text(t("node_mine_empty", lang), reply_markup=get_nodes_menu_kb(lang))
+        else:
+            rows = [[InlineKeyboardButton(text=f"{n.icon} {n.name}", callback_data=f"node:view:{n.node_id}")]
+                    for n in my_nodes]
+            rows.append([InlineKeyboardButton(text=t("btn_node_back", lang), callback_data="node:menu")])
+            await callback.message.edit_text(t("node_mine_header", lang), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+    elif action == "view":
+        node = await nodes_svc.get_node(arg)
+        if not node:
+            await callback.message.edit_text(t("node_not_found", lang), reply_markup=get_nodes_menu_kb(lang))
+        else:
+            from aisynergix.bot.identity import _hash_uid
+            from aisynergix.services.irys import get_node_bond
+            member = await nodes_svc.is_member(arg, uid)
+            is_founder = node.creator == _hash_uid(uid)
+            text = await _render_node_view(node, lang)
+            bond = await get_node_bond(arg) if is_founder else None
+            if bond:
+                text += "\n" + _bond_status_text(bond, lang)
+            await callback.message.edit_text(
+                text, reply_markup=get_node_view_kb(lang, arg, member, is_founder, bond),
+            )
+
+    elif action == "unbond":
+        from aisynergix.services import bonds as bonds_svc
+        node = await nodes_svc.get_node(arg)
+        if not node:
+            await callback.answer(); return
+        unbond_until = await bonds_svc.begin_unbond(uid, arg)
+        if unbond_until is None:
+            await callback.answer(t("node_unbond_denied", lang), show_alert=True)
+        else:
+            from datetime import datetime, timezone as _tz
+            date = datetime.fromtimestamp(unbond_until, tz=_tz.utc).strftime("%Y-%m-%d")
+            await callback.message.edit_text(
+                t("node_unbond_started", lang, days=bonds_svc.UNBOND_DAYS, date=date)
+            )
+
+    elif action == "type":
+        draft = await cache.get_state_data(uid) or {}
+        if not draft.get("name"):
+            await callback.answer(); return
+        draft.update({"node_type": arg, "step": "language", "topics": draft.get("topics", [])})
+        await cache.set_state_data(uid, draft)
+        await callback.message.edit_text(
+            t("node_create_ask_language", lang),
+            reply_markup=get_node_lang_kb(lang),
+        )
+
+    elif action == "lang":
+        from aisynergix.nodes import geo
+        draft = await cache.get_state_data(uid) or {}
+        if not draft.get("node_type") or arg not in LANG_NAMES:
+            await callback.answer(); return
+        draft["language"] = arg
+        if geo.needs_location(draft.get("node_type", "")):
+            # Nodo territorial: primero el país (y luego la región si es barrio).
+            draft["step"] = "country"
+            await cache.set_state_data(uid, draft)
+            await callback.message.edit_text(
+                t("node_create_ask_country", lang),
+                reply_markup=get_country_kb("node:country", lang),
+            )
+        else:
+            draft.update({"step": "topics", "topics": draft.get("topics", [])})
+            await cache.set_state_data(uid, draft)
+            sel = draft["topics"]
+            selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
+            await callback.message.edit_text(
+                t("node_create_ask_topics", lang, selected=selected),
+                reply_markup=get_node_topics_kb(lang, sel),
+            )
+
+    elif action == "country":
+        from aisynergix.nodes import geo
+        draft = await cache.get_state_data(uid) or {}
+        if not draft.get("node_type") or not geo.is_valid_country(arg):
+            await callback.answer(); return
+        if arg == geo.OTHER_COUNTRY:
+            # Libertad total: escribir cualquier país que no esté en la lista.
+            draft["step"] = "country_free"
+            await cache.set_state_data(uid, draft)
+            await ghost.set_state(uid, "awaiting_node_country")
+            await callback.message.edit_text(t("node_create_ask_country_free", lang))
+        else:
+            draft["country"] = arg
+            await cache.set_state_data(uid, draft)
+            await _node_after_country(callback.message, uid, lang, draft, edit=True)
+
+    elif action == "scope":
+        from aisynergix.nodes import geo
+        draft = await cache.get_state_data(uid) or {}
+        if not draft.get("node_type") or not geo.is_valid_scope(arg):
+            await callback.answer(); return
+        draft.update({"geo_scope": arg, "step": "region"})
+        await cache.set_state_data(uid, draft)
+        await ghost.set_state(uid, "awaiting_node_region")
+        await callback.message.edit_text(
+            t("node_create_ask_place", lang, scope=t("geo_scope_" + arg, lang)))
+
+    elif action == "topic":
+        draft = await cache.get_state_data(uid) or {}
+        sel = list(draft.get("topics", []))
+        if arg in sel:
+            sel.remove(arg)
+        elif len(sel) < nodes_svc.MAX_TOPICS_PER_NODE:
+            sel.append(arg)
+        draft["topics"] = sel
+        await cache.set_state_data(uid, draft)
+        selected = ", ".join(_topic_label(k, lang) for k in sel) if sel else t("node_topics_none", lang)
+        try:
+            await callback.message.edit_text(
+                t("node_create_ask_topics", lang, selected=selected),
+                reply_markup=get_node_topics_kb(lang, sel),
+            )
+        except Exception:
+            pass
+
+    elif action == "topics_done":
+        from aisynergix.services import bonds as bonds_svc
+        draft = await cache.get_state_data(uid) or {}
+        name = draft.get("name", "")
+        if not name:
+            await callback.message.edit_text(
+                t("node_create_ask_name", lang, bond=f"{bonds_svc.BOND_AMOUNT:,.0f}"))
+            await _begin_node_creation(uid)
+            await callback.answer(); return
+        node = await nodes_svc.create_node(
+            uid, name, draft.get("node_type", "global"),
+            draft.get("language", lang), draft.get("topics", []),
+            country=draft.get("country", ""), region=draft.get("region", ""),
+            geo_scope=draft.get("geo_scope", ""),
+        )
+        await ghost.reset_state(uid)
+        if not node:
+            # Casi siempre: SYNERGIX insuficiente para el bond (nombre ya validado).
+            msg = await _bond_insufficient_msg(uid, lang) or t("node_name_too_short", lang)
+            await callback.message.edit_text(msg)
+        else:
+            await callback.message.edit_text(
+                t("node_created", lang, icon=node.icon, name=html.escape(node.name),
+                  node_id=node.node_id, bond=f"{bonds_svc.BOND_AMOUNT:,.0f}"),
+            )
+            await callback.message.answer(
+                await _render_node_view(node, lang),
+                reply_markup=get_node_view_kb(lang, node.node_id, True, True,
+                                              {"bond-status": "locked"}),
+            )
+
+    elif action == "join":
+        node = await nodes_svc.get_node(arg)
+        if not node:
+            await callback.message.edit_text(t("node_not_found", lang), reply_markup=get_nodes_menu_kb(lang))
+        elif await nodes_svc.is_member(arg, uid):
+            await callback.answer(t("node_already_member", lang, name=node.name))
+            return
+        else:
+            await nodes_svc.join_node(uid, arg)
+            await callback.message.edit_text(
+                t("node_joined", lang, name=html.escape(node.name)),
+                reply_markup=get_node_view_kb(lang, arg, True),
+            )
+
+    elif action == "leave":
+        node = await nodes_svc.get_node(arg)
+        await nodes_svc.leave_node(uid, arg)
+        name = html.escape(node.name) if node else arg
+        await callback.message.edit_text(t("node_left", lang, name=name), reply_markup=get_nodes_menu_kb(lang))
+
+    elif action == "use":
+        node = await nodes_svc.get_node(arg)
+        if node:
+            await nodes_svc.set_active_node(uid, arg)
+            await callback.answer(t("node_set_active", lang, name=node.name))
+            return
+
+    await callback.answer()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# FASE 2: PROVEEDORES · FINANCIAMIENTO COLECTIVO · JUECES ORÁCULOS
+# ══════════════════════════════════════════════════════════════════════════
+
+async def _active_node_id(uid: int) -> Optional[str]:
+    profile = await get_identity_manager().get_profile(uid)
+    return profile.active_node
+
+
+def _prov_label(key: str, lang: str) -> str:
+    icon = providers_svc.PROVIDER_CATEGORIES.get(key, "🧰")
+    return f"{icon} {t('prov_' + key, lang)}"
+
+
+# ── Proveedores ─────────────────────────────────────────────────────────────
+
+@dp.message(Command("proveedores"))
+async def cmd_providers(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        await message.answer(t("need_active_node", lang))
+        return
+
+    provs = await providers_svc.get_providers(node_id)
+    text = t("providers_header", lang) + "\n\n"
+    rows: list = []
+    if not provs:
+        text += t("providers_empty", lang)
+    else:
+        from aisynergix.bot.identity import _hash_uid
+        me = _hash_uid(uid)
+        for p in provs:
+            text += t(
+                "provider_entry", lang,
+                icon=providers_svc.PROVIDER_CATEGORIES.get(p.get("category", ""), "🧰"),
+                category=t("prov_" + p.get("category", "otros"), lang),
+                desc=html.escape(p.get("description", "")),
+            ) + "\n"
+            phash = p.get("uid-hash", "")
+            if phash and phash != me:  # no ofrecer pagarse a uno mismo
+                rows.append([InlineKeyboardButton(
+                    text=t("btn_provider_pay", lang,
+                           category=t("prov_" + p.get("category", "otros"), lang)),
+                    callback_data=f"prov:pay:{phash}")])
+    rows.append([InlineKeyboardButton(
+        text=t("btn_provider_register", lang), callback_data="prov:register")])
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data.startswith("prov:"))
+async def handle_provider_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "register":
+        node_id = await _active_node_id(uid)
+        if not node_id:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        rows, row = [], []
+        for key in providers_svc.PROVIDER_CATEGORIES:
+            row.append(InlineKeyboardButton(text=_prov_label(key, lang), callback_data=f"prov:cat:{key}"))
+            if len(row) == 2:
+                rows.append(row); row = []
+        if row:
+            rows.append(row)
+        await callback.message.edit_text(
+            t("provider_ask_category", lang),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    elif action == "cat":
+        category = parts[2] if len(parts) > 2 else ""
+        node_id = await _active_node_id(uid)
+        if not node_id or category not in providers_svc.PROVIDER_CATEGORIES:
+            await callback.answer(); return
+        ghost = get_ghost_state_manager()
+        cache = get_l1_cache()
+        await ghost.set_state(uid, "awaiting_provider_desc")
+        await cache.set_state_data(uid, {"prov_cat": category, "prov_node": node_id})
+        await callback.message.edit_text(t("provider_ask_desc", lang))
+
+    elif action == "pay":
+        provider_hash = parts[2] if len(parts) > 2 else ""
+        node_id = await _active_node_id(uid)
+        if not node_id or not provider_hash:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        ghost = get_ghost_state_manager()
+        cache = get_l1_cache()
+        await ghost.set_state(uid, "awaiting_provider_payment")
+        await cache.set_state_data(
+            uid, {"pay_hash": provider_hash, "pay_node": node_id})
+        await callback.message.answer(t("provider_ask_amount", lang))
+
+    await callback.answer()
+
+
+async def handle_provider_desc_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    category = draft.get("prov_cat", "")
+    node_id = draft.get("prov_node", "")
+    await ghost.reset_state(uid)
+
+    err = await providers_svc.register_provider(uid, node_id, category, text)
+    if err == "not_verified":
+        await message.answer(t("provider_need_verified", lang))
+    elif err == "not_member":
+        await message.answer(t("need_active_node", lang))
+    elif err == "bad_input":
+        await message.answer(t("provider_bad_desc", lang))
+    else:
+        await message.answer(t("provider_registered", lang, category=_prov_label(category, lang)))
+
+
+async def handle_provider_payment_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    provider_hash = draft.get("pay_hash", "")
+    node_id = draft.get("pay_node", "")
+    await ghost.reset_state(uid)
+
+    from aisynergix.services.rewards import parse_amount, is_valid_amount
+    amount = parse_amount(text)
+    if amount is None or not is_valid_amount(amount) or amount <= 0:
+        await message.answer(t("provider_pay_bad_amount", lang))
+        return
+
+    err = await providers_svc.pay_provider(uid, node_id, provider_hash, amount)
+    if err == "bad_amount":
+        await message.answer(t("provider_pay_bad_amount", lang))
+    elif err == "not_provider":
+        await message.answer(t("provider_pay_not_provider", lang))
+    elif err == "self_payment":
+        await message.answer(t("provider_pay_self", lang))
+    elif err == "insufficient":
+        await message.answer(t("provider_pay_insufficient", lang))
+    else:
+        await message.answer(t("provider_pay_ok", lang, amount=f"{amount:,.2f}"))
+
+
+# ── Financiamiento colectivo ────────────────────────────────────────────────
+
+_PROJECT_STATUS_ICON = {
+    "active": "🟢", "voting": "🗳️", "completed": "✅", "refunded": "↩️",
+}
+
+
+async def _project_view(callback: CallbackQuery, project_id: str, lang: str, uid: int) -> None:
+    # Resolución perezosa de votaciones expiradas antes de mostrar.
+    await projects_svc.check_and_resolve(project_id)
+    proj = await projects_svc.get_project(project_id)
+    if not proj:
+        await callback.message.edit_text(t("project_not_found", lang))
+        return
+    uid_hash = _hash_uid_bot(uid)
+    text = t(
+        "project_view", lang,
+        icon=_PROJECT_STATUS_ICON.get(proj["status"], "🟢"),
+        title=html.escape(proj["title"]),
+        status=t("project_status_" + proj["status"], lang),
+        raised=f"{proj['raised']:.0f}",
+        goal=f"{proj['goal']:.0f}",
+        funders=len(proj["funders"]),
+    )
+    # Al liberar, los fondos van PRIMERO al creador/propietario (§ prioridad).
+    text += "\n" + t("project_beneficiary_note", lang)
+    # Evidencia de cumplimiento visible para que los financiadores verifiquen
+    # ANTES de votar la liberación (verificación obligatoria).
+    evidence = (proj.get("evidence", "") or "").strip()
+    if evidence and proj["status"] in ("voting", "completed"):
+        text += "\n\n" + t("project_evidence_shown", lang, evidence=html.escape(evidence))
+    rows = []
+    if proj["status"] == "active":
+        rows.append([InlineKeyboardButton(text=t("btn_project_fund", lang), callback_data=f"proj:fund:{project_id}")])
+        if proj["creator"] == uid_hash and proj["raised"] > 0:
+            rows.append([InlineKeyboardButton(text=t("btn_project_done", lang), callback_data=f"proj:done:{project_id}")])
+    elif proj["status"] == "voting" and uid_hash in proj["funders"]:
+        rows.append([
+            InlineKeyboardButton(text=t("btn_project_vote_yes", lang), callback_data=f"proj:vote:{project_id}:1"),
+            InlineKeyboardButton(text=t("btn_project_vote_no", lang), callback_data=f"proj:vote:{project_id}:0"),
+        ])
+    await callback.message.edit_text(
+        text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None,
+    )
+
+
+def _hash_uid_bot(uid: int) -> str:
+    from aisynergix.bot.identity import _hash_uid
+    return _hash_uid(uid)
+
+
+@dp.message(Command("proyectos"))
+async def cmd_projects(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        await message.answer(t("need_active_node", lang))
+        return
+
+    records = await projects_svc.list_projects(node_id)
+    rows = []
+    for r in records[:10]:
+        pid = r.get("project-id", "")
+        icon = _PROJECT_STATUS_ICON.get(r.get("project-status", "active"), "🟢")
+        rows.append([InlineKeyboardButton(
+            text=f"{icon} {r.get('title', pid)}", callback_data=f"proj:view:{pid}",
+        )])
+    rows.append([InlineKeyboardButton(text=t("btn_project_create", lang), callback_data="proj:create")])
+    text = t("projects_header", lang) if records else t("projects_empty", lang)
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data.startswith("proj:"))
+async def handle_project_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    pid = parts[2] if len(parts) > 2 else ""
+
+    if action == "create":
+        node_id = await _active_node_id(uid)
+        if not node_id:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        await ghost.set_state(uid, "awaiting_project_name")
+        await cache.set_state_data(uid, {"proj_node": node_id})
+        await callback.message.edit_text(t("project_ask_name", lang))
+
+    elif action == "view":
+        await _project_view(callback, pid, lang, uid)
+
+    elif action == "fund":
+        await ghost.set_state(uid, "awaiting_project_fund")
+        await cache.set_state_data(uid, {"proj_id": pid})
+        await callback.message.edit_text(
+            t("project_fund_ask", lang, min=int(projects_svc.FUND_MIN_SYNX))
+        )
+
+    elif action == "done":
+        # Verificación obligatoria: el creador debe adjuntar evidencia de
+        # cumplimiento (hitos/documentación) antes de abrir la votación.
+        await ghost.set_state(uid, "awaiting_project_evidence")
+        await cache.set_state_data(uid, {"proj_id": pid})
+        await callback.message.edit_text(t(
+            "project_ask_evidence", lang,
+            min=projects_svc.MIN_EVIDENCE_LEN, max=projects_svc.MAX_EVIDENCE_LEN,
+        ))
+
+    elif action == "vote":
+        approve = (parts[3] if len(parts) > 3 else "0") == "1"
+        result = await projects_svc.vote_project(uid, pid, approve)
+        if result == "not_voting":
+            await callback.answer(t("project_not_active", lang), show_alert=True)
+            return
+        if result == "not_funder":
+            await callback.answer(t("project_only_funders", lang), show_alert=True)
+            return
+        if result == "completed":
+            await callback.message.edit_text(t("project_released", lang))
+        elif result == "refunded":
+            await callback.message.edit_text(t("project_refunded", lang))
+        else:
+            await callback.answer(t("project_vote_recorded", lang))
+            return
+
+    await callback.answer()
+
+
+async def handle_project_name_message(message: Message, uid: int, text: str, lang: str) -> None:
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    title = text.strip()
+    if not (projects_svc.MIN_TITLE_LEN <= len(title) <= projects_svc.MAX_TITLE_LEN):
+        await message.answer(t("project_invalid_name", lang))
+        return
+    draft["proj_title"] = title
+    await get_ghost_state_manager().set_state(uid, "awaiting_project_goal")
+    await cache.set_state_data(uid, draft)
+    await message.answer(t("project_ask_goal", lang, min=int(projects_svc.GOAL_MIN_SYNX)))
+
+
+async def handle_project_goal_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    from aisynergix.services.rewards import parse_amount
+    goal = parse_amount(text)
+    if goal is None:
+        await message.answer(t("invalid_amount", lang))
+        return
+    if goal < projects_svc.GOAL_MIN_SYNX:
+        await message.answer(t("project_ask_goal", lang, min=int(projects_svc.GOAL_MIN_SYNX)))
+        return
+    await ghost.reset_state(uid)
+    proj = await projects_svc.create_project(
+        uid, draft.get("proj_node", ""), draft.get("proj_title", ""), goal,
+    )
+    if not proj:
+        await message.answer(t("project_create_failed", lang))
+        return
+    await message.answer(t(
+        "project_created", lang,
+        title=html.escape(proj["title"]), goal=f"{goal:.0f}",
+    ))
+
+
+async def handle_project_evidence_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    pid = draft.get("proj_id", "")
+    await ghost.reset_state(uid)
+    err = await projects_svc.request_completion(uid, pid, text)
+    if err == "bad_evidence":
+        await message.answer(t(
+            "project_evidence_bad", lang,
+            min=projects_svc.MIN_EVIDENCE_LEN, max=projects_svc.MAX_EVIDENCE_LEN,
+        ))
+    elif err == "not_creator":
+        await message.answer(t("project_only_creator", lang))
+    elif err in ("not_active", "no_funds"):
+        await message.answer(t("project_not_active", lang))
+    else:
+        await message.answer(
+            t("project_voting_started", lang, hours=projects_svc.VOTING_WINDOW_H))
+
+
+async def handle_project_fund_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    pid = draft.get("proj_id", "")
+    from aisynergix.services.rewards import parse_amount
+    amount = parse_amount(text)
+    if amount is None:
+        await message.answer(t("invalid_amount", lang))
+        return
+    await ghost.reset_state(uid)
+    err = await projects_svc.fund_project(uid, pid, amount)
+    if err == "insufficient":
+        await message.answer(t("project_insufficient", lang))
+    elif err == "bad_amount":
+        await message.answer(t("project_fund_ask", lang, min=int(projects_svc.FUND_MIN_SYNX)))
+    elif err == "not_active":
+        await message.answer(t("project_not_active", lang))
+    else:
+        await message.answer(t("project_funded", lang, amount=f"{amount:.0f}"))
+
+
+# ── Bounties de Conocimiento (Proof-of-Knowledge) ───────────────────────────
+
+_BOUNTY_STATUS_ICON = {"open": "🎯", "closed": "✅", "expired": "⌛"}
+
+
+def _bounty_row_label(b: dict, lang: str) -> str:
+    icon = _BOUNTY_STATUS_ICON.get(b.get("bounty-status", "open"), "🎯")
+    topic = _topic_label(b.get("topic", ""), lang)
+    rem = bounties_svc.remaining_pool(b)
+    return f"{icon} {topic} · {rem:.0f} SYNX"
+
+
+async def _bounty_view(callback: CallbackQuery, bounty_id: str, lang: str) -> None:
+    from aisynergix.services.irys import read_bounty
+    b = await read_bounty(bounty_id)
+    if not b:
+        await callback.message.edit_text(t("bounty_not_found", lang))
+        return
+    now = int(datetime.now(timezone.utc).timestamp())
+    deadline = int(b.get("deadline", 0) or 0)
+    date = datetime.fromtimestamp(deadline, tz=timezone.utc).strftime("%Y-%m-%d") if deadline else "—"
+    status_key = b.get("bounty-status", "open")
+    if status_key == "open" and not bounties_svc.is_open(b, now):
+        status_key = "expired"
+    text = t(
+        "bounty_view", lang,
+        topic=_topic_label(b.get("topic", ""), lang),
+        status=t("bounty_status_" + status_key, lang),
+        reward=f"{float(b.get('reward', 0)):.0f}",
+        remaining=f"{bounties_svc.remaining_pool(b):.0f}",
+        pool=f"{float(b.get('pool', 0)):.0f}",
+        paid=int(b.get("paid-count", 0) or 0),
+        slots=bounties_svc.max_recipients(b),
+        date=date,
+    )
+    await callback.message.edit_text(text)
+
+
+@dp.message(Command("bounties"))
+async def cmd_bounties(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        await message.answer(t("need_active_node", lang))
+        return
+
+    records = await bounties_svc.list_bounties(node_id)
+    records.sort(key=lambda b: (not b.get("open"), b.get("topic", "")))
+    rows = []
+    for b in records[:10]:
+        rows.append([InlineKeyboardButton(
+            text=_bounty_row_label(b, lang),
+            callback_data=f"bounty:view:{b.get('bounty-id', '')}",
+        )])
+    rows.append([InlineKeyboardButton(
+        text=t("btn_bounty_create", lang), callback_data="bounty:create")])
+    text = t("bounties_header", lang) if records else t("bounties_empty", lang)
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data.startswith("bounty:"))
+async def handle_bounty_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    arg = parts[2] if len(parts) > 2 else ""
+
+    if action == "create":
+        node_id = await _active_node_id(uid)
+        if not node_id:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        node = await nodes_svc.get_node(node_id)
+        topics = node.topics if node else []
+        if not topics:
+            await callback.answer(t("bounty_no_topics", lang), show_alert=True)
+            return
+        rows, row = [], []
+        for key in topics:
+            row.append(InlineKeyboardButton(
+                text=_topic_label(key, lang), callback_data=f"bounty:topic:{key}"))
+            if len(row) == 2:
+                rows.append(row); row = []
+        if row:
+            rows.append(row)
+        await callback.message.edit_text(
+            t("bounty_ask_topic", lang),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    elif action == "topic":
+        node_id = await _active_node_id(uid)
+        if not node_id or not arg:
+            await callback.answer(); return
+        await ghost.set_state(uid, "awaiting_bounty_pool")
+        await cache.set_state_data(uid, {"bty_node": node_id, "bty_topic": arg})
+        await callback.message.edit_text(
+            t("bounty_ask_pool", lang,
+              min=int(bounties_svc.BOUNTY_MIN_POOL),
+              reward=int(bounties_svc.REWARD_MIN),
+              days=bounties_svc.DEFAULT_DURATION_DAYS)
+        )
+
+    elif action == "view":
+        await _bounty_view(callback, arg, lang)
+
+    await callback.answer()
+
+
+async def handle_bounty_pool_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    node_id = draft.get("bty_node", "")
+    topic = draft.get("bty_topic", "")
+    await ghost.reset_state(uid)
+
+    from aisynergix.services.rewards import parse_amount, is_valid_amount
+    pool = parse_amount(text)
+    if pool is None or not is_valid_amount(pool):
+        await message.answer(t("invalid_amount", lang))
+        return
+    bounty_id, err = await bounties_svc.create_bounty(uid, node_id, topic, pool)
+    if err == "not_member":
+        await message.answer(t("need_active_node", lang))
+    elif err == "pool_too_small":
+        await message.answer(t("bounty_pool_too_small", lang,
+                               min=int(bounties_svc.BOUNTY_MIN_POOL)))
+    elif err in ("bad_reward", "bad_duration"):
+        await message.answer(t("bounty_bad_params", lang))
+    elif err == "insufficient":
+        await message.answer(t("bounty_insufficient", lang))
+    else:
+        await message.answer(t(
+            "bounty_created", lang,
+            topic=_topic_label(topic, lang),
+            pool=f"{pool:.0f}",
+            reward=int(bounties_svc.REWARD_MIN),
+            days=bounties_svc.DEFAULT_DURATION_DAYS,
+        ))
+
+
+# ── Atlas de Problemas y Soluciones ─────────────────────────────────────────
+
+from aisynergix.services import problems as problems_svc
+
+_PROBLEM_STATUS_ICON = {"open": "🚩", "solving": "🛠️", "solved": "✅"}
+
+
+async def _problem_view(callback: CallbackQuery, pid: str, lang: str, uid: int) -> None:
+    from aisynergix.services.irys import read_problem, list_problem_confirms
+    record = await read_problem(pid)
+    if not record:
+        await callback.message.edit_text(t("problem_not_found", lang))
+        return
+    status = problems_svc.status_of(record)
+    confirms = problems_svc.distinct_confirmers(
+        await list_problem_confirms(pid, kind="problem"))
+    text = t(
+        "problem_view", lang,
+        icon=_PROBLEM_STATUS_ICON.get(status, "🚩"),
+        text=html.escape(record.get("problem-text", "")),
+        status=t("problem_status_" + status, lang),
+        confirms=confirms,
+    )
+    solution = (record.get("solution", "") or "").strip()
+    if solution:
+        text += "\n\n" + t("problem_solution_line", lang, solution=html.escape(solution))
+    uid_hash = _hash_uid_bot(uid)
+    rows = []
+    if status != "solved":
+        if record.get("reporter", "") != uid_hash:
+            rows.append([InlineKeyboardButton(
+                text=t("btn_problem_confirm", lang), callback_data=f"prob:confirm:{pid}")])
+        rows.append([InlineKeyboardButton(
+            text=t("btn_problem_solve", lang), callback_data=f"prob:solve:{pid}")])
+    if status == "solving" and record.get("solver", "") != uid_hash:
+        rows.append([InlineKeyboardButton(
+            text=t("btn_solution_works", lang, needed=problems_svc.SOLVED_THRESHOLD),
+            callback_data=f"prob:works:{pid}")])
+    await callback.message.edit_text(
+        text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None,
+    )
+
+
+@dp.message(Command("problemas"))
+async def cmd_problems(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        await message.answer(t("need_active_node", lang))
+        return
+
+    records = await problems_svc.list_problems(node_id)
+    order = {"open": 0, "solving": 1, "solved": 2}
+    records.sort(key=lambda r: order.get(r.get("problem-status", "open"), 0))
+    rows = []
+    for r in records[:10]:
+        pid = r.get("problem-id", "")
+        icon = _PROBLEM_STATUS_ICON.get(r.get("problem-status", "open"), "🚩")
+        preview = (r.get("problem-text", "") or "")[:40]
+        rows.append([InlineKeyboardButton(
+            text=f"{icon} {preview}", callback_data=f"prob:view:{pid}")])
+    rows.append([InlineKeyboardButton(
+        text=t("btn_problem_report", lang), callback_data="prob:report")])
+    text = t("problems_atlas_header", lang) if records else t("problems_atlas_empty", lang)
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data.startswith("prob:"))
+async def handle_problem_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    pid = parts[2] if len(parts) > 2 else ""
+
+    if action == "report":
+        node_id = await _active_node_id(uid)
+        if not node_id:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        await ghost.set_state(uid, "awaiting_problem_text")
+        await cache.set_state_data(uid, {"prob_node": node_id})
+        await callback.message.edit_text(t(
+            "problem_ask_text", lang,
+            min=problems_svc.MIN_TEXT_LEN, max=problems_svc.MAX_TEXT_LEN,
+        ))
+
+    elif action == "view":
+        await _problem_view(callback, pid, lang, uid)
+
+    elif action == "confirm":
+        count, err = await problems_svc.confirm_problem(uid, pid)
+        if err == "own_problem":
+            await callback.answer(t("problem_own", lang), show_alert=True)
+            return
+        if err == "not_member":
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        if err in ("not_found", "closed"):
+            await callback.answer(t("problem_closed", lang))
+            return
+        await callback.answer(t("problem_confirmed", lang, count=count))
+        return
+
+    elif action == "solve":
+        await ghost.set_state(uid, "awaiting_solution_text")
+        await cache.set_state_data(uid, {"prob_id": pid})
+        await callback.message.edit_text(t(
+            "problem_ask_solution", lang,
+            min=problems_svc.MIN_TEXT_LEN, max=problems_svc.MAX_TEXT_LEN,
+        ))
+
+    elif action == "works":
+        status, err = await problems_svc.confirm_solution(uid, pid)
+        if err == "own_solution":
+            await callback.answer(t("solution_own", lang), show_alert=True)
+            return
+        if err == "not_member":
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        if err in ("not_found", "not_solving"):
+            await callback.answer(t("problem_closed", lang))
+            return
+        if status == "solved":
+            await callback.message.edit_text(t(
+                "problem_solved", lang,
+                reward=int(problems_svc.SOLVER_REWARD_SYNX),
+            ))
+        else:
+            await callback.answer(t(
+                "solution_vote_recorded", lang,
+                needed=problems_svc.SOLVED_THRESHOLD,
+            ))
+        return
+
+    await callback.answer()
+
+
+async def handle_problem_text_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    node_id = draft.get("prob_node", "")
+    await ghost.reset_state(uid)
+
+    pid, err = await problems_svc.report_problem(uid, node_id, text)
+    if err == "bad_text":
+        await message.answer(t(
+            "problem_bad_text", lang,
+            min=problems_svc.MIN_TEXT_LEN, max=problems_svc.MAX_TEXT_LEN,
+        ))
+        return
+    if err == "not_member":
+        await message.answer(t("need_active_node", lang))
+        return
+    if err == "daily_cap":
+        await message.answer(t("academy_daily_cap", lang, cap=problems_svc.REPORTS_DAILY_CAP))
+        return
+    await message.answer(t("problem_reported", lang))
+
+    # Atlas translingüe: ¿la red ya conoce este problema (en cualquier idioma)?
+    try:
+        matches = await problems_svc.find_similar(text, lang)
+    except Exception:
+        matches = []
+    if matches:
+        out = t("atlas_related_header", lang) + "\n"
+        for m in matches:
+            out += "\n" + t("atlas_entry", lang, excerpt=html.escape(m["excerpt"]))
+        await message.answer(out)
+
+
+async def handle_solution_text_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    pid = draft.get("prob_id", "")
+    await ghost.reset_state(uid)
+
+    err = await problems_svc.propose_solution(uid, pid, text)
+    if err == "bad_text":
+        await message.answer(t(
+            "problem_bad_text", lang,
+            min=problems_svc.MIN_TEXT_LEN, max=problems_svc.MAX_TEXT_LEN,
+        ))
+    elif err == "not_member":
+        await message.answer(t("need_active_node", lang))
+    elif err in ("not_found", "already_solved"):
+        await message.answer(t("problem_closed", lang))
+    else:
+        await message.answer(t(
+            "solution_proposed", lang, needed=problems_svc.SOLVED_THRESHOLD,
+        ))
+
+
+# ── Synergix Academy: aprende y gana ────────────────────────────────────────
+
+from aisynergix.services import academy as academy_svc
+
+
+@dp.message(Command("aprender"))
+async def cmd_learn(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    if not academy_svc.can_take_lesson(uid):
+        await message.answer(t("academy_daily_cap", lang, cap=academy_svc.DAILY_LESSON_CAP))
+        return
+    rows, row = [], []
+    for key in nodes_svc.TOPICS:
+        row.append(InlineKeyboardButton(
+            text=_topic_label(key, lang), callback_data=f"learn:topic:{key}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    await message.answer(
+        t("academy_intro", lang, reward=int(academy_svc.LESSON_REWARD_SYNX)),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@dp.callback_query(F.data.startswith("learn:"))
+async def handle_learn_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    topic_key = parts[2] if len(parts) > 2 else ""
+
+    if action == "topic" and topic_key in nodes_svc.TOPICS:
+        if not academy_svc.can_take_lesson(uid):
+            await callback.answer(
+                t("academy_daily_cap", lang, cap=academy_svc.DAILY_LESSON_CAP),
+                show_alert=True,
+            )
+            return
+        await callback.answer()  # responder ya; la generación puede tardar
+        await callback.message.edit_text(t("academy_generating", lang))
+        try:
+            lesson = await academy_svc.generate_lesson(
+                topic_key, _topic_label(topic_key, lang), lang,
+            )
+        except Exception as exc:
+            logger.warning("academy: generación falló (%s): %s", topic_key, exc)
+            lesson = None
+        if not lesson:
+            await callback.message.edit_text(t("academy_no_knowledge", lang))
+            return
+        ghost = get_ghost_state_manager()
+        cache = get_l1_cache()
+        await ghost.set_state(uid, "awaiting_lesson_answer")
+        await cache.set_state_data(uid, {
+            "lesson_topic": topic_key,
+            # tuplas → listas para el estado en cache
+            "lesson_citations": [list(c) for c in lesson["citations"]],
+        })
+        await callback.message.edit_text(t(
+            "academy_lesson", lang,
+            topic=_topic_label(topic_key, lang),
+            lesson=html.escape(lesson["lesson"]),
+            reward=int(academy_svc.LESSON_REWARD_SYNX),
+        ))
+        return
+
+    await callback.answer()
+
+
+async def handle_lesson_answer_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    topic_key = draft.get("lesson_topic", "")
+    citations = [tuple(c) for c in draft.get("lesson_citations", [])]
+
+    if len(text.strip()) < academy_svc.MIN_ANSWER_LEN:
+        # No consumir la lección: dejar que desarrolle la respuesta.
+        await message.answer(t("academy_answer_too_short", lang))
+        return
+
+    await ghost.reset_state(uid)
+    result = await academy_svc.submit_answer(uid, topic_key, text, citations)
+    status = result.get("status")
+    if status == "too_short":
+        await message.answer(t("academy_answer_too_short", lang))
+    elif status == "daily_cap":
+        await message.answer(t("academy_daily_cap", lang, cap=academy_svc.DAILY_LESSON_CAP))
+    elif status == "fail":
+        feedback = result.get("feedback") or ""
+        await message.answer(t(
+            "academy_fail", lang,
+            score=result.get("score", 0), feedback=html.escape(feedback),
+        ))
+    else:  # pass
+        out = t(
+            "academy_pass", lang,
+            score=result.get("score", 0),
+            synx=f"{result.get('reward', 0):.0f}",
+            topic=_topic_label(topic_key, lang),
+            lessons=result.get("lessons", 1),
+            level=result.get("level", 0),
+        )
+        if result.get("authors_credited"):
+            out += "\n" + t("academy_authors_note", lang)
+        await message.answer(out)
+        if result.get("leveled_up"):
+            await message.answer(t(
+                "academy_levelup", lang,
+                level=result.get("level", 1),
+                topic=_topic_label(topic_key, lang),
+            ))
+
+
+# ── Jueces Oráculos ─────────────────────────────────────────────────────────
+
+@dp.message(Command("oraculo"))
+async def cmd_oracle(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    stake = await oracle_svc.get_stake(_hash_uid_bot(uid))
+    if stake:
+        text = t(
+            "oracle_menu_staked", lang,
+            amount=f"{float(stake.get('amount', 0) or 0):.0f}",
+            reward=int(oracle_svc.VOTE_REWARD_SYNX),
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t("btn_oracle_pending", lang), callback_data="orc:pending")],
+            [InlineKeyboardButton(text=t("btn_oracle_unstake", lang), callback_data="orc:unstake")],
+        ])
+    else:
+        text = t(
+            "oracle_menu_intro", lang,
+            stake=int(oracle_svc.STAKE_SYNERGIX),
+            points=oracle_svc.ELIGIBLE_MIN_POINTS,
+            reward=int(oracle_svc.VOTE_REWARD_SYNX),
+            penalty=int(oracle_svc.PENALTY_SYNX),
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=t("btn_oracle_stake", lang, stake=int(oracle_svc.STAKE_SYNERGIX)),
+                callback_data="orc:stake",
+            ),
+        ]])
+    await message.answer(text, reply_markup=kb)
+
+
+@dp.callback_query(F.data.startswith("orc:"))
+async def handle_oracle_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "stake":
+        err = await oracle_svc.stake(uid)
+        if err == "not_eligible":
+            await callback.answer(
+                t("oracle_not_eligible", lang, points=oracle_svc.ELIGIBLE_MIN_POINTS),
+                show_alert=True,
+            )
+            return
+        if err == "already_staked":
+            await callback.answer(t("oracle_already_staked", lang))
+            return
+        if err == "insufficient":
+            await callback.answer(
+                t("oracle_insufficient", lang, stake=int(oracle_svc.STAKE_SYNERGIX)),
+                show_alert=True,
+            )
+            return
+        await callback.message.edit_text(t("oracle_stake_ok", lang))
+
+    elif action == "unstake":
+        err = await oracle_svc.unstake(uid)
+        if err == "not_staked":
+            await callback.answer(t("oracle_not_staked", lang))
+            return
+        await callback.message.edit_text(t("oracle_unstake_ok", lang))
+
+    elif action == "pending":
+        reviews = await oracle_svc.pending_reviews(limit=5)
+        if not reviews:
+            await callback.message.edit_text(t("oracle_no_pending", lang))
+        else:
+            from aisynergix.services.irys import read_aporte
+            await callback.message.edit_text(t("oracle_pending_header", lang, count=len(reviews)))
+            for review in reviews:
+                tx = review.get("aporte-tx", "")
+                preview = ""
+                try:
+                    texto, _tags = await read_aporte(tx)
+                    preview = texto[:250] + ("…" if len(texto) > 250 else "")
+                except Exception:
+                    preview = tx
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="👍", callback_data=f"orc:v:{tx}:1"),
+                    InlineKeyboardButton(text="👎", callback_data=f"orc:v:{tx}:0"),
+                ]])
+                await callback.message.answer(
+                    t("oracle_review_entry", lang, preview=html.escape(preview)),
+                    reply_markup=kb,
+                )
+
+    elif action == "v":
+        tx = parts[2] if len(parts) > 2 else ""
+        approve = (parts[3] if len(parts) > 3 else "0") == "1"
+        result = await oracle_svc.vote(uid, tx, approve)
+        if result == "not_oracle":
+            await callback.answer(t("oracle_not_staked", lang), show_alert=True)
+            return
+        if result == "own_aporte":
+            await callback.answer(t("oracle_own_aporte", lang), show_alert=True)
+            return
+        if result == "not_pending":
+            await callback.answer(t("oracle_review_closed", lang))
+        elif result in ("approved", "rejected"):
+            await callback.message.edit_text(t(f"oracle_resolved_{result}", lang))
+        else:
+            await callback.answer(t("oracle_vote_recorded", lang))
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    await callback.answer()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# FASE 3: PASSPORT · AGENTE · GOBERNANZA
+# ══════════════════════════════════════════════════════════════════════════
+
+@dp.message(Command("pasaporte"))
+async def cmd_passport(message: Message) -> None:
+    """Synergix Passport (§10): reputación verificable sellada en Arweave."""
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    notice = await message.answer(t("passport_building", lang))
+    result = await passport_svc.build_passport(uid)
+    try:
+        await notice.delete()
+    except Exception:
+        pass
+    if not result:
+        await message.answer(t("passport_failed", lang))
+        return
+    data = result["data"]
+    impacts = data.get("impacts", {})
+    oracle_info = data.get("oracle", {})
+    accuracy = oracle_info.get("accuracy")
+    text = t(
+        "passport_view", lang,
+        ghost_id=data.get("ghost_id", ""),
+        rank=_t_rank(data.get("rank", "🌱 Iniciado"), lang),
+        points=data.get("points", 0),
+        contributions=data.get("contributions", 0),
+        avg_score=data.get("avg_quality_score") or "—",
+        views=impacts.get("views", 0),
+        useful=impacts.get("useful", 0),
+        references=impacts.get("references", 0),
+        synx_earned=f"{data.get('synx_earned', 0):.0f}",
+        oracle_accuracy=(f"{accuracy * 100:.0f}%" if accuracy is not None else "—"),
+        url=f"{IRYS_GATEWAY_URL}/{result['tx']}",
+    )
+    if data.get("human_verified"):
+        text += "\n" + t("status_verified", lang)
+    await message.answer(text)
+
+
+# ── Gobernanza ──────────────────────────────────────────────────────────────
+
+_PROPOSAL_STATUS_ICON = {"open": "🗳️", "approved": "✅", "rejected": "❌"}
+
+
+@dp.message(Command("propuestas"))
+async def cmd_proposals(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        await message.answer(t("need_active_node", lang))
+        return
+
+    records = await gov_svc.list_proposals(node_id)
+    rows = []
+    for r in records[:10]:
+        pid = r.get("proposal-id", "")
+        icon = _PROPOSAL_STATUS_ICON.get(r.get("proposal-status", "open"), "🗳️")
+        label = r.get("text", pid)[:40]
+        rows.append([InlineKeyboardButton(text=f"{icon} {label}", callback_data=f"gov:view:{pid}")])
+    rows.append([InlineKeyboardButton(text=t("btn_proposal_create", lang), callback_data="gov:create")])
+    text = t("proposals_header", lang, pct=int(gov_svc.APPROVAL_PCT * 100),
+             hours=gov_svc.VOTING_WINDOW_H) if records else t("proposals_empty", lang)
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+async def _proposal_view(callback: CallbackQuery, pid: str, lang: str) -> None:
+    await gov_svc.check_and_resolve(pid)
+    record = await gov_svc.get_proposal(pid)
+    if not record:
+        await callback.message.edit_text(t("proposal_not_found", lang))
+        return
+    status = record.get("proposal-status", "open")
+    yes, total = await gov_svc.proposal_tallies(pid)
+    text = t(
+        "proposal_view", lang,
+        icon=_PROPOSAL_STATUS_ICON.get(status, "🗳️"),
+        text=html.escape(record.get("text", "")),
+        status=t("proposal_status_" + status, lang),
+        yes=yes, total=total,
+    )
+    rows = []
+    if status == "open":
+        rows.append([
+            InlineKeyboardButton(text=t("btn_vote_yes", lang), callback_data=f"gov:v:{pid}:1"),
+            InlineKeyboardButton(text=t("btn_vote_no", lang), callback_data=f"gov:v:{pid}:0"),
+        ])
+    await callback.message.edit_text(
+        text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None,
+    )
+
+
+@dp.callback_query(F.data.startswith("gov:"))
+async def handle_governance_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    pid = parts[2] if len(parts) > 2 else ""
+
+    if action == "create":
+        node_id = await _active_node_id(uid)
+        if not node_id:
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        ghost = get_ghost_state_manager()
+        cache = get_l1_cache()
+        await ghost.set_state(uid, "awaiting_proposal_text")
+        await cache.set_state_data(uid, {"gov_node": node_id})
+        await callback.message.edit_text(t("proposal_ask_text", lang))
+
+    elif action == "view":
+        await _proposal_view(callback, pid, lang)
+
+    elif action == "v":
+        approve = (parts[3] if len(parts) > 3 else "0") == "1"
+        err = await gov_svc.vote_proposal(uid, pid, approve)
+        if err == "closed":
+            await callback.answer(t("proposal_closed", lang), show_alert=True)
+            return
+        if err == "not_member":
+            await callback.answer(t("need_active_node", lang), show_alert=True)
+            return
+        if err == "no_weight":
+            await callback.answer(t("proposal_no_weight", lang), show_alert=True)
+            return
+        await callback.answer(t("proposal_vote_recorded", lang))
+        return
+
+    await callback.answer()
+
+
+async def handle_proposal_text_message(message: Message, uid: int, text: str, lang: str) -> None:
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    draft = await cache.get_state_data(uid) or {}
+    await ghost.reset_state(uid)
+    proposal = await gov_svc.create_proposal(uid, draft.get("gov_node", ""), text)
+    if not proposal:
+        await message.answer(t("proposal_invalid", lang,
+                               min=gov_svc.MIN_TEXT_LEN, max=gov_svc.MAX_TEXT_LEN))
+        return
+    await message.answer(t(
+        "proposal_created", lang,
+        pct=int(gov_svc.APPROVAL_PCT * 100), hours=gov_svc.VOTING_WINDOW_H,
+    ))
+
+
+# ── Agente: acciones desde la conversación ──────────────────────────────────
+
+async def _try_agent_actions(message: Message, uid: int, text: str, lang: str) -> bool:
+    """Nivel 2 (Conecta) y Nivel 3 (Actúa) del Agente (§9.2).
+
+    Retorna True si el Agente atendió el mensaje (no pasa al Thinker).
+    Requiere nodo activo; sin nodo, la conversación sigue normal.
+    """
+    node_id = await _active_node_id(uid)
+    if not node_id:
+        return False
+
+    # Nivel 2: "necesito un electricista" → proveedores verificados del nodo.
+    category = agent_svc.detect_provider_intent(text)
+    if category:
+        provs = await providers_svc.get_providers(node_id)
+        matches = [p for p in provs if p.get("category") == category] or provs
+        if not matches:
+            await message.answer(t("agent_no_providers", lang,
+                                   category=_prov_label(category, lang)))
+            return True
+        out = t("agent_providers_found", lang, category=_prov_label(category, lang)) + "\n\n"
+        for p in matches[:5]:
+            out += t(
+                "provider_entry", lang,
+                icon=providers_svc.PROVIDER_CATEGORIES.get(p.get("category", ""), "🧰"),
+                category=t("prov_" + p.get("category", "otros"), lang),
+                desc=html.escape(p.get("description", "")),
+            ) + "\n"
+        await message.answer(out)
+        return True
+
+    # Nivel 3: "dona 10 SYNX al proyecto X" → confirmación explícita, nunca
+    # se mueve SYNX sin que el usuario pulse el botón.
+    amount = agent_svc.detect_donation_intent(text)
+    if amount:
+        records = await projects_svc.list_projects(node_id)
+        project = agent_svc.match_project(records, text)
+        if not project:
+            await message.answer(t("agent_no_project_match", lang))
+            return True
+        pid = project.get("project-id", "")
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=t("btn_confirm_trade", lang),
+                callback_data=f"agent:don:{pid}:{amount:g}",
+            ),
+            InlineKeyboardButton(text=t("btn_cancel_trade", lang), callback_data="agent:cancel"),
+        ]])
+        await message.answer(
+            t("agent_donation_confirm", lang,
+              amount=f"{amount:g}", title=html.escape(project.get("title", pid))),
+            reply_markup=kb,
+        )
+        return True
+
+    return False
+
+
+@dp.callback_query(F.data.startswith("agent:"))
+async def handle_agent_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "cancel":
+        await callback.message.edit_text(t("trade_cancelled", lang))
+
+    elif action == "don":
+        pid = parts[2] if len(parts) > 2 else ""
+        # callback_data es falsificable por el cliente: validar el monto.
+        amount = rewards.parse_amount(parts[3]) if len(parts) > 3 else None
+        if amount is None:
+            await callback.answer(t("invalid_amount", lang), show_alert=True)
+            return
+        err = await projects_svc.fund_project(uid, pid, amount)
+        if err == "insufficient":
+            await callback.message.edit_text(t("project_insufficient", lang))
+        elif err in ("bad_amount", "not_active"):
+            await callback.message.edit_text(t("project_not_active", lang))
+        else:
+            await callback.message.edit_text(
+                t("agent_donation_done", lang, amount=f"{amount:g}")
+            )
+
+    await callback.answer()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# CUSTODIA ON-CHAIN: retiro de BNB / SYNERGIX (mueve fondos reales)
+# ══════════════════════════════════════════════════════════════════════════
+
+_ASSET_LABEL = {"bnb": "BNB", "synergix": "SYNERGIX"}
+
+
+@dp.callback_query(F.data.startswith("wd:"))
+async def handle_withdraw_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    ghost = get_ghost_state_manager()
+    cache = get_l1_cache()
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "asset":
+        asset = parts[2] if len(parts) > 2 else ""
+        if asset not in _ASSET_LABEL:
+            await callback.answer(); return
+        await ghost.set_state(uid, "awaiting_withdraw_address")
+        await cache.set_state_data(uid, {"wd_asset": asset})
+        await callback.message.edit_text(
+            t("withdraw_ask_address", lang, asset=_ASSET_LABEL[asset])
+        )
+
+    elif action == "confirm":
+        data = await cache.get_state_data(uid) or {}
+        asset = data.get("wd_asset", "")
+        to_addr = data.get("wd_address", "")
+        amount = data.get("wd_amount", 0.0)
+        await ghost.reset_state(uid)
+        await cache.set_state_data(uid, {})
+        if not (asset and to_addr and amount):
+            await callback.message.edit_text(t("withdraw_expired", lang))
+            await callback.answer(); return
+        await callback.message.edit_text(t("withdraw_sending", lang))
+        result = await custody_svc.withdraw(uid, to_addr, float(amount), asset)
+        if result.get("ok"):
+            if asset == "SYNERGIX":
+                from aisynergix.services import tiers as tiers_svc
+                tiers_svc.invalidate(uid)
+            tx = result["tx"]
+            tx = tx if tx.startswith("0x") else "0x" + tx
+            await callback.message.edit_text(
+                t("withdraw_sent", lang, amount=f"{amount:g}", asset=_ASSET_LABEL[asset],
+                  tx=tx, url=f"https://bscscan.com/tx/{tx}"),
+                disable_web_page_preview=True,
+            )
+        elif result.get("error") == "undecryptable":
+            # Ofrecer regenerar la wallet bajo la master key actual.
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=t("btn_wallet_reset", lang), callback_data="wd:reset"),
+            ]])
+            await callback.message.edit_text(t("withdraw_error_undecryptable", lang), reply_markup=kb)
+        else:
+            await callback.message.edit_text(
+                t("withdraw_error_" + result.get("error", "broadcast"), lang,
+                  min_bnb=custody_svc.MIN_WITHDRAW_BNB, min_token=custody_svc.MIN_WITHDRAW_TOKEN)
+            )
+
+    elif action == "cancel":
+        await ghost.reset_state(uid)
+        await cache.set_state_data(uid, {})
+        await callback.message.edit_text(t("withdraw_cancelled", lang))
+
+    elif action == "reset":
+        # Confirmación antes de abandonar la wallet vieja (acción destructiva).
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=t("btn_wallet_reset_confirm", lang), callback_data="wd:reset_go"),
+            InlineKeyboardButton(text=t("btn_cancel_trade", lang), callback_data="wd:cancel"),
+        ]])
+        await callback.message.edit_text(t("wallet_reset_confirm", lang), reply_markup=kb)
+
+    elif action == "reset_go":
+        await callback.message.edit_text(t("wallet_reset_working", lang))
+        new_addr = await wallet_svc.reset_custodial_wallet(uid)
+        if new_addr:
+            await callback.message.edit_text(t("wallet_reset_done", lang, address=new_addr))
+        else:
+            await callback.message.edit_text(t("wallet_reset_failed", lang))
+
+    await callback.answer()
+
+
+async def handle_withdraw_address_message(message: Message, uid: int, text: str, lang: str) -> None:
+    cache = get_l1_cache()
+    data = await cache.get_state_data(uid) or {}
+    to_addr = text.strip()
+    if not custody_svc.is_valid_address(to_addr):
+        await message.answer(t("withdraw_bad_address", lang))
+        return
+    data["wd_address"] = to_addr
+    await get_ghost_state_manager().set_state(uid, "awaiting_withdraw_amount")
+    await cache.set_state_data(uid, data)
+    asset = data.get("wd_asset", "bnb")
+    await message.answer(t("withdraw_ask_amount", lang, asset=_ASSET_LABEL.get(asset, asset)))
+
+
+async def handle_withdraw_amount_message(message: Message, uid: int, text: str, lang: str) -> None:
+    cache = get_l1_cache()
+    data = await cache.get_state_data(uid) or {}
+    amount = rewards.parse_amount(text)
+    if amount is None:
+        await message.answer(t("invalid_amount", lang))
+        return
+    data["wd_amount"] = amount
+    await cache.set_state_data(uid, data)
+    asset = data.get("wd_asset", "bnb")
+    # Confirmación explícita ANTES de firmar (el retiro es irreversible).
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=t("btn_withdraw_confirm", lang), callback_data="wd:confirm"),
+        InlineKeyboardButton(text=t("btn_cancel_trade", lang), callback_data="wd:cancel"),
+    ]])
+    await message.answer(
+        t("withdraw_confirm", lang, amount=f"{amount:g}",
+          asset=_ASSET_LABEL.get(asset, asset), address=html.escape(data.get("wd_address", ""))),
+        reply_markup=kb,
+    )
+
+
+@dp.callback_query(F.data == "impact:useful")
+async def handle_impact_useful(callback: CallbackQuery) -> None:
+    """'✅ útil' (PIR §7.2): +1 impacto verificado a cada aporte usado en la
+    respuesta.  El tracker paga la regalía perpetua al cruzar bloques de 100."""
+    if not callback.from_user or not callback.message:
+        return
+    lang = await get_user_language(callback.from_user.id)
+    key = (callback.message.chat.id, callback.message.message_id)
+    payload = _impact_sources.pop(key, None)
+
+    # El botón desaparece siempre: es de un solo uso.
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    if payload is None:
+        await callback.answer(t("useful_expired", lang))
+        return
+
+    # Acreditar en background — cada aporte implica lecturas/escrituras en
+    # Irys y el callback debe responder en <10 s.
+    async def _credit() -> None:
+        try:
+            n = await get_ai_manager().record_useful_sources(payload)
+            logger.info("✅ útil: %d aporte(s) acreditados (chat=%s)", n, key[0])
+        except Exception as exc:
+            logger.warning("impact useful credit falló: %s", exc)
+
+    _spawn_bot_bg(_credit())
+    await callback.answer(t("useful_thanks", lang))
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# CANJE: SYNX contable → SYNERGIX real (Fase B — gate; el pago llega en Fase C)
+# ══════════════════════════════════════════════════════════════════════════
+
+def _redeem_reason_text(reason: str, lang: str) -> str:
+    """Traduce el motivo de inelegibilidad/fallo a un mensaje accionable."""
+    if reason.startswith("pay_"):
+        # El pago on-chain falló; el SYNX ya fue reembolsado.
+        return t("redeem_pay_failed", lang)
+    keys = {
+        "not_verified": ("redeem_need_verify", {}),
+        "low_reputation": ("redeem_need_reputation",
+                           {"min": redeem_svc.REDEEM_MIN_CONTRIBUTIONS}),
+        "below_min": ("redeem_below_min", {"min": f"{redeem_svc.REDEEM_MIN_AMOUNT:,.0f}"}),
+        "insufficient_balance": ("redeem_insufficient", {}),
+        "user_cap": ("redeem_user_cap", {}),
+        "address_cap": ("redeem_address_cap", {}),
+        "address_shared": ("redeem_address_shared", {}),
+        "frozen": ("redeem_frozen", {}),
+        "budget": ("redeem_budget", {}),
+        "disabled": ("redeem_soon_generic", {}),
+    }
+    key, kw = keys.get(reason, ("redeem_ineligible", {}))
+    return t(key, lang, **kw)
+
+
+@dp.message(Command("canjear"))
+async def cmd_redeem(message: Message) -> None:
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    _known_uids.add(uid)
+    lang = await get_user_language(uid)
+    await get_ghost_state_manager().reset_state(uid)
+
+    status = await redeem_svc.redeemable_now(uid)
+    balance = status.get("synx_balance", 0.0)
+    header = t("redeem_header", lang, balance=f"{balance:,.0f}")
+
+    if not status.get("eligible"):
+        # No elegible: explicar cómo llegar a serlo (verificar wallet, aportar).
+        await message.answer(header + "\n\n" + _redeem_reason_text(status.get("reason", ""), lang))
+        return
+
+    if not status.get("enabled"):
+        # Elegible pero el canje aún no está activo (Fase B).
+        await message.answer(
+            header + "\n\n" + t("redeem_soon", lang,
+                                max=f"{status['max']:,.0f}", address=status["address"])
+        )
+        return
+
+    # Elegible y activo (Fase C): botón para reclamar el máximo.
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text=t("btn_redeem_claim", lang, max=f"{status['max']:,.0f}"),
+            callback_data="redeem:claim",
+        ),
+    ]])
+    await message.answer(
+        header + "\n\n" + t("redeem_ready", lang,
+                            max=f"{status['max']:,.0f}", address=status["address"]),
+        reply_markup=kb,
+    )
+
+
+@dp.callback_query(F.data == "redeem:claim")
+async def handle_redeem_claim(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.message:
+        return
+    uid = callback.from_user.id
+    lang = await get_user_language(uid)
+    status = await redeem_svc.redeemable_now(uid)
+    if not (status.get("enabled") and status.get("eligible")):
+        await callback.answer(t("redeem_ineligible", lang))
+        return
+    await callback.answer()
+    await callback.message.edit_text(t("redeem_processing", lang))
+    result = await redeem_svc.request_redemption(uid, status["max"])
+    if result.get("ok"):
+        tx = result["tx"]
+        tx = tx if tx.startswith("0x") else "0x" + tx
+        await callback.message.edit_text(
+            t("redeem_claimed", lang, amount=f"{result['amount']:,.0f}",
+              synergix=f"{result['synergix']:,.0f}", address=result["address"],
+              tx=tx, url=f"https://bscscan.com/tx/{tx}"),
+            disable_web_page_preview=True,
+        )
+    else:
+        await callback.message.edit_text(_redeem_reason_text(result.get("reason", ""), lang))
 
 
 @dp.message(Command("admin"))
@@ -1050,7 +3309,15 @@ async def handle_sticker_message(message: Message) -> None:
     current_state = await ghost.get_state(uid)
     if current_state in (
         "awaiting_contribution", "awaiting_buy_amount", "awaiting_sell_amount",
-        "awaiting_wallet_address", "awaiting_wallet_signature",
+        "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
+        "awaiting_provider_desc", "awaiting_provider_payment",
+        "awaiting_project_name", "awaiting_project_goal",
+        "awaiting_project_fund", "awaiting_project_evidence",
+        "awaiting_bounty_pool", "awaiting_lesson_answer",
+        "awaiting_node_country", "awaiting_node_region",
+        "awaiting_problem_text", "awaiting_solution_text",
+        "awaiting_proposal_text",
+        "awaiting_withdraw_address", "awaiting_withdraw_amount",
     ):
         return
 
@@ -1117,6 +3384,70 @@ async def handle_free_conversation(message: Message) -> None:
         await handle_wallet_signature_message(message, uid, text, lang)
         return
 
+    if current_state == "awaiting_node_name":
+        await handle_node_name_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_provider_desc":
+        await handle_provider_desc_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_provider_payment":
+        await handle_provider_payment_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_project_name":
+        await handle_project_name_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_project_goal":
+        await handle_project_goal_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_project_evidence":
+        await handle_project_evidence_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_project_fund":
+        await handle_project_fund_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_bounty_pool":
+        await handle_bounty_pool_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_lesson_answer":
+        await handle_lesson_answer_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_node_country":
+        await handle_node_country_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_node_region":
+        await handle_node_region_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_problem_text":
+        await handle_problem_text_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_solution_text":
+        await handle_solution_text_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_proposal_text":
+        await handle_proposal_text_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_withdraw_address":
+        await handle_withdraw_address_message(message, uid, text, lang)
+        return
+
+    if current_state == "awaiting_withdraw_amount":
+        await handle_withdraw_amount_message(message, uid, text, lang)
+        return
+
     await handle_conversation_message(message, uid, text, lang)
 
 
@@ -1166,6 +3497,29 @@ async def handle_contribution_message(
                 rank=_t_rank(result.get("rank", "🌱 Iniciado"), lang),
             )
 
+            synx_gained = result.get("synx_gained", 0)
+            if synx_gained:
+                mult = result.get("synx_multiplier", 1.0)
+                if mult and mult > 1.0:
+                    response_text += "\n" + t(
+                        "contribution_synx", lang,
+                        synx=f"{synx_gained:.0f}", multiplier=f"{mult:.0f}",
+                    )
+                else:
+                    response_text += "\n" + t(
+                        "contribution_synx_plain", lang, synx=f"{synx_gained:.0f}"
+                    )
+                # Desglose §5.3 (el vacío ya se muestra arriba con su ×).
+                extra = [b for b in result.get("synx_bonuses", []) if b != "gap"]
+                if extra:
+                    details = ", ".join(t(f"bonus_{b}", lang) for b in extra)
+                    response_text += "\n" + t("synx_bonus_detail", lang, details=details)
+                streak = result.get("streak_days", 0)
+                if streak >= 2:
+                    response_text += "\n" + t("streak_line", lang, days=streak)
+                if result.get("oracle_review"):
+                    response_text += "\n" + t("oracle_review_pending", lang)
+
             keyboard = get_main_keyboard(lang)
             await message.answer(response_text, reply_markup=keyboard)
 
@@ -1180,6 +3534,10 @@ async def handle_contribution_message(
 
         elif result["status"] == "too_short":
             await message.answer(t("contribution_too_short", lang))
+        elif result["status"] == "too_long":
+            await message.answer(
+                t("contribution_too_long", lang, max_length=result.get("max_length", 8000))
+            )
         elif result["status"] == "duplicate":
             await message.answer(t("contribution_duplicate", lang))
         elif result["status"] == "quota_exceeded":
@@ -1266,6 +3624,17 @@ async def handle_conversation_message(
     # The full verbose response is suppressed; only emojis are extracted and shown.
     is_emoji_msg = _is_emoji_only(text)
 
+    # Agente Synergix (§9.2): intenciones de acción — buscar proveedores
+    # (Nivel 2) o donar a un proyecto (Nivel 3, con confirmación) — se
+    # atienden aquí y no llegan al Thinker.  Detectores deterministas,
+    # sin coste de LLM.
+    if not is_emoji_msg:
+        try:
+            if await _try_agent_actions(message, uid, text, lang):
+                return
+        except Exception as exc:
+            logger.warning("agent actions uid=%s falló: %s", uid, exc)
+
     # Image generation: the Judge classifies whether this is an explicit request
     # to create an image.  If so, handle it here and return — never fall through
     # to the chat Thinker.  Emoji-only messages are never image requests.
@@ -1294,6 +3663,7 @@ async def handle_conversation_message(
     saw_answer = False
     memory_count = 0
     web_used = False
+    sources_payload = ""
     last_edit = 0.0
     THINK_PREVIEW_CHARS = 800  # Telegram caps messages at 4096; show tail only
     THINK_EDIT_INTERVAL = 1.5  # safe distance from Telegram's edit rate limit
@@ -1316,6 +3686,9 @@ async def handle_conversation_message(
                 continue
             if kind == "web_used":
                 web_used = True
+                continue
+            if kind == "sources":
+                sources_payload = chunk
                 continue
 
             now = asyncio.get_event_loop().time()
@@ -1408,13 +3781,17 @@ async def handle_conversation_message(
             final_text += f"\n\n<i>{t('rag_memory_used', lang, count=memory_count)}</i>"
         elif web_used:
             final_text += f"\n\n<i>{t('web_search_used', lang)}</i>"
+        # PIR: si la respuesta usó memoria inmortal, ofrecer confirmar "✅ útil".
+        useful_kb = _useful_button_kb(lang) if sources_payload else None
         try:
-            await sent_msg.edit_text(final_text, parse_mode="HTML")
+            await sent_msg.edit_text(final_text, parse_mode="HTML", reply_markup=useful_kb)
         except Exception:
             try:
-                await sent_msg.edit_text(final_text)
+                await sent_msg.edit_text(final_text, reply_markup=useful_kb)
             except Exception:
-                pass
+                useful_kb = None
+        if useful_kb is not None and sources_payload:
+            _register_impact_sources(message.chat.id, sent_msg.message_id, sources_payload)
 
     except Exception as e:
         logger.exception("Error en conversación streaming de %s: %s", uid, e)
@@ -1446,9 +3823,9 @@ async def handle_buy_amount_message(
     ghost = get_ghost_state_manager()
     cache = get_l1_cache()
 
-    try:
-        bnb_in = float(text.replace(",", "."))
-    except ValueError:
+    from aisynergix.services.rewards import parse_amount
+    bnb_in = parse_amount(text)
+    if bnb_in is None:
         await message.answer(t("invalid_amount", lang))
         return
 
@@ -1487,9 +3864,9 @@ async def handle_sell_amount_message(
     ghost = get_ghost_state_manager()
     cache = get_l1_cache()
 
-    try:
-        syn_in = float(text.replace(",", "."))
-    except ValueError:
+    from aisynergix.services.rewards import parse_amount
+    syn_in = parse_amount(text)
+    if syn_in is None:
         await message.answer(t("invalid_amount", lang))
         return
 
@@ -1565,11 +3942,44 @@ async def handle_wallet_signature_message(
     await message.answer(t("verify_success", lang, address=recovered))
 
 
+# Comandos del menú de Telegram: (comando, clave de locale de su descripción).
+_MENU_COMMANDS = [
+    ("start",       "cmd_start"),
+    ("nodos",       "cmd_nodos"),
+    ("crear_nodo",  "cmd_crear_nodo"),
+    ("proveedores", "cmd_proveedores"),
+    ("proyectos",   "cmd_proyectos"),
+    ("problemas",   "cmd_problemas"),
+    ("bounties",    "cmd_bounties"),
+    ("aprender",    "cmd_aprender"),
+    ("oraculo",     "cmd_oraculo"),
+    ("propuestas",  "cmd_propuestas"),
+    ("pasaporte",   "cmd_pasaporte"),
+    ("canjear",     "cmd_canjear"),
+]
+
+
+def _commands_for(lang: str) -> list:
+    # Telegram limita la descripción a 256 caracteres; las nuestras son cortas.
+    return [BotCommand(command=cmd, description=t(key, lang)[:256])
+            for cmd, key in _MENU_COMMANDS]
+
+
 async def set_bot_commands():
-    commands = [
-        BotCommand(command="start", description="🔥 Iniciar / Despertar a Synergix"),
-    ]
-    await bot.set_my_commands(commands)
+    """Publica el menú de comandos en los 10 idiomas (§ i18n total).
+
+    Telegram muestra a cada usuario el menú de su idioma de interfaz
+    (language_code); el menú por defecto (sin código) queda en español para
+    cualquier idioma fuera de los 10 soportados.
+    """
+    await bot.set_my_commands(_commands_for("es"))  # default global
+    for lang_code in LANG_NAMES:
+        try:
+            await bot.set_my_commands(
+                _commands_for(lang_code), language_code=lang_code,
+            )
+        except Exception as exc:
+            logger.warning("set_my_commands(%s) falló: %s", lang_code, exc)
 
 
 async def on_startup():
@@ -1613,6 +4023,12 @@ async def on_startup():
 
     # Start background loop that detects new challenges and notifies users
     asyncio.create_task(_challenge_broadcast_loop())
+
+    # Notificación push a Oráculos cuando se abre una revisión (§5.4).
+    oracle_svc.set_review_notifier(_notify_oracles_new_review)
+
+    # Liquidación de royalties de la API de Conocimiento a los autores (③).
+    asyncio.create_task(_api_settlement_loop())
 
     from aisynergix.services.rag_engine import get_rag_engine
     rag = await get_rag_engine()

@@ -512,6 +512,19 @@ _PROFILE_TAG_MAP: Dict[str, str] = {
     "last_seen_ts":        "last-seen-ts",
     "fsm_state":           "fsm-state",
     "wallet_address":      "wallet-address",
+    # Economía SYNX (saldo contable en Irys) + nodo activo del usuario.
+    "synx_balance":        "synx-balance",
+    "active_node":         "active-node",
+    # Wallet custodial generada por el bot (distinta de wallet-address, que
+    # es la wallet propia del usuario verificada por firma).
+    "custodial_address":   "custodial-address",
+    # Racha de días consecutivos contribuyendo (§5.3).
+    "streak_days":         "streak-days",
+    "last_aporte_date":    "last-aporte-date",
+    # SYNX ganados históricos (Passport §10.2) — solo crece.
+    "synx_earned_total":   "synx-earned-total",
+    # Anti-farming del bono de fundador (una sola vez por usuario).
+    "founder_bonus_claimed": "founder-bonus-claimed",
 }
 _PROFILE_TAG_RMAP: Dict[str, str] = {v: k for k, v in _PROFILE_TAG_MAP.items()}
 
@@ -545,6 +558,37 @@ async def read_user_pointer(uid_ofuscado: str) -> Optional[Dict[str, str]]:
     except Exception as exc:
         logger.warning("read_user_pointer %s falló: %s", uid_ofuscado, exc)
     return None
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def profile_exists(uid_ofuscado: str) -> bool:
+    """True si ya existe un ``user-profile`` sellado en Irys para el usuario.
+
+    Señal de existencia FIABLE e independiente de los contadores de actividad
+    (puntos/usos): sirve para distinguir un usuario genuinamente nuevo de uno
+    que regresa pero que todavía no ha contribuido.  Comprueba primero el
+    puntero (camino rápido) y, como respaldo para perfiles antiguos escritos
+    antes del mecanismo de puntero, una consulta directa a ``user-profile``.
+
+    Devuelve ``False`` ante un fallo de lectura: es conservador (peor caso, se
+    muestra la bienvenida de nuevo una vez), pero el guard anti-regresión de
+    ``_do_update_profile`` impide que ese re-sellado pise el historial real.
+    """
+    try:
+        if await read_user_pointer(uid_ofuscado):
+            return True
+        node = await _query_latest([
+            {"name": "data-type", "value": "user-profile"},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ])
+        return node is not None
+    except Exception as exc:
+        logger.warning("profile_exists %s falló: %s", uid_ofuscado, exc)
+        return False
 
 
 @retry(
@@ -734,6 +778,9 @@ async def read_aporte(tx_id: str) -> Tuple[str, Dict[str, str]]:
             # pre-PR2 aportes (those will be indexed using a truncated raw
             # text fallback in the brain-side code).
             "content_summary": rt.get("content-summary", ""),
+            # Nodo del aporte (§4): permite el boost de memoria por nodo en el
+            # RAG. Vacío para aportes fuera de nodo.
+            "node_id": rt.get("node-id", ""),
         }
     return texto, tags
 
@@ -1041,6 +1088,1318 @@ async def upload_log(date_str: str, log_content: str) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# PRUEBA DE IMPACTO REAL (PIR) — Módulo 5 (§7)
+#
+# Cada aporte tiene un contador de impacto vivo:
+#   data-type=impact-counter  → contador acumulado por aporte (última
+#                               versión gana, mismo patrón que user-profile).
+#   data-type=impact-royalty  → registro PÚBLICO de cada regalía pagada
+#                               {aporte_txId, impactos, SYNX_pagado} (§7.2).
+# ═══════════════════════════════════════════════════════════════════════
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_impact_counter(
+    aporte_tx: str, author_hash: str, counts: Dict[str, Any]
+) -> str:
+    """Sella la versión vigente del contador de impacto de un aporte."""
+    tags = [
+        {"name": "data-type",  "value": "impact-counter"},
+        {"name": "aporte-tx",  "value": aporte_tx},
+        {"name": "author-uid", "value": author_hash},
+        {"name": "views",      "value": str(int(counts.get("views", 0)))},
+        {"name": "useful",     "value": str(int(counts.get("useful", 0)))},
+        {"name": "references", "value": str(int(counts.get("references", 0)))},
+        {"name": "royalty-blocks-paid", "value": str(int(counts.get("royalty_blocks_paid", 0)))},
+        {"name": "synx-paid",  "value": f"{float(counts.get('synx_paid', 0.0)):.2f}"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.debug("📈 Impact counter %s sellado (tx=%s)", aporte_tx[:12], tx_id)
+    return tx_id
+
+
+async def read_impact_counter(aporte_tx: str) -> Optional[Dict[str, str]]:
+    """Lee el contador de impacto vigente de un aporte (tags) o None."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "impact-counter"},
+            {"name": "aporte-tx", "value": aporte_tx},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_impact_counter %s falló: %s", aporte_tx[:12], exc)
+    return None
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_impact_royalty(
+    aporte_tx: str, author_hash: str, impacts: int, synx: float
+) -> str:
+    """Registro público e inmutable de una regalía pagada (§7.2/§7.4)."""
+    body = {
+        "aporte_txId": aporte_tx,
+        "author": author_hash,
+        "impactos": impacts,
+        "SYNX_pagado": synx,
+        "paid_at": int(datetime.now(timezone.utc).timestamp()),
+    }
+    tags = [
+        {"name": "data-type",  "value": "impact-royalty"},
+        {"name": "aporte-tx",  "value": aporte_tx},
+        {"name": "author-uid", "value": author_hash},
+        {"name": "synx",       "value": f"{synx:.2f}"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(json.dumps(body).encode("utf-8"), tags)
+    logger.info(
+        "💫 Regalía PIR: aporte=%s autor=%s +%.2f SYNX. Ver dato: %s",
+        aporte_tx[:12], author_hash, synx, _gw(tx_id),
+    )
+    return tx_id
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# WALLET CUSTODIAL — keystore V3 cifrado
+#
+# El keystore se cifra en services/wallet.py ANTES de llegar aquí (Irys es
+# público y permanente: jamás debe subirse una clave en claro).  El patrón
+# es el habitual: última versión por uid-hash gana.
+# ═══════════════════════════════════════════════════════════════════════
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_custodial_wallet(
+    uid_ofuscado: str, address: str, keystore: Dict[str, Any]
+) -> str:
+    """Sella el keystore V3 CIFRADO de la wallet custodial de un usuario."""
+    content = json.dumps(keystore, ensure_ascii=False).encode("utf-8")
+    tags = [
+        {"name": "data-type",      "value": "custodial-wallet"},
+        {"name": "uid-hash",       "value": uid_ofuscado},
+        {"name": "wallet-address", "value": address},
+        {"name": "Content-Type",   "value": "application/json"},
+    ]
+    tx_id = await _upload(content, tags)
+    logger.info(
+        "👛 Keystore custodial de %s sellado en Irys (addr=%s). Ver dato: %s",
+        uid_ofuscado, address, _gw(tx_id),
+    )
+    return tx_id
+
+
+async def read_custodial_wallet(uid_ofuscado: str) -> Optional[Dict[str, Any]]:
+    """Lee la wallet custodial vigente: {"address": str, "keystore": dict} o None."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "custodial-wallet"},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ])
+        if not node:
+            return None
+        address = _node_tags(node).get("wallet-address", "")
+        raw = await _fetch(node["id"])
+        keystore = json.loads(raw.decode("utf-8"))
+        return {"address": address, "keystore": keystore}
+    except Exception as exc:
+        logger.warning("read_custodial_wallet %s falló: %s", uid_ofuscado, exc)
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# NODOS DE COMUNIDAD
+#
+# Un nodo es una comunidad temática/geográfica con su propio grafo de
+# conocimiento dentro de Synergix.  Se modela con dos DataItems inmutables:
+#
+#   data-type=node         → registro del nodo (id, nombre, tipo, idioma,
+#                            temas, creador).  Mutable por patrón "última
+#                            versión gana" (mismo node-id, nuevo timestamp).
+#   data-type=node-member  → membresía (node-id, uid-hash, rol, estado).
+#                            Última versión por (node-id, uid-hash) gana, así
+#                            "unirse"/"salir" se expresan re-escribiendo el rol.
+#
+# Los aportes hechos dentro de un nodo llevan además el tag `node-id` y
+# `topic`, lo que permite calcular la cobertura de conocimiento del nodo.
+# ═══════════════════════════════════════════════════════════════════════
+
+def _dedupe_latest(nodes: List[Dict[str, Any]], key_tag: str) -> List[Dict[str, str]]:
+    """Devuelve los tags de la versión más reciente por cada valor de ``key_tag``.
+
+    ``nodes`` ya viene ordenado DESC por timestamp (cortesía de _query_all),
+    así que la primera aparición de cada clave es la vigente.
+    """
+    seen: Set[str] = set()
+    out: List[Dict[str, str]] = []
+    for node in nodes:
+        tags = _node_tags(node)
+        key = tags.get(key_tag, "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(tags)
+    return out
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_node(
+    node_id: str,
+    name: str,
+    node_type: str,
+    creator_hash: str,
+    language: str,
+    topics: List[str],
+    country: str = "",
+    region: str = "",
+    geo_scope: str = "",
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Sube (o re-versiona) el registro de un nodo a Irys. Retorna el txId."""
+    body = {
+        "node_id": node_id,
+        "name": name,
+        "node_type": node_type,
+        "creator": creator_hash,
+        "language": language,
+        "topics": topics,
+        "country": country,
+        "region": region,
+        "geo_scope": geo_scope,
+        "created_at": int(datetime.now(timezone.utc).timestamp()),
+        **(extra or {}),
+    }
+    tags = [
+        {"name": "data-type",    "value": "node"},
+        {"name": "node-id",      "value": node_id},
+        {"name": "node-name",    "value": name[:120]},
+        {"name": "node-type",    "value": node_type},
+        {"name": "creator",      "value": creator_hash},
+        {"name": "language",     "value": language},
+        {"name": "topics",       "value": ",".join(topics)[:300]},
+        # Ubicación territorial (país → granularidad → lugar); vacía en nodos
+        # a-geográficos.
+        {"name": "country",      "value": (country or "")[:10]},
+        {"name": "region",       "value": (region or "")[:80]},
+        {"name": "geo-scope",    "value": (geo_scope or "")[:20]},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    content = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    tx_id = await _upload(content, tags)
+    logger.info("🏘️ Nodo %s guardado en Irys. Ver dato: %s", node_id, _gw(tx_id))
+    return tx_id
+
+
+async def get_node_record(node_id: str) -> Optional[Dict[str, str]]:
+    """Lee el registro vigente de un nodo por su id. None si no existe."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "node"},
+            {"name": "node-id",   "value": node_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("get_node_record %s falló: %s", node_id, exc)
+    return None
+
+
+async def list_node_records(limit: int = 200) -> List[Dict[str, str]]:
+    """Lista todos los nodos (versión vigente de cada uno), más nuevos primero."""
+    try:
+        nodes = await _query_all([{"name": "data-type", "value": "node"}], limit=limit)
+        return _dedupe_latest(nodes, "node-id")
+    except Exception as exc:
+        logger.warning("list_node_records falló: %s", exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_node_member(
+    node_id: str, uid_ofuscado: str, role: str = "member", status: str = "active"
+) -> str:
+    """Escribe una membresía (o la re-versiona para salir/cambiar rol)."""
+    tags = [
+        {"name": "data-type",    "value": "node-member"},
+        {"name": "node-id",      "value": node_id},
+        {"name": "uid-hash",     "value": uid_ofuscado},
+        {"name": "role",         "value": role},
+        {"name": "member-status", "value": status},
+        {"name": "joined-at",    "value": str(int(datetime.now(timezone.utc).timestamp()))},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("👥 Membresía %s@%s (%s/%s) en Irys.", uid_ofuscado, node_id, role, status)
+    return tx_id
+
+
+async def get_node_member(node_id: str, uid_ofuscado: str) -> Optional[Dict[str, str]]:
+    """Lee la membresía vigente de un usuario en un nodo (o None)."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "node-member"},
+            {"name": "node-id",   "value": node_id},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("get_node_member %s@%s falló: %s", uid_ofuscado, node_id, exc)
+    return None
+
+
+async def list_node_members(node_id: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Miembros activos de un nodo (última membresía por usuario con estado active)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "node-member"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        latest = _dedupe_latest(nodes, "uid-hash")
+        return [m for m in latest if m.get("member-status", "active") == "active"]
+    except Exception as exc:
+        logger.warning("list_node_members %s falló: %s", node_id, exc)
+        return []
+
+
+async def list_user_memberships(uid_ofuscado: str, limit: int = 500) -> List[Dict[str, str]]:
+    """Nodos a los que pertenece un usuario (membresías activas, última por nodo)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "node-member"},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ], limit=limit)
+        latest = _dedupe_latest(nodes, "node-id")
+        return [m for m in latest if m.get("member-status", "active") == "active"]
+    except Exception as exc:
+        logger.warning("list_user_memberships %s falló: %s", uid_ofuscado, exc)
+        return []
+
+
+async def list_node_aportes(node_id: str, limit: int = 2000) -> List[Dict[str, str]]:
+    """Lista los aportes asociados a un nodo (tags de cada aporte)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "aporte"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        # Incluye el tx id del aporte (clave del contador de impacto).
+        return [{**_node_tags(n), "id": n.get("id", "")} for n in nodes]
+    except Exception as exc:
+        logger.warning("list_node_aportes %s falló: %s", node_id, exc)
+        return []
+
+
+async def count_node_aportes(node_id: str) -> int:
+    """Número de aportes asociados a un nodo."""
+    return len(await list_node_aportes(node_id))
+
+
+# ── Bonds de nodo (SYNERGIX real bloqueado — Fase A) ──────────────────────
+# Crear un nodo exige bloquear un bond de SYNERGIX real en la wallet custodial
+# del creador.  El token NO se mueve: se marca como bloqueado con un DataItem
+# node-bond (última versión por node-id gana).  Retiro y venta descuentan el
+# bond bloqueado del saldo disponible.
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_node_bond(
+    node_id: str, uid_ofuscado: str, amount: float, status: str,
+    unbond_until: int = 0,
+) -> str:
+    """Sella (o re-versiona) el bond de un nodo. status: locked|unbonding|released|slashed."""
+    tags = [
+        {"name": "data-type",    "value": "node-bond"},
+        {"name": "node-id",      "value": node_id},
+        {"name": "uid-hash",     "value": uid_ofuscado},
+        {"name": "amount",       "value": f"{amount:.4f}"},
+        {"name": "bond-status",  "value": status},
+        {"name": "unbond-until", "value": str(int(unbond_until))},
+        {"name": "created-ts",   "value": str(int(datetime.now(timezone.utc).timestamp()))},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🔒 Bond de nodo %s (%s, %.0f SYNERGIX) → %s en Irys.",
+                node_id, status, amount, uid_ofuscado)
+    return tx_id
+
+
+async def get_node_bond(node_id: str) -> Optional[Dict[str, str]]:
+    """Bond vigente de un nodo (tags) o None."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "node-bond"},
+            {"name": "node-id",   "value": node_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("get_node_bond %s falló: %s", node_id, exc)
+    return None
+
+
+async def list_user_bonds(uid_ofuscado: str, limit: int = 500) -> List[Dict[str, str]]:
+    """Bonds del usuario (última versión por nodo)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "node-bond"},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "node-id")
+    except Exception as exc:
+        logger.warning("list_user_bonds %s falló: %s", uid_ofuscado, exc)
+        return []
+
+
+# ── Canjes / redenciones (SYNX contable → SYNERGIX real) — Fase B/C ───────
+# Registro APPEND-ONLY de cada solicitud de canje.  Sirve de (1) auditoría
+# pública, (2) fuente para los límites por-usuario y por-dirección del gate
+# anti-Sybil, y (3) ledger de idempotencia para el pago (Fase C).
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_redemption(
+    redemption_id: str, uid_ofuscado: str, address: str, amount: float,
+    status: str, tx: str = "", synergix: float = 0.0,
+) -> str:
+    """Sella una redención. status: requested|paid|rejected. tx: hash on-chain (al pagar).
+
+    ``amount`` = SYNX canjeado; ``synergix`` = SYNERGIX real pagado (para el
+    presupuesto de emisión).
+    """
+    tags = [
+        {"name": "data-type",      "value": "redemption"},
+        {"name": "redemption-id",  "value": redemption_id},
+        {"name": "uid-hash",       "value": uid_ofuscado},
+        {"name": "address",        "value": address.lower()},
+        {"name": "amount",         "value": f"{amount:.4f}"},
+        {"name": "synergix",       "value": f"{synergix:.4f}"},
+        {"name": "redeem-status",  "value": status},
+        {"name": "ts",             "value": str(int(datetime.now(timezone.utc).timestamp()))},
+        {"name": "tx",             "value": tx},
+        {"name": "Content-Type",   "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("💱 Redención %s (%s, %.2f SYNX → %s) sellada.",
+                redemption_id, status, amount, address)
+    return tx_id
+
+
+async def get_redemption(redemption_id: str) -> Optional[Dict[str, str]]:
+    """Última versión de una redención (para idempotencia del pago)."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type",     "value": "redemption"},
+            {"name": "redemption-id", "value": redemption_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("get_redemption %s falló: %s", redemption_id, exc)
+    return None
+
+
+async def list_user_redemptions(uid_ofuscado: str, limit: int = 500) -> List[Dict[str, str]]:
+    """Todas las redenciones de un usuario (append-only; el caller filtra por ventana)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "redemption"},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_user_redemptions %s falló: %s", uid_ofuscado, exc)
+        return []
+
+
+async def list_address_redemptions(address: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Todas las redenciones hacia una dirección de pago (defensa Sybil por dirección)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "redemption"},
+            {"name": "address",   "value": address.lower()},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_address_redemptions %s falló: %s", address, exc)
+        return []
+
+
+async def list_all_redemptions(limit: int = 5000) -> List[Dict[str, str]]:
+    """Última versión de cada redención (dedupe por id) — para el presupuesto diario."""
+    try:
+        nodes = await _query_all([{"name": "data-type", "value": "redemption"}], limit=limit)
+        return _dedupe_latest(nodes, "redemption-id")
+    except Exception as exc:
+        logger.warning("list_all_redemptions falló: %s", exc)
+        return []
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ECONOMÍA VIVA (Fase 2): PROVEEDORES · PROYECTOS · ORÁCULOS
+#
+#   data-type=provider       → profesional verificado de un nodo (última
+#                              versión por uid gana; status active|inactive).
+#   data-type=project        → proyecto de financiamiento colectivo (última
+#                              versión por project-id gana; el status es la
+#                              máquina de estados: active→voting→completed|refunded).
+#   data-type=project-fund   → contribución SYNX a un proyecto (append-only).
+#   data-type=project-vote   → voto de un financiador (última por uid gana).
+#   data-type=oracle-stake   → stake de un Juez Oráculo (última por uid gana).
+#   data-type=oracle-review  → revisión de un aporte score≥8 (keyed por
+#                              aporte-tx; status pending→approved|rejected|expired).
+#   data-type=oracle-vote    → voto 👍/👎 de un oráculo (última por uid gana).
+# ═══════════════════════════════════════════════════════════════════════
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_provider(
+    node_id: str, uid_hash: str, category: str, description: str,
+    status: str = "active",
+) -> str:
+    tags = [
+        {"name": "data-type",       "value": "provider"},
+        {"name": "node-id",         "value": node_id},
+        {"name": "uid-hash",        "value": uid_hash},
+        {"name": "category",        "value": category},
+        {"name": "description",     "value": (description or "")[:200]},
+        {"name": "provider-status", "value": status},
+        {"name": "Content-Type",    "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("💼 Proveedor %s@%s (%s) sellado en Irys.", uid_hash, node_id, category)
+    return tx_id
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_payment(
+    node_id: str, from_hash: str, to_hash: str, amount: float, memo: str = "",
+) -> str:
+    """Registro append-only de un pago SYNX entre dos usuarios (§6.2, uso 2)."""
+    tags = [
+        {"name": "data-type",  "value": "synx-payment"},
+        {"name": "node-id",    "value": node_id},
+        {"name": "from-hash",  "value": from_hash},
+        {"name": "to-hash",    "value": to_hash},
+        {"name": "amount",     "value": f"{amount:.2f}"},
+        {"name": "memo",       "value": (memo or "")[:120]},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("💸 Pago SYNX %.2f: %s → %s (%s)", amount, from_hash, to_hash, node_id)
+    return tx_id
+
+
+async def list_node_providers(node_id: str, limit: int = 500) -> List[Dict[str, str]]:
+    """Proveedores activos de un nodo (última versión por usuario)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "provider"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        latest = _dedupe_latest(nodes, "uid-hash")
+        return [p for p in latest if p.get("provider-status", "active") == "active"]
+    except Exception as exc:
+        logger.warning("list_node_providers %s falló: %s", node_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_project(
+    project_id: str, node_id: str, creator_hash: str, title: str,
+    goal: float, status: str, voting_until: int = 0, evidence: str = "",
+) -> str:
+    tags = [
+        {"name": "data-type",      "value": "project"},
+        {"name": "project-id",     "value": project_id},
+        {"name": "node-id",        "value": node_id},
+        {"name": "creator",        "value": creator_hash},
+        {"name": "title",          "value": (title or "")[:120]},
+        {"name": "goal",           "value": f"{goal:.2f}"},
+        {"name": "project-status", "value": status},
+        {"name": "voting-until",   "value": str(int(voting_until))},
+        # Evidencia de cumplimiento (hitos/documentación) que el creador debe
+        # aportar antes de que se libere el escrow (verificación obligatoria).
+        {"name": "evidence",       "value": (evidence or "")[:400]},
+        {"name": "Content-Type",   "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🏗️ Proyecto %s (%s) → %s en Irys.", project_id, status, _gw(tx_id))
+    return tx_id
+
+
+async def read_project(project_id: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type",  "value": "project"},
+            {"name": "project-id", "value": project_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_project %s falló: %s", project_id, exc)
+    return None
+
+
+async def list_node_projects(node_id: str, limit: int = 200) -> List[Dict[str, str]]:
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "project"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "project-id")
+    except Exception as exc:
+        logger.warning("list_node_projects %s falló: %s", node_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_project_fund(project_id: str, uid_hash: str, amount: float) -> str:
+    """Registro append-only de una contribución al escrow de un proyecto."""
+    tags = [
+        {"name": "data-type",  "value": "project-fund"},
+        {"name": "project-id", "value": project_id},
+        {"name": "uid-hash",   "value": uid_hash},
+        {"name": "amount",     "value": f"{amount:.2f}"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_project_funds(project_id: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """TODAS las contribuciones de un proyecto (append-only, sin dedupe)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",  "value": "project-fund"},
+            {"name": "project-id", "value": project_id},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_project_funds %s falló: %s", project_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_project_vote(project_id: str, uid_hash: str, vote: bool) -> str:
+    tags = [
+        {"name": "data-type",  "value": "project-vote"},
+        {"name": "project-id", "value": project_id},
+        {"name": "uid-hash",   "value": uid_hash},
+        {"name": "vote",       "value": "yes" if vote else "no"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_project_votes(project_id: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Voto vigente de cada financiador (última versión por usuario)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",  "value": "project-vote"},
+            {"name": "project-id", "value": project_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "uid-hash")
+    except Exception as exc:
+        logger.warning("list_project_votes %s falló: %s", project_id, exc)
+        return []
+
+
+# ── Bounties de conocimiento (Proof-of-Knowledge, §7.4 ampliado) ──────────
+# Un patrocinador financia un pool para llenar un vacío (nodo+tema). Cada
+# aporte verificado a ese tema paga una recompensa fija hasta agotar el pool.
+# El registro `bounty` es versionado (última versión gana: estado + pagados);
+# `bounty-claim` es append-only (un pago por aporte, idempotente por tx).
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_bounty(
+    bounty_id: str, node_id: str, topic: str, sponsor_hash: str,
+    pool: float, reward: float, per_user: int, deadline: int,
+    status: str, paid_count: int = 0,
+) -> str:
+    tags = [
+        {"name": "data-type",     "value": "bounty"},
+        {"name": "bounty-id",     "value": bounty_id},
+        {"name": "node-id",       "value": node_id},
+        {"name": "topic",         "value": (topic or "")[:60]},
+        {"name": "sponsor",       "value": sponsor_hash},
+        {"name": "pool",          "value": f"{pool:.2f}"},
+        {"name": "reward",        "value": f"{reward:.2f}"},
+        {"name": "per-user",      "value": str(int(per_user))},
+        {"name": "deadline",      "value": str(int(deadline))},
+        {"name": "bounty-status", "value": status},
+        {"name": "paid-count",    "value": str(int(paid_count))},
+        {"name": "Content-Type",  "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🎯 Bounty %s (%s, pool %.0f) sellado en Irys.", bounty_id, status, pool)
+    return tx_id
+
+
+async def read_bounty(bounty_id: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "bounty"},
+            {"name": "bounty-id", "value": bounty_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_bounty %s falló: %s", bounty_id, exc)
+    return None
+
+
+async def list_node_bounties(node_id: str, limit: int = 200) -> List[Dict[str, str]]:
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "bounty"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "bounty-id")
+    except Exception as exc:
+        logger.warning("list_node_bounties %s falló: %s", node_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_bounty_claim(
+    bounty_id: str, author_hash: str, aporte_tx: str, amount: float,
+) -> str:
+    """Pago append-only de un aporte verificado contra un bounty."""
+    tags = [
+        {"name": "data-type",  "value": "bounty-claim"},
+        {"name": "bounty-id",  "value": bounty_id},
+        {"name": "author-uid", "value": author_hash},
+        {"name": "aporte-tx",  "value": aporte_tx},
+        {"name": "amount",     "value": f"{amount:.2f}"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_bounty_claims(bounty_id: str, limit: int = 2000) -> List[Dict[str, str]]:
+    """TODOS los pagos de un bounty (append-only, sin dedupe)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "bounty-claim"},
+            {"name": "bounty-id", "value": bounty_id},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_bounty_claims %s falló: %s", bounty_id, exc)
+        return []
+
+
+async def list_bounty_claims_by_author(author_hash: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Todos los bounties que un autor ha cobrado (para el Passport)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",  "value": "bounty-claim"},
+            {"name": "author-uid", "value": author_hash},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_bounty_claims_by_author %s falló: %s", author_hash, exc)
+        return []
+
+
+# ── API de Conocimiento que paga a humanos (Proof-of-Knowledge ③) ─────────
+# `api-key` versionado (última versión = saldo vigente); `api-usage`
+# versionado (pending → settled) para la liquidación idempotente.
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_api_key(key_hash: str, owner: str, balance: float, status: str = "active") -> str:
+    tags = [
+        {"name": "data-type",  "value": "api-key"},
+        {"name": "key-hash",   "value": key_hash},
+        {"name": "owner",      "value": owner},
+        {"name": "balance",    "value": f"{balance:.4f}"},
+        {"name": "key-status", "value": status},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def read_api_key(key_hash: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "api-key"},
+            {"name": "key-hash",  "value": key_hash},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_api_key falló: %s", exc)
+    return None
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_api_usage(
+    usage_id: str, key_hash: str, price: float, authors: str, status: str = "pending",
+) -> str:
+    tags = [
+        {"name": "data-type",    "value": "api-usage"},
+        {"name": "usage-id",     "value": usage_id},
+        {"name": "key-hash",     "value": key_hash},
+        {"name": "price",        "value": f"{price:.4f}"},
+        {"name": "authors",      "value": authors[:1000]},
+        {"name": "usage-status", "value": status},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+# ── Atlas de Problemas y Soluciones (nodos territoriales) ─────────────────
+# `problem` versionado por problem-id (open → solving → solved, última versión
+# gana); `problem-confirm` append-only con kind=problem|solution.
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_problem(
+    problem_id: str, node_id: str, reporter_hash: str, text: str,
+    status: str, solver: str = "", solution: str = "",
+) -> str:
+    tags = [
+        {"name": "data-type",      "value": "problem"},
+        {"name": "problem-id",     "value": problem_id},
+        {"name": "node-id",        "value": node_id},
+        {"name": "reporter",       "value": reporter_hash},
+        {"name": "problem-text",   "value": (text or "")[:300]},
+        {"name": "problem-status", "value": status},
+        {"name": "solver",         "value": solver},
+        {"name": "solution",       "value": (solution or "")[:300]},
+        {"name": "Content-Type",   "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🚩 Problema %s (%s) sellado en Irys.", problem_id, status)
+    return tx_id
+
+
+async def read_problem(problem_id: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type",  "value": "problem"},
+            {"name": "problem-id", "value": problem_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_problem %s falló: %s", problem_id, exc)
+    return None
+
+
+async def list_node_problems(node_id: str, limit: int = 200) -> List[Dict[str, str]]:
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "problem"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "problem-id")
+    except Exception as exc:
+        logger.warning("list_node_problems %s falló: %s", node_id, exc)
+        return []
+
+
+async def list_solved_problems(limit: int = 500) -> List[Dict[str, str]]:
+    """Problemas resueltos de TODA la red (para el atlas público)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "problem"},
+        ], limit=limit)
+        latest = _dedupe_latest(nodes, "problem-id")
+        return [p for p in latest if p.get("problem-status") == "solved"]
+    except Exception as exc:
+        logger.warning("list_solved_problems falló: %s", exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_problem_confirm(problem_id: str, uid_hash: str, kind: str) -> str:
+    """Confirmación append-only: kind=problem (es real) | solution (funciona)."""
+    tags = [
+        {"name": "data-type",   "value": "problem-confirm"},
+        {"name": "problem-id",  "value": problem_id},
+        {"name": "uid-hash",    "value": uid_hash},
+        {"name": "confirm-kind", "value": kind},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_problem_confirms(problem_id: str, kind: str, limit: int = 1000) -> List[Dict[str, str]]:
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",   "value": "problem-confirm"},
+            {"name": "problem-id",  "value": problem_id},
+            {"name": "confirm-kind", "value": kind},
+        ], limit=limit)
+        return [_node_tags(n) for n in nodes]
+    except Exception as exc:
+        logger.warning("list_problem_confirms %s falló: %s", problem_id, exc)
+        return []
+
+
+# ── Synergix Academy: micro-credenciales de aprendizaje ──────────────────
+# `credential` es versionada por (uid-hash, domain): última versión gana con
+# el nivel y las lecciones aprobadas. `lesson-result` es append-only (audit).
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_credential(
+    uid_hash: str, domain: str, level: int, lessons_passed: int,
+) -> str:
+    tags = [
+        {"name": "data-type",      "value": "credential"},
+        {"name": "uid-hash",       "value": uid_hash},
+        {"name": "domain",         "value": (domain or "")[:40]},
+        {"name": "level",          "value": str(int(level))},
+        {"name": "lessons-passed", "value": str(int(lessons_passed))},
+        {"name": "Content-Type",   "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🎖️ Credencial %s/%s nivel %d sellada en Irys.", uid_hash, domain, level)
+    return tx_id
+
+
+async def read_credential(uid_hash: str, domain: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "credential"},
+            {"name": "uid-hash",  "value": uid_hash},
+            {"name": "domain",    "value": domain},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_credential %s/%s falló: %s", uid_hash, domain, exc)
+    return None
+
+
+async def list_credentials(uid_hash: str, limit: int = 200) -> List[Dict[str, str]]:
+    """Credenciales vigentes de un usuario (última versión por dominio)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "credential"},
+            {"name": "uid-hash",  "value": uid_hash},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "domain")
+    except Exception as exc:
+        logger.warning("list_credentials %s falló: %s", uid_hash, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_lesson_result(
+    uid_hash: str, domain: str, score: float, passed: bool,
+) -> str:
+    tags = [
+        {"name": "data-type", "value": "lesson-result"},
+        {"name": "uid-hash",  "value": uid_hash},
+        {"name": "domain",    "value": (domain or "")[:40]},
+        {"name": "score",     "value": f"{float(score):.1f}"},
+        {"name": "passed",    "value": "yes" if passed else "no"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_pending_api_usage(limit: int = 200) -> List[Dict[str, str]]:
+    """Eventos de uso de la API aún no liquidados (última versión = pending)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "api-usage"},
+        ], limit=limit)
+        latest = _dedupe_latest(nodes, "usage-id")
+        return [u for u in latest if u.get("usage-status", "pending") == "pending"]
+    except Exception as exc:
+        logger.warning("list_pending_api_usage falló: %s", exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_oracle_stake(
+    uid_hash: str, amount: float, status: str, wrong_streak: int = 0,
+    votes_total: int = 0, votes_correct: int = 0,
+) -> str:
+    tags = [
+        {"name": "data-type",    "value": "oracle-stake"},
+        {"name": "uid-hash",     "value": uid_hash},
+        {"name": "amount",       "value": f"{amount:.2f}"},
+        {"name": "stake-status", "value": status},
+        {"name": "wrong-streak", "value": str(int(wrong_streak))},
+        # Reputación como juez (Passport §10.2): tasa de acierto.
+        {"name": "votes-total",   "value": str(int(votes_total))},
+        {"name": "votes-correct", "value": str(int(votes_correct))},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("🔮 Stake de oráculo %s (%s, %.0f SYNX) sellado.", uid_hash, status, amount)
+    return tx_id
+
+
+async def read_oracle_stake(uid_hash: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "oracle-stake"},
+            {"name": "uid-hash",  "value": uid_hash},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_oracle_stake %s falló: %s", uid_hash, exc)
+    return None
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_oracle_review(
+    aporte_tx: str, author_hash: str, base_synx: float, status: str,
+    created_ts: int, votes: int = 0,
+) -> str:
+    tags = [
+        {"name": "data-type",     "value": "oracle-review"},
+        {"name": "aporte-tx",     "value": aporte_tx},
+        {"name": "author-uid",    "value": author_hash},
+        {"name": "base-synx",     "value": f"{base_synx:.2f}"},
+        {"name": "review-status", "value": status},
+        {"name": "created-ts",    "value": str(int(created_ts))},
+        {"name": "votes",         "value": str(int(votes))},
+        {"name": "Content-Type",  "value": "application/json"},
+    ]
+    tx_id = await _upload(b"{}", tags)
+    logger.info("⚖️ Review de oráculos %s → %s.", aporte_tx[:12], status)
+    return tx_id
+
+
+async def read_oracle_review(aporte_tx: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "oracle-review"},
+            {"name": "aporte-tx", "value": aporte_tx},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_oracle_review %s falló: %s", aporte_tx[:12], exc)
+    return None
+
+
+async def list_oracle_reviews(limit: int = 200) -> List[Dict[str, str]]:
+    """Última versión de cada review (todas; el caller filtra por status)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "oracle-review"},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "aporte-tx")
+    except Exception as exc:
+        logger.warning("list_oracle_reviews falló: %s", exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_oracle_vote(aporte_tx: str, uid_hash: str, vote: bool) -> str:
+    tags = [
+        {"name": "data-type", "value": "oracle-vote"},
+        {"name": "aporte-tx", "value": aporte_tx},
+        {"name": "uid-hash",  "value": uid_hash},
+        {"name": "vote",      "value": "yes" if vote else "no"},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_oracle_votes(aporte_tx: str, limit: int = 200) -> List[Dict[str, str]]:
+    """Voto vigente de cada oráculo sobre un aporte (última por usuario)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "oracle-vote"},
+            {"name": "aporte-tx", "value": aporte_tx},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "uid-hash")
+    except Exception as exc:
+        logger.warning("list_oracle_votes %s falló: %s", aporte_tx[:12], exc)
+        return []
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PROTOCOLO GLOBAL (Fase 3): PASSPORT · VACÍOS · GOBERNANZA
+#
+#   data-type=passport       → reputación agregada y verificable del usuario
+#                              (última versión por uid gana; §10).
+#   data-type=knowledge-gap  → pregunta sin respuesta detectada por el
+#                              Agente (IEC §9.3), pública en el nodo.
+#   data-type=proposal       → propuesta de gobernanza del nodo (§6.2 uso 6).
+#   data-type=proposal-vote  → voto ponderado (1 SYNX = 1 voto); última
+#                              versión por usuario gana.
+# ═══════════════════════════════════════════════════════════════════════
+
+async def list_impact_counters_by_author(author_hash: str, limit: int = 500) -> List[Dict[str, str]]:
+    """Contadores de impacto vigentes de todos los aportes de un autor."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",  "value": "impact-counter"},
+            {"name": "author-uid", "value": author_hash},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "aporte-tx")
+    except Exception as exc:
+        logger.warning("list_impact_counters_by_author %s falló: %s", author_hash, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_passport(uid_hash: str, data: Dict[str, Any]) -> str:
+    """Sella el Passport (reputación agregada) de un usuario en Irys."""
+    content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    tags = [
+        {"name": "data-type", "value": "passport"},
+        {"name": "uid-hash",  "value": uid_hash},
+        {"name": "rank",      "value": str(data.get("rank", ""))},
+        {"name": "points",    "value": str(data.get("points", 0))},
+        {"name": "contributions", "value": str(data.get("contributions", 0))},
+        {"name": "synx-earned",   "value": f"{float(data.get('synx_earned', 0)):.2f}"},
+        {"name": "Content-Type",  "value": "application/json"},
+    ]
+    tx_id = await _upload(content, tags)
+    logger.info("🪪 Passport de %s sellado en Irys. Ver dato: %s", uid_hash, _gw(tx_id))
+    return tx_id
+
+
+async def read_passport(uid_hash: str) -> Optional[Dict[str, Any]]:
+    """Última versión del Passport: {"tags": ..., "data": ..., "tx": ...}."""
+    try:
+        node = await _query_latest([
+            {"name": "data-type", "value": "passport"},
+            {"name": "uid-hash",  "value": uid_hash},
+        ])
+        if not node:
+            return None
+        raw = await _fetch(node["id"])
+        return {
+            "tx": node["id"],
+            "tags": _node_tags(node),
+            "data": json.loads(raw.decode("utf-8")),
+        }
+    except Exception as exc:
+        logger.warning("read_passport %s falló: %s", uid_hash, exc)
+        return None
+
+
+def _question_hash(question: str) -> str:
+    return hashlib.sha256(question.strip().lower().encode("utf-8")).hexdigest()[:12]
+
+
+async def write_knowledge_gap(node_id: str, question: str, lang: str) -> Optional[str]:
+    """Registra un vacío de conocimiento (pregunta sin respuesta, IEC §9.3).
+
+    Dedupe por hash de la pregunta: la misma duda no se registra dos veces.
+    """
+    qh = _question_hash(question)
+    try:
+        existing = await _query_latest([
+            {"name": "data-type",     "value": "knowledge-gap"},
+            {"name": "question-hash", "value": qh},
+        ])
+        if existing:
+            return None
+        tags = [
+            {"name": "data-type",     "value": "knowledge-gap"},
+            {"name": "node-id",       "value": node_id},
+            {"name": "question",      "value": question[:200]},
+            {"name": "question-hash", "value": qh},
+            {"name": "language",      "value": lang},
+            {"name": "Content-Type",  "value": "application/json"},
+        ]
+        tx_id = await _upload(b"{}", tags)
+        logger.info("🕳️ Vacío de conocimiento registrado en %s: %s", node_id, question[:80])
+        return tx_id
+    except Exception as exc:
+        logger.warning("write_knowledge_gap falló: %s", exc)
+        return None
+
+
+async def list_node_gaps(node_id: str, limit: int = 20) -> List[Dict[str, str]]:
+    """Vacíos de conocimiento del nodo, más nuevos primero (dedupe por pregunta)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "knowledge-gap"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "question-hash")
+    except Exception as exc:
+        logger.warning("list_node_gaps %s falló: %s", node_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_proposal(
+    proposal_id: str, node_id: str, creator_hash: str, text: str,
+    status: str, voting_until: int,
+) -> str:
+    tags = [
+        {"name": "data-type",       "value": "proposal"},
+        {"name": "proposal-id",     "value": proposal_id},
+        {"name": "node-id",         "value": node_id},
+        {"name": "creator",         "value": creator_hash},
+        {"name": "text",            "value": (text or "")[:200]},
+        {"name": "proposal-status", "value": status},
+        {"name": "voting-until",    "value": str(int(voting_until))},
+        {"name": "Content-Type",    "value": "application/json"},
+    ]
+    content = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
+    tx_id = await _upload(content, tags)
+    logger.info("🗳️ Propuesta %s (%s) sellada en Irys.", proposal_id, status)
+    return tx_id
+
+
+async def read_proposal(proposal_id: str) -> Optional[Dict[str, str]]:
+    try:
+        node = await _query_latest([
+            {"name": "data-type",   "value": "proposal"},
+            {"name": "proposal-id", "value": proposal_id},
+        ])
+        if node:
+            return _node_tags(node)
+    except Exception as exc:
+        logger.warning("read_proposal %s falló: %s", proposal_id, exc)
+    return None
+
+
+async def list_node_proposals(node_id: str, limit: int = 100) -> List[Dict[str, str]]:
+    try:
+        nodes = await _query_all([
+            {"name": "data-type", "value": "proposal"},
+            {"name": "node-id",   "value": node_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "proposal-id")
+    except Exception as exc:
+        logger.warning("list_node_proposals %s falló: %s", node_id, exc)
+        return []
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def write_proposal_vote(
+    proposal_id: str, uid_hash: str, vote: bool, weight: int
+) -> str:
+    tags = [
+        {"name": "data-type",   "value": "proposal-vote"},
+        {"name": "proposal-id", "value": proposal_id},
+        {"name": "uid-hash",    "value": uid_hash},
+        {"name": "vote",        "value": "yes" if vote else "no"},
+        {"name": "weight",      "value": str(int(weight))},
+        {"name": "Content-Type", "value": "application/json"},
+    ]
+    return await _upload(b"{}", tags)
+
+
+async def list_proposal_votes(proposal_id: str, limit: int = 1000) -> List[Dict[str, str]]:
+    """Voto vigente de cada miembro (última versión por usuario)."""
+    try:
+        nodes = await _query_all([
+            {"name": "data-type",   "value": "proposal-vote"},
+            {"name": "proposal-id", "value": proposal_id},
+        ], limit=limit)
+        return _dedupe_latest(nodes, "uid-hash")
+    except Exception as exc:
+        logger.warning("list_proposal_votes %s falló: %s", proposal_id, exc)
+        return []
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # DIAGNÓSTICO / BALANCE
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1159,10 +2518,67 @@ __all__ = [
     # Perfiles de usuario
     "read_user_tags",
     "write_user_tags",
+    "read_user_pointer",
+    "profile_exists",
     # Aportes
     "write_aporte",
     "read_aporte",
     "list_aportes",
+    # Prueba de Impacto Real
+    "write_impact_counter",
+    "read_impact_counter",
+    "write_impact_royalty",
+    # Proveedores
+    "write_provider",
+    "list_node_providers",
+    # Financiamiento colectivo
+    "write_project",
+    "read_project",
+    "list_node_projects",
+    "write_project_fund",
+    "list_project_funds",
+    "write_project_vote",
+    "list_project_votes",
+    # Protocolo Global (Fase 3)
+    "list_impact_counters_by_author",
+    "write_passport",
+    "read_passport",
+    "write_knowledge_gap",
+    "list_node_gaps",
+    "write_proposal",
+    "read_proposal",
+    "list_node_proposals",
+    "write_proposal_vote",
+    "list_proposal_votes",
+    # Jueces Oráculos
+    "write_oracle_stake",
+    "read_oracle_stake",
+    "write_oracle_review",
+    "read_oracle_review",
+    "list_oracle_reviews",
+    "write_oracle_vote",
+    "list_oracle_votes",
+    # Wallet custodial
+    "write_custodial_wallet",
+    "read_custodial_wallet",
+    # Nodos de comunidad
+    "write_node",
+    "get_node_record",
+    "list_node_records",
+    "write_node_member",
+    "get_node_member",
+    "list_node_members",
+    "list_user_memberships",
+    "list_node_aportes",
+    "count_node_aportes",
+    "write_node_bond",
+    "get_node_bond",
+    "list_user_bonds",
+    "write_redemption",
+    "get_redemption",
+    "list_user_redemptions",
+    "list_address_redemptions",
+    "list_all_redemptions",
     # Leaderboard
     "rebuild_top10",
     "compute_top10",

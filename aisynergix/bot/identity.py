@@ -8,12 +8,13 @@ from dataclasses import dataclass, field
 SALT_UID = "Synergix_"
 UID_HASH_LENGTH = 12
 
+# Tabla de rangos del Diseño Maestro v1.0 (§5.5).
 RANK_TABLE = {
-    "🌱 Iniciado":     {"min_points": 0,     "daily_limit": 5,          "multiplier": 1.0, "beneficio": "5 aportes/día"},
-    "📈 Activo":       {"min_points": 100,   "daily_limit": 12,         "multiplier": 1.2, "beneficio": "12 aportes/día + ×1.2"},
-    "🧬 Sincronizado": {"min_points": 500,   "daily_limit": 25,         "multiplier": 1.5, "beneficio": "25 aportes/día + ×1.5"},
-    "🏗️ Arquitecto":  {"min_points": 1500,  "daily_limit": 40,         "multiplier": 2.0, "beneficio": "40 aportes/día + ×2.0"},
-    "🧠 Mente Colmena":{"min_points": 5000,  "daily_limit": 60,         "multiplier": 2.5, "beneficio": "60 aportes/día + ×2.5"},
+    "🌱 Iniciado":     {"min_points": 0,     "daily_limit": 10,         "multiplier": 1.0, "beneficio": "10 aportes/día"},
+    "⚡ Explorador":   {"min_points": 500,   "daily_limit": 15,         "multiplier": 1.2, "beneficio": "15 aportes/día + ×1.2"},
+    "🔥 Contribuidor": {"min_points": 2000,  "daily_limit": 20,         "multiplier": 1.5, "beneficio": "20 aportes/día + ×1.5"},
+    "💎 Experto":      {"min_points": 5000,  "daily_limit": 25,         "multiplier": 1.8, "beneficio": "25 aportes/día + ×1.8"},
+    "🌌 Arquitecto":   {"min_points": 10000, "daily_limit": 30,         "multiplier": 2.5, "beneficio": "30 aportes/día + ×2.5"},
     "🔮 Oráculo":      {"min_points": 15000, "daily_limit": float("inf"), "multiplier": 3.0, "beneficio": "Sin límite + ×3.0"},
 }
 
@@ -51,6 +52,22 @@ class UserProfile:
     wallet_address: Optional[str] = None
     human_verified: bool = False
     trust_score: float = 5.0
+    # Economía SYNX: saldo contable (no on-chain todavía) registrado en Irys.
+    synx_balance: float = 0.0
+    # Nodo de comunidad activo: los aportes se asocian a este nodo.
+    active_node: Optional[str] = None
+    # Wallet BSC custodial generada silenciosamente por el bot (§3.2).  No
+    # confundir con wallet_address: esa es la wallet PROPIA del usuario,
+    # verificada por firma.
+    custodial_address: Optional[str] = None
+    # Racha de días consecutivos contribuyendo (§5.3: 7+ días → ×2 ese día).
+    streak_days: int = 0
+    last_aporte_date: Optional[str] = None  # "YYYY-MM-DD" UTC
+    # SYNX ganados históricos (§10.2): solo crece con cada acreditación;
+    # los gastos (fondear, stake) no lo reducen.  Campo del Passport.
+    synx_earned_total: float = 0.0
+    # Anti-farming: True si el usuario ya cobró el bono de fundador de nodo.
+    founder_bonus_claimed: bool = False
 
     def __post_init__(self):
         self.uid_hash = _hash_uid(self.uid)
@@ -99,10 +116,22 @@ class UserProfile:
             wallet_address=tags.get("wallet_address") or None,
             human_verified=tags.get("human_verified", "false").lower() == "true",
             trust_score=float(tags.get("trust_score", "5.0")),
+            synx_balance=float(tags.get("synx_balance", "0") or 0),
+            active_node=tags.get("active_node") or None,
+            custodial_address=tags.get("custodial_address") or None,
+            streak_days=int(tags.get("streak_days", 0) or 0),
+            last_aporte_date=tags.get("last_aporte_date") or None,
+            synx_earned_total=float(tags.get("synx_earned_total", "0") or 0),
+            founder_bonus_claimed=tags.get("founder_bonus_claimed", "false").lower() == "true",
         )
 
         if profile.rank not in RANK_TABLE:
+            # Migración: el rango guardado pertenece a una tabla anterior
+            # (📈 Activo, 🧬 Sincronizado, 🏗️ Arquitecto, 🧠 Mente Colmena…).
+            # El rango siempre se deriva de los puntos, así que se recalcula
+            # con la tabla vigente en vez de degradar al usuario a Iniciado.
             profile.rank = "🌱 Iniciado"
+            profile.calculate_rank()
 
         return profile
 
@@ -121,6 +150,16 @@ class UserProfile:
             base["wallet_address"] = self.wallet_address.lower()
         base["trust_score"] = f"{self.trust_score:.2f}"
         base["human_verified"] = "true" if self.human_verified else "false"
+        base["synx_balance"] = f"{self.synx_balance:.2f}"
+        if self.active_node:
+            base["active_node"] = self.active_node
+        if self.custodial_address:
+            base["custodial_address"] = self.custodial_address
+        base["streak_days"] = str(self.streak_days)
+        if self.last_aporte_date:
+            base["last_aporte_date"] = self.last_aporte_date
+        base["synx_earned_total"] = f"{self.synx_earned_total:.2f}"
+        base["founder_bonus_claimed"] = "true" if self.founder_bonus_claimed else "false"
         return base
 
     def update_trust_score(self, delta: float) -> None:
@@ -199,7 +238,10 @@ class IdentityManager:
         # only guarantees the seal uses current data.
         self._sealed: Dict[str, Dict[str, int]] = {}
 
-    _SEALED_FIELDS = ("points", "contribution_count", "daily_aportes_count", "total_uses_count")
+    _SEALED_FIELDS = (
+        "points", "contribution_count", "daily_aportes_count",
+        "total_uses_count", "synx_balance", "synx_earned_total",
+    )
 
     def _sealed_base(self, uid_hash: str, profile: "UserProfile", field: str) -> int:
         """Latest known counter: max of the Irys-read value and our sealed ledger."""
@@ -336,10 +378,102 @@ class IdentityManager:
                 _log.warning("credit_residual failed for uid_hash=%s: %s", uid_hash, exc)
                 return None
 
+    async def credit_synx(self, uid_hash: str, amount: float) -> Optional[float]:
+        """Acredita SYNX a un autor identificado por su uid_hash (PIR §7).
+
+        Mismo patrón atómico que credit_residual: lock por-usuario + base en
+        el write-ledger para sobrevivir el lag de indexación de Irys.
+        Retorna el saldo nuevo, o None si la escritura falla.
+        """
+        from aisynergix.services.irys import read_user_tags, write_user_tags
+        from aisynergix.services.rewards import is_valid_amount
+        import logging
+        _log = logging.getLogger(__name__)
+        # Defensa en profundidad: rechazar nan/inf/no-positivos que romperían
+        # las comparaciones de saldo y corromperían el balance.
+        if not is_valid_amount(amount):
+            return None
+        async with self._lock_for(uid_hash):
+            try:
+                tags = await read_user_tags(uid_hash)
+                led = self._sealed.get(uid_hash, {})
+                base = max(
+                    float(tags.get("synx_balance", 0) or 0),
+                    float(led.get("synx_balance", 0.0)),
+                )
+                new_balance = round(base + amount, 2)
+                tags["synx_balance"] = f"{new_balance:.2f}"
+                # Histórico de ganancias (Passport §10.2): solo crece.
+                led = self._sealed.get(uid_hash, {})
+                earned = max(
+                    float(tags.get("synx_earned_total", 0) or 0),
+                    float(led.get("synx_earned_total", 0.0)),
+                ) + amount
+                tags["synx_earned_total"] = f"{earned:.2f}"
+                await write_user_tags(uid_hash, tags)
+                sealed = self._sealed.setdefault(uid_hash, {})
+                sealed["synx_balance"] = new_balance
+                sealed["synx_earned_total"] = earned
+                self.invalidate_cache_by_hash(uid_hash)
+                return new_balance
+            except Exception as exc:
+                _log.warning("credit_synx falló para uid_hash=%s: %s", uid_hash, exc)
+                return None
+
+    async def debit_synx(
+        self, uid_hash: str, amount: float, allow_partial: bool = False
+    ) -> Optional[float]:
+        """Debita SYNX de un usuario de forma atómica (financiar, stake, multas).
+
+        Retorna el monto realmente debitado, o None si el saldo es
+        insuficiente (con ``allow_partial=True`` debita lo que haya, para
+        penalizaciones).  Nunca deja el saldo en negativo.
+        """
+        from aisynergix.services.irys import read_user_tags, write_user_tags
+        from aisynergix.services.rewards import is_valid_amount
+        import logging
+        _log = logging.getLogger(__name__)
+        # Defensa en profundidad: un 'nan' haría 'base < amount' siempre False,
+        # saltándose el control de saldo y corrompiendo el balance a "nan".
+        if not is_valid_amount(amount):
+            return None
+        async with self._lock_for(uid_hash):
+            try:
+                tags = await read_user_tags(uid_hash)
+                led = self._sealed.get(uid_hash, {})
+                base = max(
+                    float(tags.get("synx_balance", 0) or 0),
+                    float(led.get("synx_balance", 0.0)),
+                )
+                if base < amount:
+                    if not allow_partial or base <= 0:
+                        return None
+                    amount = round(base, 2)
+                new_balance = round(base - amount, 2)
+                tags["synx_balance"] = f"{new_balance:.2f}"
+                await write_user_tags(uid_hash, tags)
+                self._sealed.setdefault(uid_hash, {})["synx_balance"] = new_balance
+                self.invalidate_cache_by_hash(uid_hash)
+                return amount
+            except Exception as exc:
+                _log.warning("debit_synx falló para uid_hash=%s: %s", uid_hash, exc)
+                return None
+
     async def update_profile(self, uid: int, profile: UserProfile) -> None:
         """Persist the profile to Irys under the per-user write lock."""
         async with self._lock_for(_hash_uid(uid)):
             await self._do_update_profile(uid, profile)
+
+    async def has_stored_profile(self, uid: int) -> bool:
+        """True si el usuario ya existe en Irys (la base de datos única).
+
+        Independiente de la actividad: un usuario que solo hizo ``/start``
+        (sin contribuir aún) también «existe» y no debe recibir la bienvenida
+        de nuevo.  Se usa para decidir welcome vs. welcome_back de forma
+        fiable, en vez de mirar puntos/usos (que solo crecen al contribuir).
+        """
+        from aisynergix.services.irys import profile_exists
+        return await profile_exists(_hash_uid(uid))
 
     async def apply_deltas(
         self,
@@ -349,8 +483,13 @@ class IdentityManager:
         contribution: int = 0,
         daily: int = 0,
         uses: int = 0,
+        synx: float = 0.0,
         trust_delta: float = 0.0,
         language: Optional[str] = None,
+        active_node: Optional[str] = None,
+        streak_days: Optional[int] = None,
+        last_aporte_date: Optional[str] = None,
+        claim_founder_bonus: bool = False,
     ) -> UserProfile:
         """Atomically apply INCREMENTS to a profile and seal it on Irys.
 
@@ -378,6 +517,15 @@ class IdentityManager:
             # our write-ledger), then ADD the delta. The ledger survives the
             # cache invalidations done by status reads / residual rewards, so the
             # seal always uses current data even under Irys index lag.
+            # Bono de fundador: se acredita UNA sola vez por usuario. La
+            # comprobación va dentro del lock, así dos creaciones de nodo
+            # simultáneas no pueden cobrarlo dos veces (anti-farming).
+            if claim_founder_bonus:
+                if profile.founder_bonus_claimed:
+                    synx = 0.0  # ya cobrado → no acreditar de nuevo
+                else:
+                    profile.founder_bonus_claimed = True
+
             profile.points = self._sealed_base(uid_hash, profile, "points") + points
             profile.contribution_count = (
                 self._sealed_base(uid_hash, profile, "contribution_count") + contribution
@@ -388,10 +536,23 @@ class IdentityManager:
             profile.total_uses_count = (
                 self._sealed_base(uid_hash, profile, "total_uses_count") + uses
             )
+            profile.synx_balance = (
+                self._sealed_base(uid_hash, profile, "synx_balance") + synx
+            )
+            profile.synx_earned_total = (
+                self._sealed_base(uid_hash, profile, "synx_earned_total")
+                + (synx if synx > 0 else 0)
+            )
             if trust_delta:
                 profile.update_trust_score(trust_delta)
             if language:
                 profile.set_language(language)
+            if active_node is not None:
+                profile.active_node = active_node or None
+            if streak_days is not None:
+                profile.streak_days = streak_days
+            if last_aporte_date is not None:
+                profile.last_aporte_date = last_aporte_date
             profile.calculate_rank()
             profile.last_seen_ts = time.time()
 
@@ -473,6 +634,17 @@ class IdentityManager:
             profile.total_uses_count = max(profile.total_uses_count, irys_profile.total_uses_count)
             profile.contribution_count = max(profile.contribution_count, irys_profile.contribution_count)
             profile.daily_aportes_count = max(profile.daily_aportes_count, irys_profile.daily_aportes_count)
+            # SYNX lo poseen los acreditadores (apply_deltas); una escritura de
+            # perfil normal (idioma, fsm_state…) nunca debe reducirlo.
+            profile.synx_balance = max(profile.synx_balance, irys_profile.synx_balance)
+            # La referencia a la wallet custodial se escribe una sola vez; un
+            # perfil stale sin el campo no debe borrarla del siguiente sellado.
+            if not profile.custodial_address and irys_profile.custodial_address:
+                profile.custodial_address = irys_profile.custodial_address
+            # Flag monótono (false→true): una escritura stale no debe reactivar
+            # el bono de fundador ya cobrado.
+            if irys_profile.founder_bonus_claimed:
+                profile.founder_bonus_claimed = True
 
         if old_profile is not None:
             regressed_fields = 0

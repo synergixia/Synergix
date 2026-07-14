@@ -14,6 +14,29 @@ class SynergixStates(StatesGroup):
     # Wallet verification (2-step EIP-4361 flow)
     awaiting_wallet_address = State()
     awaiting_wallet_signature = State()
+    # Community node creation
+    awaiting_node_name = State()
+    # Providers / crowdfunding (Fase 2)
+    awaiting_provider_desc = State()
+    awaiting_provider_payment = State()
+    awaiting_project_name = State()
+    awaiting_project_goal = State()
+    awaiting_project_fund = State()
+    awaiting_project_evidence = State()   # verificación obligatoria de proyecto
+    # Bounties de conocimiento (Proof-of-Knowledge)
+    awaiting_bounty_pool = State()
+    # Synergix Academy (learn-to-earn)
+    awaiting_lesson_answer = State()
+    # Nodos territoriales + Atlas de Problemas
+    awaiting_node_country = State()
+    awaiting_node_region = State()
+    awaiting_problem_text = State()
+    awaiting_solution_text = State()
+    # Governance (Fase 3)
+    awaiting_proposal_text = State()
+    # Custodia on-chain: retiro de BNB / SYNERGIX
+    awaiting_withdraw_address = State()
+    awaiting_withdraw_amount = State()
 
 
 class L1StateCache:
@@ -144,6 +167,9 @@ class GhostStateManager:
 
     async def enter_wallet_signature_mode(self, uid: int) -> None:
         await self.set_state(uid, "awaiting_wallet_signature")
+
+    async def enter_node_name_mode(self, uid: int) -> None:
+        await self.set_state(uid, "awaiting_node_name")
 
 
 _ghost_state_manager: Optional[GhostStateManager] = None

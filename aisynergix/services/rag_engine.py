@@ -325,6 +325,7 @@ class CrossLingualRAG:
                 "language": c.get("language", "es"),
                 "quality_score": str(c.get("quality_score", 0)),
                 "object_name": c.get("object_name", ""),
+                "node_id": c.get("node_id", "") or "",
                 "added_at": datetime.now(timezone.utc).isoformat(),
             }
             documents.append((c["text"], meta))
@@ -339,6 +340,7 @@ class CrossLingualRAG:
         quality_score: float,
         object_name: str,
         category: str = "filosofia",
+        node_id: str = "",
     ) -> int:
         code = self._brain_for_category(category)
         meta = {
@@ -346,6 +348,7 @@ class CrossLingualRAG:
             "language": language,
             "quality_score": str(quality_score),
             "object_name": object_name,
+            "node_id": node_id or "",
             "added_at": datetime.now(timezone.utc).isoformat(),
         }
         ids = await self._brains[code].add_batch([(text, meta)])
@@ -372,6 +375,7 @@ class CrossLingualRAG:
         self,
         query_text: str,
         target_language: str,
+        node_id: str = "",
     ) -> Tuple[str, List[Dict[str, Any]]]:
         # Parallel search across all 4 brains, top-5 each
         raw = await asyncio.gather(
@@ -384,16 +388,20 @@ class CrossLingualRAG:
             if isinstance(r, list):
                 all_results.extend(r)
 
-        # Tag cross-lingual results before sorting
+        # Tag cross-lingual + same-node results before sorting.
         for r in all_results:
-            r["cross_lingual"] = (
-                r.get("metadata", {}).get("language") != target_language
-            )
+            meta = r.get("metadata", {})
+            r["cross_lingual"] = meta.get("language") != target_language
+            # §4 Knowledge Graph por nodo: cuando la consulta ocurre dentro de
+            # un nodo, sus propios aportes se priorizan (memoria del nodo).
+            r["same_node"] = bool(node_id and meta.get("node_id") == node_id)
 
-        # Sort: same-language results first, then by semantic score descending.
-        # This ensures the model sees the most relevant same-language fragments
-        # at the top regardless of cross-lingual score competition.
-        all_results.sort(key=lambda x: (x["cross_lingual"], -x["score"]))
+        # Sort: fragmentos del mismo nodo primero (si hay contexto de nodo),
+        # luego mismo idioma, luego por score semántico descendente. Sin
+        # contexto de nodo, same_node es False para todos → orden intacto.
+        all_results.sort(
+            key=lambda x: (not x["same_node"], x["cross_lingual"], -x["score"])
+        )
 
         # Dedup by first-100-char hash, keep top 7
         seen: Set[str] = set()
@@ -502,6 +510,19 @@ class CrossLingualRAG:
         except Exception:
             return False
 
+    async def get_language_stats(self) -> Dict[str, int]:
+        """Documentos por idioma en el corpus (agregado de los 4 cerebros).
+
+        Se usa para el bonus de "idioma poco representado" (§5.3).  Lee la
+        metadata en RAM, así que no cuesta red ni CPU relevante.
+        """
+        counts: Dict[str, int] = {}
+        for brain in self._brains.values():
+            for meta in brain._metadata.values():
+                lang = meta.get("language", "es")
+                counts[lang] = counts.get(lang, 0) + 1
+        return counts
+
     async def get_stats(self) -> Dict[str, Any]:
         return {
             "total_documents": sum(b.total_documents for b in self._brains.values()),
@@ -554,6 +575,7 @@ class CrossLingualRAG:
                             "language": tags.get("lang", "es"),
                             "quality_score": float(tags.get("quality_score", 0)),
                             "object_name": aporte["path"],
+                            "node_id": tags.get("node_id") or tags.get("node-id") or "",
                         })
                     except Exception:
                         continue

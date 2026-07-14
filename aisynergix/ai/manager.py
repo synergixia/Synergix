@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -36,8 +37,25 @@ logger = logging.getLogger(__name__)
 
 CHALLENGE_BONUS_POINTS = 5
 MIN_CONTRIBUTION_LENGTH = 20
+# Tope de longitud del aporte.  Sin él, un usuario puede subir megabytes a
+# Irys — que paga la wallet del nodo — como vector de coste/DoS.  8000 chars
+# es holgado para una reflexión real y muy por debajo del límite de upload.
+MAX_CONTRIBUTION_LENGTH = 8000
 ELITE_THRESHOLD = 9.0
 LEGENDARY_THRESHOLD = 9.5
+
+
+def _synx_for_score(score: float) -> float:
+    """Recompensa SYNX base por la puntuación del Judge (diseño §5.2)."""
+    if score >= 9.5:
+        return 150.0
+    if score >= 8.5:
+        return 60.0
+    if score >= 7.0:
+        return 25.0
+    if score >= 5.0:
+        return 10.0
+    return 0.0
 
 # Cap concurrent thinker calls to match llama.cpp --parallel (1 on CPU).
 # Extras queue here in asyncio — no HTTP connection, no timeout risk.
@@ -358,7 +376,7 @@ class AIManager:
             # Thinker MUST always consult immortal memory (RAG) before responding
             history, (context, search_results) = await asyncio.gather(
                 self._get_conversation_history(uid),
-                self._rag.query(message, target_language),
+                self._rag.query(message, target_language, node_id=profile.active_node or ""),
             )
 
             # Semaphore matches --parallel 1; extras queue in asyncio (no timeout risk).
@@ -430,7 +448,7 @@ class AIManager:
 
             history, (context, search_results) = await asyncio.gather(
                 self._get_conversation_history(uid),
-                self._rag.query(message, target_language),
+                self._rag.query(message, target_language, node_id=profile.active_node or ""),
             )
 
             # Immortal memory first; if it has nothing relevant, fall back to the
@@ -445,6 +463,14 @@ class AIManager:
                     logger.info("uid=%s: web fallback used (%d results)", uid, len(web_results))
                 else:
                     logger.info("uid=%s: web fallback found nothing — Thinker answers unaided", uid)
+                    # IEC (§9.3): pregunta sin respuesta → vacío de
+                    # conocimiento público en el nodo del usuario, para que
+                    # la comunidad compita por llenarlo.
+                    if profile.active_node:
+                        from aisynergix.services.agent import record_knowledge_gap
+                        _spawn_bg(record_knowledge_gap(
+                            profile.active_node, message, target_language
+                        ))
             else:
                 logger.info("uid=%s: answering from immortal memory (%d fragments)",
                             uid, len(search_results))
@@ -453,6 +479,18 @@ class AIManager:
             # without waiting for the full stream to complete.
             if search_results:
                 yield ("memory_count", str(len(search_results)))
+                # PIR: (aporte_tx, author) usados, para el botón "✅ útil".
+                pairs = []
+                seen_txs: set = set()
+                for r in search_results:
+                    meta = r.get("metadata", {})
+                    tx = meta.get("object_name", "")
+                    if not tx or tx.startswith("local:") or tx in seen_txs:
+                        continue
+                    seen_txs.add(tx)
+                    pairs.append([tx, meta.get("author_uid", "")])
+                if pairs:
+                    yield ("sources", json.dumps(pairs))
             elif web_used:
                 yield ("web_used", "1")
 
@@ -515,19 +553,37 @@ class AIManager:
 
         profile = await self._identity.get_profile(uid)
 
-        if len(content.strip()) < MIN_CONTRIBUTION_LENGTH:
+        content = content.strip()
+        if len(content) < MIN_CONTRIBUTION_LENGTH:
             return {
                 "status": "too_short",
                 "message_key": "contribution_too_short",
                 "user_language": profile.language,
             }
 
-        if not profile.can_contribute:
+        # Tope de tamaño: la wallet del nodo paga el almacenamiento en Irys.
+        if len(content) > MAX_CONTRIBUTION_LENGTH:
+            return {
+                "status": "too_long",
+                "message_key": "contribution_too_long",
+                "user_language": profile.language,
+                "max_length": MAX_CONTRIBUTION_LENGTH,
+            }
+
+        # Beneficio de tenencia (Capa 1): tener SYNERGIX real sube el límite
+        # diario de aportes por encima del que da el rango.
+        try:
+            from aisynergix.services.tiers import holder_daily_bonus
+            holder_bonus = await holder_daily_bonus(uid)
+        except Exception:
+            holder_bonus = 0
+        effective_limit = profile.daily_limit + holder_bonus
+        if profile.daily_aportes_count >= effective_limit:
             return {
                 "status": "quota_exceeded",
                 "message_key": "quota_exceeded",
                 "user_language": profile.language,
-                "daily_limit": profile.daily_limit,
+                "daily_limit": effective_limit,
             }
 
         cfg = get_system_config()
@@ -594,6 +650,84 @@ class AIManager:
         if profile.human_verified and profile.wallet_address:
             aporte_tags["signature"] = profile.wallet_address.lower()
 
+        # ── Recompensa SYNX: §5.1 + bonificaciones §5.3 ─────────────────────
+        # SYNX = base(score) × rango × vacío × racha × (1 + Σ bonus%) [+100 si 10.0]
+        from aisynergix.services import rewards
+        node_id = profile.active_node
+        category = evaluation.get("category", "filosofia")
+        synx_base = _synx_for_score(quality_score)
+        rank_multiplier = RANK_TABLE.get(
+            profile.rank, RANK_TABLE["🌱 Iniciado"]
+        ).get("multiplier", 1.0)
+        today = datetime.now(timezone.utc).date()
+
+        bonus = rewards.BonusBreakdown()
+        bonus.perfect_score = quality_score >= 10.0
+
+        # Racha de días consecutivos (idempotente por fecha; se sella abajo).
+        new_streak, new_last_date = rewards.update_streak(
+            profile.last_aporte_date, profile.streak_days, today
+        )
+        bonus.streak_multiplier = rewards.streak_multiplier_for(new_streak)
+
+        if node_id:
+            # Aporte dentro de un nodo: se etiqueta y los aportes del nodo se
+            # traen UNA vez para calcular vacío + primer-del-día + tema virgen.
+            aporte_tags["node_id"] = node_id
+            aporte_tags["topic"] = category
+            try:
+                from aisynergix.services.irys import get_node_record, list_node_aportes
+                from aisynergix.nodes.knowledge_map import coverage_from_aportes
+                record = await get_node_record(node_id)
+                node_aportes = await list_node_aportes(node_id)
+                topics = [
+                    x for x in (
+                        (record or {}).get("topics", "") or ""
+                    ).split(",") if x.strip()
+                ]
+                if topics:
+                    cov = coverage_from_aportes(topics, node_aportes)
+                    # §9: el bono de vacío corresponde AL TEMA del aporte, no al
+                    # máximo del nodo. Un aporte llena el vacío de SU tema.
+                    topic_key = category.strip().lower()
+                    match = next(
+                        (info for tkey, info in cov.items()
+                         if tkey.strip().lower() == topic_key),
+                        None,
+                    )
+                    bonus.gap_multiplier = match["multiplier"] if match else 1.0
+                bonus.first_of_day = rewards.is_first_of_day(node_aportes, today)
+                bonus.virgin_topic = rewards.is_virgin_topic(node_aportes, category)
+            except Exception as exc:
+                logger.warning("nodo %s: no se pudo calcular bonus: %s", node_id, exc)
+        else:
+            # Sin nodo: "primer aporte del día" se evalúa sobre el propio
+            # usuario; el tema virgen es un concepto de nodo y no aplica.
+            bonus.first_of_day = profile.daily_aportes_count == 0
+
+        try:
+            lang_counts = await self._rag.get_language_stats()
+            bonus.underrep_lang = rewards.is_underrepresented(
+                profile.language, lang_counts
+            )
+        except Exception:
+            pass
+
+        # §5.4 Juez 3: guardián anti-gaming (ráfaga / plantilla / relleno).
+        # No rechaza (evita castigar falsos positivos como un humano rápido),
+        # pero anula las bonificaciones y el multiplicador de vacío y baja el
+        # trust, de modo que el farmeo deja de ser rentable.
+        from aisynergix.ai.anti_gaming import get_anti_gaming_judge
+        gaming_flagged, gaming_reason = get_anti_gaming_judge().check(
+            profile.uid_hash, content, ts
+        )
+        if gaming_flagged:
+            bonus = rewards.BonusBreakdown()
+
+        synx_award = rewards.compute_synx(synx_base, rank_multiplier, bonus)
+        node_multiplier = bonus.gap_multiplier
+        trust_delta_final = -trust_decrement if gaming_flagged else trust_increment
+
         try:
             object_path = await write_aporte(
                 uid_ofuscado=profile.uid_hash,
@@ -624,6 +758,7 @@ class AIManager:
             quality_score=quality_score,
             object_name=object_path,
             category=evaluation.get("category", "filosofia"),
+            node_id=node_id or "",
         )
 
         # Seal the reward atomically as deltas on the latest Irys value (never an
@@ -634,9 +769,40 @@ class AIManager:
             points=points_gained,
             contribution=1,
             daily=1,
-            trust_delta=trust_increment,
+            synx=synx_award,
+            trust_delta=trust_delta_final,
+            streak_days=new_streak,
+            last_aporte_date=new_last_date,
         )
         new_rank = profile.rank if profile.rank != old_rank else None
+
+        # PIR §7.3: si este aporte se construye sobre uno existente, el autor
+        # citado recibe el 10 % de la recompensa.  Background: no bloquea la
+        # respuesta.  El auto-match con el propio aporte recién indexado queda
+        # excluido por el filtro near-clone del RAG y por same_author.
+        if synx_award > 0:
+            _spawn_bg(self._process_reference_royalty(
+                content_summary or content, profile.language,
+                profile.uid_hash, synx_award,
+            ))
+
+        # §5.4 Juez 2: los aportes score ≥ 8 pasan al Jurado de Oráculos.
+        # Si lo aprueban, el autor recibe el ×3 de la tabla §5.2.
+        from aisynergix.services.oracle import create_review, REVIEW_MIN_SCORE
+        oracle_review = (
+            quality_score >= REVIEW_MIN_SCORE
+            and not object_path.startswith("local:")
+            and not gaming_flagged
+        )
+        if oracle_review:
+            _spawn_bg(create_review(object_path, profile.uid_hash, synx_award))
+
+        # Bounties de conocimiento: si el aporte llena un vacío con un bounty
+        # abierto (mismo nodo+tema, no marcado por el Juez 3), paga al autor
+        # desde el pool. Idempotente y en segundo plano.
+        if node_id and not gaming_flagged and not object_path.startswith("local:"):
+            from aisynergix.services.bounties import reward_aporte as _bounty_pay
+            _spawn_bg(_bounty_pay(node_id, category, profile.uid_hash, object_path))
 
         return {
             "status": "success",
@@ -650,6 +816,14 @@ class AIManager:
             "quality_score": quality_score,
             "points_gained": points_gained,
             "new_total_points": profile.points,
+            "synx_gained": synx_award,
+            "synx_multiplier": node_multiplier,
+            "synx_balance": profile.synx_balance,
+            "synx_bonuses": bonus.active_keys(),
+            "streak_days": new_streak,
+            "oracle_review": oracle_review,
+            "gaming_flagged": gaming_flagged,
+            "node_id": node_id,
             "tier": tier,
             "rank": profile.rank,
             "new_rank": new_rank,
@@ -683,6 +857,7 @@ class AIManager:
         profile.daily_aportes_count = max(
             profile.daily_aportes_count, led.get("daily_aportes_count", 0)
         )
+        profile.synx_balance = max(profile.synx_balance, led.get("synx_balance", 0.0))
 
         irys_points = profile.points
         irys_total_uses = profile.total_uses_count
@@ -781,6 +956,8 @@ class AIManager:
             "tema_actual": tema_actual,
             "trust_score": profile.trust_score,
             "human_verified": profile.human_verified,
+            "synx_balance": profile.synx_balance,
+            "active_node": profile.active_node,
         }
 
     async def get_top10(self) -> List[Dict[str, Any]]:
@@ -839,6 +1016,73 @@ class AIManager:
         async with self._context_cache_lock:
             self._context_cache.pop(uid, None)
 
+    async def record_useful_sources(self, payload: str) -> int:
+        """Confirma '✅ útil' sobre las fuentes de una respuesta (PIR §7.2).
+
+        ``payload`` es el JSON emitido por stream_conversation: lista de
+        pares [aporte_tx, author_hash].  Cada aporte suma +1 impacto
+        verificado; el tracker paga la regalía perpetua al cruzar bloques
+        de 100.  Retorna cuántos aportes fueron acreditados.
+        """
+        from aisynergix.services.impact import get_impact_tracker
+        try:
+            pairs = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            return 0
+        tracker = get_impact_tracker()
+        credited = 0
+        for item in pairs if isinstance(pairs, list) else []:
+            try:
+                tx, author = str(item[0]), str(item[1])
+            except (IndexError, TypeError, KeyError):
+                continue
+            if await tracker.record_useful(tx, author) is not None:
+                credited += 1
+        return credited
+
+    async def _process_reference_royalty(
+        self,
+        content: str,
+        language: str,
+        author_hash: str,
+        synx_award: float,
+    ) -> None:
+        """Regalía por referencia (§7.3): si el aporte nuevo se construye sobre
+        uno existente de OTRO autor (similitud ≥ REFERENCE_MIN_SCORE), ese
+        autor recibe el 10 % de la recompensa del aporte nuevo.
+
+        Corre en background tras aprobar el aporte; el RAG ya excluye los
+        near-clones (>0.92), que son duplicados y no referencias.
+        """
+        from aisynergix.services.impact import (
+            get_impact_tracker, is_reference_match, REFERENCE_ROYALTY_PCT,
+        )
+        try:
+            _, results = await self._rag.query(content, language)
+        except Exception:
+            return
+        for r in results or []:
+            meta = r.get("metadata", {})
+            cited_tx = meta.get("object_name", "")
+            cited_author = meta.get("author_uid", "")
+            score = r.get("score", 0.0)
+            if not cited_tx or cited_tx.startswith("local:") or not cited_author:
+                continue
+            if not is_reference_match(score, cited_author == author_hash):
+                continue
+            royalty = round(synx_award * REFERENCE_ROYALTY_PCT, 2)
+            try:
+                await get_impact_tracker().record_reference(cited_tx, cited_author)
+                if royalty > 0:
+                    await self._identity.credit_synx(cited_author, royalty)
+                logger.info(
+                    "🔗 Referencia: %s cita a %s (score=%.2f) — regalía %.2f SYNX a %s",
+                    author_hash[:8], cited_tx[:12], score, royalty, cited_author[:8],
+                )
+            except Exception as exc:
+                logger.warning("regalía por referencia falló (%s): %s", cited_tx[:12], exc)
+            break  # solo la fuente principal (top-1 válida)
+
     async def _process_residual_rewards(
         self,
         search_results: List[Dict[str, Any]],
@@ -848,6 +1092,12 @@ class AIManager:
             "residual rewards: evaluating %d search results", len(search_results)
         )
 
+        # PIR (§7.2): cada uso real de un aporte en una respuesta cuenta como
+        # vista en su contador de impacto (dedupe por aporte en esta llamada).
+        from aisynergix.services.impact import get_impact_tracker
+        tracker = get_impact_tracker()
+        viewed_txs: set = set()
+
         for result in search_results:
             author_uid_hash = result.get("metadata", {}).get("author_uid", "")
             score = result.get("score", 0)
@@ -855,13 +1105,22 @@ class AIManager:
             if not author_uid_hash:
                 logger.info("residual: result has no author_uid — skipping (score=%.3f)", score)
                 continue
-            if author_uid_hash in rewarded_authors:
-                continue
             if score < 0.4:
                 logger.info(
                     "residual: author=%s score %.3f < 0.4 — skipping",
                     author_uid_hash[:8], score,
                 )
+                continue
+
+            aporte_tx = result.get("metadata", {}).get("object_name", "")
+            if aporte_tx and aporte_tx not in viewed_txs:
+                viewed_txs.add(aporte_tx)
+                try:
+                    await tracker.record_view(aporte_tx, author_uid_hash)
+                except Exception:
+                    pass
+
+            if author_uid_hash in rewarded_authors:
                 continue
 
             # Atomic, lock-serialized increment on Irys (never clobbered by the
