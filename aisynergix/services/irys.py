@@ -565,6 +565,37 @@ async def read_user_pointer(uid_ofuscado: str) -> Optional[Dict[str, str]]:
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
 )
+async def profile_exists(uid_ofuscado: str) -> bool:
+    """True si ya existe un ``user-profile`` sellado en Irys para el usuario.
+
+    Señal de existencia FIABLE e independiente de los contadores de actividad
+    (puntos/usos): sirve para distinguir un usuario genuinamente nuevo de uno
+    que regresa pero que todavía no ha contribuido.  Comprueba primero el
+    puntero (camino rápido) y, como respaldo para perfiles antiguos escritos
+    antes del mecanismo de puntero, una consulta directa a ``user-profile``.
+
+    Devuelve ``False`` ante un fallo de lectura: es conservador (peor caso, se
+    muestra la bienvenida de nuevo una vez), pero el guard anti-regresión de
+    ``_do_update_profile`` impide que ese re-sellado pise el historial real.
+    """
+    try:
+        if await read_user_pointer(uid_ofuscado):
+            return True
+        node = await _query_latest([
+            {"name": "data-type", "value": "user-profile"},
+            {"name": "uid-hash",  "value": uid_ofuscado},
+        ])
+        return node is not None
+    except Exception as exc:
+        logger.warning("profile_exists %s falló: %s", uid_ofuscado, exc)
+        return False
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.TransportError, ConnectionError, TimeoutError, OSError)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
 async def write_user_pointer(uid_ofuscado: str, tx_id: str, tags: Dict[str, str]) -> None:
     """Sube un puntero al ``tx_id`` del último ``user-profile`` sellado.
 
@@ -2487,6 +2518,8 @@ __all__ = [
     # Perfiles de usuario
     "read_user_tags",
     "write_user_tags",
+    "read_user_pointer",
+    "profile_exists",
     # Aportes
     "write_aporte",
     "read_aporte",

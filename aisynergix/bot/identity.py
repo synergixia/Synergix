@@ -464,6 +464,17 @@ class IdentityManager:
         async with self._lock_for(_hash_uid(uid)):
             await self._do_update_profile(uid, profile)
 
+    async def has_stored_profile(self, uid: int) -> bool:
+        """True si el usuario ya existe en Irys (la base de datos única).
+
+        Independiente de la actividad: un usuario que solo hizo ``/start``
+        (sin contribuir aún) también «existe» y no debe recibir la bienvenida
+        de nuevo.  Se usa para decidir welcome vs. welcome_back de forma
+        fiable, en vez de mirar puntos/usos (que solo crecen al contribuir).
+        """
+        from aisynergix.services.irys import profile_exists
+        return await profile_exists(_hash_uid(uid))
+
     async def apply_deltas(
         self,
         uid: int,
