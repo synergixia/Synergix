@@ -589,13 +589,21 @@ async def cmd_start(message: Message) -> None:
     detected_lang = await detect_user_language(message)
 
     profile = await identity.get_profile(uid)
-    is_new = profile.points == 0 and profile.total_uses_count == 0
+    # ¿Es realmente nuevo?  Se decide por EXISTENCIA en Irys (base de datos
+    # única), no por actividad: los contadores (puntos/usos) solo crecen al
+    # contribuir, así que un usuario que solo hizo /start seguiría pareciendo
+    # "nuevo" en cada arranque.  has_stored_profile consulta el puntero /
+    # user-profile en Irys y distingue ambos casos de forma fiable.
+    is_new = not await identity.has_stored_profile(uid)
     name = message.from_user.first_name or "Mente"
 
     if is_new:
         profile.set_language(detected_lang)
         identity._cache.set(uid, profile)
         lang = detected_lang
+        # Persistir el perfil en Irys en su PRIMER /start para reconocerlo en
+        # adelante, aunque nunca contribuya o las wallets estén deshabilitadas.
+        _spawn_bot_bg(identity.update_profile(uid, profile))
         welcome_text = t("welcome", lang, name=name)
     else:
         lang = profile.language
