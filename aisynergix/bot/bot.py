@@ -1400,7 +1400,7 @@ async def _start_node_creation_text(uid: int, lang: str) -> str:
     return t("node_create_ask_name", lang, bond=f"{bonds_svc.BOND_AMOUNT:,.0f}")
 
 
-@dp.message(Command("nodos"))
+@dp.message(Command("nodes", "nodos"))
 async def cmd_nodes(message: Message) -> None:
     if not message.from_user:
         return
@@ -1411,7 +1411,7 @@ async def cmd_nodes(message: Message) -> None:
     await message.answer(t("nodes_menu_title", lang), reply_markup=get_nodes_menu_kb(lang))
 
 
-@dp.message(Command("crear_nodo"))
+@dp.message(Command("create_node", "crear_nodo"))
 async def cmd_create_node(message: Message) -> None:
     if not message.from_user:
         return
@@ -1793,7 +1793,7 @@ def _prov_label(key: str, lang: str) -> str:
 
 # ── Proveedores ─────────────────────────────────────────────────────────────
 
-@dp.message(Command("proveedores"))
+@dp.message(Command("providers", "proveedores"))
 async def cmd_providers(message: Message) -> None:
     if not message.from_user:
         return
@@ -1983,7 +1983,7 @@ def _hash_uid_bot(uid: int) -> str:
     return _hash_uid(uid)
 
 
-@dp.message(Command("proyectos"))
+@dp.message(Command("projects", "proyectos"))
 async def cmd_projects(message: Message) -> None:
     if not message.from_user:
         return
@@ -2348,7 +2348,7 @@ async def _problem_view(callback: CallbackQuery, pid: str, lang: str, uid: int) 
     )
 
 
-@dp.message(Command("problemas"))
+@dp.message(Command("problems", "problemas"))
 async def cmd_problems(message: Message) -> None:
     if not message.from_user:
         return
@@ -2515,7 +2515,7 @@ async def handle_solution_text_message(message: Message, uid: int, text: str, la
 from aisynergix.services import academy as academy_svc
 
 
-@dp.message(Command("aprender"))
+@dp.message(Command("learn", "aprender"))
 async def cmd_learn(message: Message) -> None:
     if not message.from_user:
         return
@@ -2636,7 +2636,7 @@ async def handle_lesson_answer_message(message: Message, uid: int, text: str, la
 
 # ── Jueces Oráculos ─────────────────────────────────────────────────────────
 
-@dp.message(Command("oraculo"))
+@dp.message(Command("oracle", "oraculo"))
 async def cmd_oracle(message: Message) -> None:
     if not message.from_user:
         return
@@ -2761,7 +2761,7 @@ async def handle_oracle_callback(callback: CallbackQuery) -> None:
 # FASE 3: PASSPORT · AGENTE · GOBERNANZA
 # ══════════════════════════════════════════════════════════════════════════
 
-@dp.message(Command("pasaporte"))
+@dp.message(Command("passport", "pasaporte"))
 async def cmd_passport(message: Message) -> None:
     """Synergix Passport (§10): reputación verificable sellada en Arweave."""
     if not message.from_user:
@@ -2808,7 +2808,7 @@ async def cmd_passport(message: Message) -> None:
 _PROPOSAL_STATUS_ICON = {"open": "🗳️", "approved": "✅", "rejected": "❌"}
 
 
-@dp.message(Command("propuestas"))
+@dp.message(Command("proposals", "propuestas"))
 async def cmd_proposals(message: Message) -> None:
     if not message.from_user:
         return
@@ -3192,7 +3192,7 @@ def _redeem_reason_text(reason: str, lang: str) -> str:
     return t(key, lang, **kw)
 
 
-@dp.message(Command("canjear"))
+@dp.message(Command("redeem", "canjear"))
 async def cmd_redeem(message: Message) -> None:
     if not message.from_user:
         return
@@ -3943,19 +3943,24 @@ async def handle_wallet_signature_message(
 
 
 # Comandos del menú de Telegram: (comando, clave de locale de su descripción).
+# Nombres de comando SIEMPRE en inglés (universales); la descripción se
+# traduce a los 10 idiomas vía la clave de locale (segundo elemento).  Así el
+# menú "/" es consistente para todos, pero cada usuario lee la descripción en
+# su idioma.  Los nombres en español se conservan como alias en cada handler
+# (Command("nodes", "nodos")) para no romper a los usuarios existentes.
 _MENU_COMMANDS = [
     ("start",       "cmd_start"),
-    ("nodos",       "cmd_nodos"),
-    ("crear_nodo",  "cmd_crear_nodo"),
-    ("proveedores", "cmd_proveedores"),
-    ("proyectos",   "cmd_proyectos"),
-    ("problemas",   "cmd_problemas"),
+    ("nodes",       "cmd_nodos"),
+    ("create_node", "cmd_crear_nodo"),
+    ("providers",   "cmd_proveedores"),
+    ("projects",    "cmd_proyectos"),
+    ("problems",    "cmd_problemas"),
     ("bounties",    "cmd_bounties"),
-    ("aprender",    "cmd_aprender"),
-    ("oraculo",     "cmd_oraculo"),
-    ("propuestas",  "cmd_propuestas"),
-    ("pasaporte",   "cmd_pasaporte"),
-    ("canjear",     "cmd_canjear"),
+    ("learn",       "cmd_aprender"),
+    ("oracle",      "cmd_oraculo"),
+    ("proposals",   "cmd_propuestas"),
+    ("passport",    "cmd_pasaporte"),
+    ("redeem",      "cmd_canjear"),
 ]
 
 
