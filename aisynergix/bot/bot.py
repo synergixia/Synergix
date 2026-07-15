@@ -690,6 +690,7 @@ async def handle_status_button(message: Message) -> None:
     status_text += "\n" + t(
         "status_trust_score", lang, trust_score=f"{status.get('trust_score', 5.0):.1f}"
     )
+    status_text += "\n" + t("status_synx", lang, synx=f"{status.get('synx_balance', 0):.0f}")
     if status.get("human_verified"):
         status_text += "\n" + t("status_verified", lang)
 
@@ -1009,6 +1010,13 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
                     syn=syn_bal,
                     usd=usd_value,
                     bnb=bnb_bal,
+                )
+                # SYNX contable (ledger interno en Irys) — unidad separada del
+                # SYNERGIX real on-chain de arriba. Es el saldo que se gana con
+                # los aportes y que alimenta bounties, Academy, API y el canje.
+                synx_profile = await get_identity_manager().get_profile(uid)
+                balance_text += "\n" + t(
+                    "status_synx", lang, synx=f"{synx_profile.synx_balance:.0f}"
                 )
                 if is_custodial:
                     balance_text += "\n\n" + t("balance_custodial_note", lang)
