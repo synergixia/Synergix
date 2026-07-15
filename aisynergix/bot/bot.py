@@ -3289,63 +3289,25 @@ async def handle_sticker_message(message: Message) -> None:
 
     uid = message.from_user.id
     _known_uids.add(uid)
-    lang = await get_user_language(uid)
     sticker = message.sticker
-    sticker_emoji = sticker.emoji or "✨"
     set_name = sticker.set_name
 
-    # Reply with a different sticker from the same pack
+    # A sticker is always answered with a sticker — never with text.
+    # Pick a different sticker from the same pack; fall back to echoing the
+    # original one when the pack has no alternatives or cannot be fetched.
+    reply_file_id = sticker.file_id
     if set_name:
         try:
             sticker_set = await bot.get_sticker_set(set_name)
             others = [s for s in sticker_set.stickers if s.file_id != sticker.file_id]
             if others:
-                await message.answer_sticker(random.choice(others).file_id)
+                reply_file_id = random.choice(others).file_id
         except Exception:
             pass
-
-    # Only generate text in free-conversation states
-    ghost = get_ghost_state_manager()
-    current_state = await ghost.get_state(uid)
-    if current_state in (
-        "awaiting_contribution", "awaiting_buy_amount", "awaiting_sell_amount",
-        "awaiting_wallet_address", "awaiting_wallet_signature", "awaiting_node_name",
-        "awaiting_provider_desc", "awaiting_provider_payment",
-        "awaiting_project_name", "awaiting_project_goal",
-        "awaiting_project_fund", "awaiting_project_evidence",
-        "awaiting_bounty_pool", "awaiting_lesson_answer",
-        "awaiting_node_country", "awaiting_node_region",
-        "awaiting_problem_text", "awaiting_solution_text",
-        "awaiting_proposal_text",
-        "awaiting_withdraw_address", "awaiting_withdraw_amount",
-    ):
-        return
-
-    ai = get_ai_manager()
-    stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(_keep_typing(message.chat.id, stop_typing))
     try:
-        context_text = (
-            f"[El usuario envió el sticker {sticker_emoji}. "
-            "Interpreta la emoción o expresión que transmite este emoji y "
-            "responde de forma inteligente y empática en el idioma del usuario.]"
-        )
-        response, reply_emoji, search_results = await ai.process_conversation(uid, context_text)
-        if response:
-            final = f"{response}\n{reply_emoji}" if reply_emoji else response
-            if search_results:
-                lang = await ai.get_language(uid)
-                final += f"\n\n<i>{t('rag_memory_used', lang, count=len(search_results))}</i>"
-            await message.answer(final, parse_mode="HTML")
+        await message.answer_sticker(reply_file_id)
     except Exception as e:
-        logger.exception("Error en respuesta a sticker de %s: %s", uid, e)
-    finally:
-        stop_typing.set()
-        typing_task.cancel()
-        try:
-            await typing_task
-        except asyncio.CancelledError:
-            pass
+        logger.warning("Error en respuesta a sticker de %s: %s", uid, e)
 
 
 @dp.message()
