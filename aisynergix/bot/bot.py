@@ -3952,6 +3952,31 @@ async def set_bot_commands():
             logger.warning("set_my_commands(%s) falló: %s", lang_code, exc)
 
 
+async def set_bot_descriptions():
+    """Publica la descripción del bot en los 10 idiomas (§ i18n total).
+
+    ``set_my_description`` es el texto de "¿Qué puede hacer este bot?" que
+    Telegram muestra en el chat vacío (máx. 512); ``set_my_short_description``
+    es la del perfil y los reenvíos (máx. 120). Igual que el menú de comandos,
+    cada usuario la ve en su idioma de interfaz y el default queda en español.
+    """
+    try:
+        await bot.set_my_description(t("bot_description", "es")[:512])
+        await bot.set_my_short_description(t("bot_short_description", "es")[:120])
+    except Exception as exc:
+        logger.warning("set_my_description(default) falló: %s", exc)
+    for lang_code in LANG_NAMES:
+        try:
+            await bot.set_my_description(
+                t("bot_description", lang_code)[:512], language_code=lang_code,
+            )
+            await bot.set_my_short_description(
+                t("bot_short_description", lang_code)[:120], language_code=lang_code,
+            )
+        except Exception as exc:
+            logger.warning("set_my_description(%s) falló: %s", lang_code, exc)
+
+
 async def on_startup():
     logger.info("🚀 Iniciando Nodo Fantasma Synergix...")
 
@@ -3973,6 +3998,7 @@ async def on_startup():
     logger.info(f"🌐 Locales cargados: {list(LOCALES.keys())}")
 
     await set_bot_commands()
+    await set_bot_descriptions()
 
     from aisynergix.services.irys import (
         load_ai_guard, load_system_config, check_emergency_lock,
