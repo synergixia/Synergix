@@ -412,5 +412,7 @@
   "redeem_frozen": "🧊 Penukaran sementara dibekukan untuk pemeliharaan. Coba lagi nanti.",
   "redeem_budget": "⏳ Kuota penukaran hari ini sudah habis. Kembali besok — diperbarui setiap hari.",
   "redeem_pay_failed": "❌ Pembayaran tidak bisa diselesaikan dan SYNX-mu dikembalikan penuh. Coba lagi dalam beberapa menit.",
-  "redeem_soon_generic": "🔜 Penukaran akan segera aktif."
+  "redeem_soon_generic": "🔜 Penukaran akan segera aktif.",
+  "bot_description": "Synergix adalah kecerdasan kolektif terdesentralisasi dengan memori abadi. Mengobrol dengan AI-nya, sumbangkan pengetahuan yang diverifikasi juri AI, kumpulkan poin dan SYNX, lalu tukarkan dengan SYNERGIX asli. Semuanya terekam selamanya di Irys (Arweave) — tak seorang pun bisa menghapusnya. Jelajahi node komunitas, bounty pengetahuan, Academy, Atlas masalah, dan Passport on-chain Anda.",
+  "bot_short_description": "AI kolektif terdesentralisasi: bagikan pengetahuan, raih SYNX, tukar jadi SYNERGIX. Memori abadi di Irys."
 }

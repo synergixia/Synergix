@@ -412,5 +412,7 @@
   "redeem_frozen": "🧊 兑换因维护暂时冻结。请稍后再试。",
   "redeem_budget": "⏳ 今天的兑换额度已用完。明天再来——每天都会刷新。",
   "redeem_pay_failed": "❌ 付款无法完成，你的 SYNX 已全额退回。请几分钟后重试。",
-  "redeem_soon_generic": "🔜 兑换即将上线。"
+  "redeem_soon_generic": "🔜 兑换即将上线。",
+  "bot_description": "Synergix 是一个拥有不朽记忆的去中心化集体智能。与它的 AI 对话,贡献经 AI 评审验证的知识,赚取积分和 SYNX,并兑换成真正的 SYNERGIX。一切都永久记录在 Irys(Arweave)上,无人可以删除。探索社区节点、知识悬赏、Academy 学院、问题地图集和你的链上 Passport。",
+  "bot_short_description": "去中心化集体智能:贡献知识,赚取 SYNX,兑换 SYNERGIX。不朽记忆存储于 Irys。"
 }
