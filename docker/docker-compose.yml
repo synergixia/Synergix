@@ -276,6 +276,8 @@ services:
       SYNERGIX_THINKER_HOST: ${THINKER_HOST:-http://thinker:8081}
       SYNERGIX_JUDGE_HOST: ${JUDGE_HOST:-http://judge:8080}
       SYNERGIX_CACHE_TTL: ${CACHE_TTL:-12}
+      # UIDs de Telegram (separados por coma) autorizados para /admin.
+      SYNERGIX_ADMIN_IDS: ${SYNERGIX_ADMIN_IDS:-}
 
       # ── Variables sin prefijo (requeridas por bot.py y local_ia.py) ──
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
