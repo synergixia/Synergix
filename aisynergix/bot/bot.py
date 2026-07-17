@@ -1011,6 +1011,17 @@ async def handle_synergix_action(callback: CallbackQuery) -> None:
                     usd=usd_value,
                     bnb=bnb_bal,
                 )
+                # SYNERGIX bloqueado (bonds de nodo + stake de Oráculo): los
+                # tokens siguen en la wallet pero no cuentan como disponibles
+                # para retiro/venta (libro contable único de bonds.py).
+                from aisynergix.services import bonds as bonds_svc
+                locked = await bonds_svc.locked_synergix(uid)
+                if locked > 0:
+                    available = max(0.0, syn_bal - locked)
+                    balance_text += "\n" + t(
+                        "balance_locked", lang,
+                        locked=f"{locked:,.0f}", available=f"{available:,.0f}",
+                    )
                 # SYNX contable (ledger interno en Irys) — unidad separada del
                 # SYNERGIX real on-chain de arriba. Es el saldo que se gana con
                 # los aportes y que alimenta bounties, Academy, API y el canje.

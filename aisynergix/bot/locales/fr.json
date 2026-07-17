@@ -414,5 +414,6 @@
   "redeem_pay_failed": "❌ Le paiement n'a pas pu aboutir et vos SYNX ont été intégralement remboursés. Réessayez dans quelques minutes.",
   "redeem_soon_generic": "🔜 L'échange sera activé très bientôt.",
   "bot_description": "Synergix est une intelligence collective décentralisée à la mémoire immortelle. Discutez avec son IA, apportez des connaissances vérifiées par des juges IA, gagnez des points et des SYNX, puis échangez-les contre du vrai SYNERGIX. Tout est gravé pour toujours sur Irys (Arweave) — personne ne peut l'effacer. Explorez les nœuds communautaires, les bounties de connaissance, l'Academy, l'Atlas des problèmes et votre Passport on-chain.",
-  "bot_short_description": "IA collective décentralisée : partagez du savoir, gagnez des SYNX, échangez en SYNERGIX. Mémoire immortelle sur Irys."
+  "bot_short_description": "IA collective décentralisée : partagez du savoir, gagnez des SYNX, échangez en SYNERGIX. Mémoire immortelle sur Irys.",
+  "balance_locked": "🔒 Verrouillé : <b>{locked}</b> (bonds de nœud et stake d'Oracle)\n✅ Disponible pour retrait/vente : <b>{available}</b>"
 }
