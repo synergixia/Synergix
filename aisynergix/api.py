@@ -12,6 +12,11 @@ Ejecución (servicio `api` en docker-compose):
 
 import logging
 
+# Carga .env para ejecución directa (Termux / bare-metal); en Docker las
+# variables ya vienen del compose y no se pisan.
+from dotenv import load_dotenv
+load_dotenv()
+
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware

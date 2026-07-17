@@ -8,6 +8,11 @@ from typing import Dict, List, Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# Carga .env para ejecución directa (Termux / bare-metal); en Docker las
+# variables ya vienen del compose y no se pisan.
+from dotenv import load_dotenv
+load_dotenv()
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger

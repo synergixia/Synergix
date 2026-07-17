@@ -6,6 +6,13 @@ import logging
 import random
 from typing import Optional, Dict, Any
 
+# Carga .env ANTES de importar módulos que leen os.getenv a nivel de módulo
+# (services/redemption, bonds, treasury…). En Docker las variables ya vienen
+# del compose y load_dotenv no las pisa; esto cubre la ejecución directa
+# (Termux / bare-metal), donde el .env del repo no se leía en absoluto.
+from dotenv import load_dotenv
+load_dotenv()
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import (
@@ -3998,6 +4005,12 @@ async def on_startup():
         BOT_ID = me.id
         BOT_USERNAME = me.username or ""
         logger.info("🤖 Identidad del bot: @%s (id=%s)", BOT_USERNAME, BOT_ID)
+        if _ADMIN_IDS:
+            logger.info("👑 /admin habilitado para %d admin(s)", len(_ADMIN_IDS))
+        else:
+            logger.warning(
+                "👑 /admin DESHABILITADO: SYNERGIX_ADMIN_IDS vacía o no llegó al proceso"
+            )
         if _GROUP_WHITELIST:
             logger.info("👥 Grupos autorizados: %s", sorted(_GROUP_WHITELIST))
         else:
