@@ -181,10 +181,23 @@ def _owner_filter() -> str:
     return f', owners: ["{address}"]'
 
 
+def _gql_str(value: Any) -> str:
+    """Serializa un valor como literal de string GraphQL SEGURO.
+
+    json.dumps escapa comillas, backslashes y saltos de línea, produciendo un
+    literal entrecomillado válido. Imprescindible: los valores de tag pueden
+    venir de entrada del usuario (node_id/ghost_id/tx desde la API pública,
+    nombres de nodo, etc.); sin escapar, una comilla permitiría inyectar
+    GraphQL y, p. ej., anular el filtro `owners:` anti-forgery.
+    """
+    return json.dumps(str(value), ensure_ascii=False)
+
+
 def _tag_filter(tags: List[Dict[str, str]]) -> str:
-    """Convierte lista de tags a filtro GraphQL."""
+    """Convierte lista de tags a filtro GraphQL (valores escapados)."""
     parts = [
-        f'{{name: "{t["name"]}", values: ["{t["value"]}"]}}' for t in tags
+        f'{{name: {_gql_str(t["name"])}, values: [{_gql_str(t["value"])}]}}'
+        for t in tags
     ]
     return ", ".join(parts)
 
@@ -254,7 +267,7 @@ async def _query_all(
 
     while remaining > 0:
         page_size = min(remaining, _IRYS_PAGE_MAX)
-        after_clause = f', after: "{after_cursor}"' if after_cursor else ""
+        after_clause = f', after: {_gql_str(after_cursor)}' if after_cursor else ""
         q = f"""
         {{
           transactions(
@@ -300,7 +313,7 @@ async def _query_by_id(tx_id: str) -> Optional[Dict[str, Any]]:
     """Obtiene tags de una transacción por su ID."""
     q = f"""
     {{
-      transactions(ids: ["{tx_id}"]{_owner_filter()}) {{
+      transactions(ids: [{_gql_str(tx_id)}]{_owner_filter()}) {{
         edges {{ node {{ id tags {{ name value }} }} }}
       }}
     }}
