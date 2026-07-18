@@ -39,12 +39,14 @@ RUN mkdir -p /app/aisynergix/bot/locales \
     /app/models
 
 # ── 4. Copia de la aplicación ────────────────────────────────────────────
-COPY .env /app/.env
+# NO se copia el .env dentro de la imagen: hornearlo grabaría los secretos
+# (PRIVATE_KEY, TREASURY_KEY, WALLET_MASTER_KEY, TELEGRAM_TOKEN) en una capa
+# extraíble con `docker history`/`docker save`/un push al registro. Las
+# variables se inyectan en runtime desde docker-compose (`environment:`).
 COPY aisynergix/ /app/aisynergix/
 COPY scripts/ /app/scripts/
 
 RUN chown -R synergix:synergix /app
-RUN chmod 600 /app/.env
 
 # ── 5. Cachés de modelos IA ──────────────────────────────────────────────
 ENV HF_HOME=/tmp/hf_cache
