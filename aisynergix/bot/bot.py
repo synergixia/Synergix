@@ -10,8 +10,11 @@ from typing import Optional, Dict, Any
 # (services/redemption, bonds, treasury…). En Docker las variables ya vienen
 # del compose y load_dotenv no las pisa; esto cubre la ejecución directa
 # (Termux / bare-metal), donde el .env del repo no se leía en absoluto.
+# Ruta fijada al .env del repo: evita que dotenv siga buscando en directorios
+# padre si el archivo no existe (un .env plantado más arriba no se cargaría).
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -679,7 +682,7 @@ async def handle_status_button(message: Message) -> None:
     status_text = t(
         "status_msg",
         lang,
-        name=status["name"],
+        name=html.escape(status["name"]),
         rank=_t_rank(status["rank"], lang),
         points=status["points"],
         contribuciones=status["contribuciones"],
@@ -868,7 +871,7 @@ async def handle_welcome_actions(callback: CallbackQuery) -> None:
         status_text = t(
             "status_msg",
             lang,
-            name=status["name"],
+            name=html.escape(status["name"]),
             rank=_t_rank(status["rank"], lang),
             points=status["points"],
             contribuciones=status["contribuciones"],

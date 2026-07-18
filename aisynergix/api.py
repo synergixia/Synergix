@@ -13,9 +13,13 @@ Ejecución (servicio `api` en docker-compose):
 import logging
 
 # Carga .env para ejecución directa (Termux / bare-metal); en Docker las
-# variables ya vienen del compose y no se pisan.
+# variables ya vienen del compose y no se pisan. La API NECESITA PRIVATE_KEY
+# (no firma: deriva la dirección del wallet para el filtro anti-forgery
+# `owners:` de todas las queries GraphQL — irys._owner_filter). Ruta fijada
+# al .env del repo para no buscar en directorios padre.
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
