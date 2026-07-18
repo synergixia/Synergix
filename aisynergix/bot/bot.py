@@ -311,6 +311,16 @@ try:
 except ValueError:
     _GROUP_COOLDOWN_S = 5
 _group_last_ts: dict = {}
+# Anti-flood en DM: intervalo mínimo (s) entre mensajes de conversación de un
+# mismo usuario. Solo afecta al camino que invoca al Thinker (LLM local con
+# concurrencia 1): sin esto, un usuario en ráfaga llena la cola asyncio y deja
+# sin servicio a los demás. 0 lo desactiva.
+try:
+    _DM_COOLDOWN_S = max(0, int(os.getenv("SYNERGIX_DM_COOLDOWN", "3")))
+except (ValueError, TypeError):
+    _DM_COOLDOWN_S = 3
+_dm_last_ts: dict = {}
+_dm_notified: dict = {}
 # Language the bot speaks in groups (the group is multi-user; default English).
 _GROUP_LANG = os.getenv("SYNERGIX_GROUP_LANG", "en").strip() or "en"
 
@@ -3182,11 +3192,19 @@ async def handle_impact_useful(callback: CallbackQuery) -> None:
         await callback.answer(t("useful_expired", lang))
         return
 
+    # Anti-farming: quien pulsa "útil" no puede acreditar impacto/regalías a
+    # sus PROPIOS aportes (surgir el propio aporte con una consulta y votarlo
+    # sería un bucle de auto-recompensa). Se excluye por Ghost ID.
+    from aisynergix.bot.identity import _hash_uid
+    presser_hash = _hash_uid(callback.from_user.id)
+
     # Acreditar en background — cada aporte implica lecturas/escrituras en
     # Irys y el callback debe responder en <10 s.
     async def _credit() -> None:
         try:
-            n = await get_ai_manager().record_useful_sources(payload)
+            n = await get_ai_manager().record_useful_sources(
+                payload, exclude_author=presser_hash
+            )
             logger.info("✅ útil: %d aporte(s) acreditados (chat=%s)", n, key[0])
         except Exception as exc:
             logger.warning("impact useful credit falló: %s", exc)
@@ -3438,6 +3456,23 @@ async def handle_free_conversation(message: Message) -> None:
     if current_state == "awaiting_withdraw_amount":
         await handle_withdraw_amount_message(message, uid, text, lang)
         return
+
+    # Anti-flood: el único camino restante es la conversación con el Thinker
+    # (LLM local, concurrencia 1). Limita la frecuencia por usuario para que un
+    # flood no monopolice la cola. Avisa como máximo una vez por ventana para
+    # no generar spam propio de respuestas.
+    if _DM_COOLDOWN_S:
+        now = asyncio.get_event_loop().time()
+        if now - _dm_last_ts.get(uid, 0.0) < _DM_COOLDOWN_S:
+            if now - _dm_notified.get(uid, 0.0) >= _DM_COOLDOWN_S:
+                _dm_notified[uid] = now
+                await message.answer(t("dm_cooldown", lang))
+            return
+        # Poda defensiva para acotar la memoria de los diccionarios de rate.
+        if len(_dm_last_ts) > 10000:
+            _dm_last_ts.clear()
+            _dm_notified.clear()
+        _dm_last_ts[uid] = now
 
     await handle_conversation_message(message, uid, text, lang)
 

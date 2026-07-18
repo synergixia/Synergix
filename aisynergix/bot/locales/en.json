@@ -415,5 +415,6 @@
   "redeem_soon_generic": "🔜 Redemption goes live very soon.",
   "bot_description": "Synergix is a decentralized collective intelligence with immortal memory. Chat with its AI, contribute knowledge verified by AI judges, earn points and SYNX, and redeem them for real SYNERGIX. Everything is recorded forever on Irys (Arweave) — no one can erase it. Explore community nodes, knowledge bounties, the Academy, the problem Atlas and your on-chain Passport.",
   "bot_short_description": "Decentralized collective AI: share knowledge, earn SYNX, redeem for SYNERGIX. Immortal memory on Irys.",
-  "balance_locked": "🔒 Locked: <b>{locked}</b> (node bonds and Oracle stake)\n✅ Available to withdraw/sell: <b>{available}</b>"
+  "balance_locked": "🔒 Locked: <b>{locked}</b> (node bonds and Oracle stake)\n✅ Available to withdraw/sell: <b>{available}</b>",
+  "dm_cooldown": "⏳ You're going too fast. Wait a moment before your next message. 🧠"
 }

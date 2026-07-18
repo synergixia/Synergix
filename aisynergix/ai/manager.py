@@ -1016,13 +1016,16 @@ class AIManager:
         async with self._context_cache_lock:
             self._context_cache.pop(uid, None)
 
-    async def record_useful_sources(self, payload: str) -> int:
+    async def record_useful_sources(self, payload: str, exclude_author: str = "") -> int:
         """Confirma '✅ útil' sobre las fuentes de una respuesta (PIR §7.2).
 
         ``payload`` es el JSON emitido por stream_conversation: lista de
         pares [aporte_tx, author_hash].  Cada aporte suma +1 impacto
         verificado; el tracker paga la regalía perpetua al cruzar bloques
         de 100.  Retorna cuántos aportes fueron acreditados.
+
+        ``exclude_author`` (Ghost ID de quien pulsa "útil") evita el
+        auto-farming: nadie acredita impacto/regalías a sus propios aportes.
         """
         from aisynergix.services.impact import get_impact_tracker
         try:
@@ -1036,6 +1039,8 @@ class AIManager:
                 tx, author = str(item[0]), str(item[1])
             except (IndexError, TypeError, KeyError):
                 continue
+            if exclude_author and author == exclude_author:
+                continue  # anti-farming: no autoacreditarse
             if await tracker.record_useful(tx, author) is not None:
                 credited += 1
         return credited
