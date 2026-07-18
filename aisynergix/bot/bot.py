@@ -580,9 +580,16 @@ async def handle_group_message(message: Message) -> None:
     try:
         clean, sticker = await ai.process_group_message(text, _GROUP_LANG)
         if clean:
-            out = f"{clean}\n{sticker}" if sticker else clean
-            # Plain text (no HTML parse) — group replies are arbitrary model text.
-            await message.reply(out, parse_mode=None)
+            # Render the Thinker's Markdown as Telegram HTML (bold titles, etc.)
+            # so asterisks/hashes don't show literally; fall back to plain text
+            # if the converted HTML fails to parse for any reason.
+            html_body = _md_to_html(clean)
+            html_out = f"{html_body}\n{sticker}" if sticker else html_body
+            try:
+                await message.reply(html_out, parse_mode="HTML")
+            except Exception:
+                plain_out = f"{clean}\n{sticker}" if sticker else clean
+                await message.reply(plain_out, parse_mode=None)
     except Exception as exc:
         logger.exception("Error en respuesta de grupo (chat=%s): %s", message.chat.id, exc)
     finally:
@@ -3633,6 +3640,58 @@ async def _handle_image_request(
         await message.answer(t("image_failed", lang))
 
 
+def _md_to_html(text: str) -> str:
+    """Convierte el Markdown que emite el Thinker a HTML de Telegram.
+
+    El bot envía con parse_mode=HTML, así que `**negrita**`, `## títulos` y
+    demás se verían con los asteriscos/almohadillas literales. Se protegen
+    primero los bloques/spans de código, se escapan las entidades HTML del
+    texto del modelo (para no romper el parseo con un `<` suelto) y luego se
+    traducen las marcas Markdown más comunes a las etiquetas que Telegram
+    soporta (b, i, code, pre, a). Si algo queda mal, el envío hace fallback a
+    texto plano en el llamador.
+    """
+    if not text:
+        return text
+
+    placeholders: list = []
+
+    def _stash(snippet: str) -> str:
+        placeholders.append(snippet)
+        return f"\x00{len(placeholders) - 1}\x00"
+
+    # Código en bloque y en línea: su contenido NO se formatea.
+    text = re.sub(
+        r"```[a-zA-Z0-9_+-]*\n?(.*?)```",
+        lambda m: _stash(f"<pre>{html.escape(m.group(1).strip(chr(10)))}</pre>"),
+        text, flags=re.DOTALL,
+    )
+    text = re.sub(
+        r"`([^`\n]+)`",
+        lambda m: _stash(f"<code>{html.escape(m.group(1))}</code>"),
+        text,
+    )
+
+    # Escapar el resto (el modelo puede emitir <, >, &).
+    text = html.escape(text)
+
+    # Enlaces, encabezados, negrita, cursiva y viñetas.
+    text = re.sub(
+        r"\[([^\]\n]+)\]\((https?://[^)\s]+|tg://[^)\s]+)\)",
+        r'<a href="\2">\1</a>', text,
+    )
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*(.+?)\s*#*\s*$", r"<b>\1</b>", text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text, flags=re.DOTALL)
+    text = re.sub(r"__(.+?)__", r"<b>\1</b>", text, flags=re.DOTALL)
+    text = re.sub(r"(?<![\*\w])\*(?!\s)([^\*\n]+?)(?<!\s)\*(?![\*\w])", r"<i>\1</i>", text)
+    text = re.sub(r"(?<![_\w])_(?!\s)([^_\n]+?)(?<!\s)_(?![_\w])", r"<i>\1</i>", text)
+    text = re.sub(r"(?m)^(\s*)[-*]\s+", r"\1• ", text)
+
+    # Restaurar los códigos protegidos.
+    text = re.sub(r"\x00(\d+)\x00", lambda m: placeholders[int(m.group(1))], text)
+    return text
+
+
 async def handle_conversation_message(
     message: Message,
     uid: int,
@@ -3802,6 +3861,9 @@ async def handle_conversation_message(
         clean, sticker_emoji = _extract_sticker(answer_buf)
         clean = _strip_name_prefix(clean)
         clean = _strip_filler(clean)
+        # El Thinker emite Markdown (**negrita**, ## títulos): convertir a HTML
+        # de Telegram para que no se vean los asteriscos/almohadillas literales.
+        clean = _md_to_html(clean)
         final_text = f"{clean}\n{sticker_emoji}" if sticker_emoji else clean
         if memory_count > 0:
             final_text += f"\n\n<i>{t('rag_memory_used', lang, count=memory_count)}</i>"
