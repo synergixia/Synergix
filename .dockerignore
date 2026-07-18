@@ -1,4 +1,7 @@
 .git
+# Secretos: nunca deben entrar en el contexto de build ni en la imagen.
+.env
+*.key
 **/*.gguf
 **/*.bin
 **/*.pth
