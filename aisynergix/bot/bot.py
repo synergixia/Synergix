@@ -4059,15 +4059,21 @@ async def set_bot_commands():
     Telegram muestra a cada usuario el menú de su idioma de interfaz
     (language_code); el menú por defecto (sin código) queda en español para
     cualquier idioma fuera de los 10 soportados.
+
+    Estos metadatos rara vez cambian y Telegram los limita con flood control
+    agresivo (un ban puede durar >20 min). Por eso NINGUNA llamada puede ser
+    fatal: se capturan una a una para que un fallo/flood no impida arrancar.
     """
-    await bot.set_my_commands(_commands_for("es"))  # default global
-    for lang_code in LANG_NAMES:
+    for lang_code in (None, *LANG_NAMES):
         try:
-            await bot.set_my_commands(
-                _commands_for(lang_code), language_code=lang_code,
-            )
+            if lang_code is None:
+                await bot.set_my_commands(_commands_for("es"))  # default global
+            else:
+                await bot.set_my_commands(
+                    _commands_for(lang_code), language_code=lang_code,
+                )
         except Exception as exc:
-            logger.warning("set_my_commands(%s) falló: %s", lang_code, exc)
+            logger.warning("set_my_commands(%s) falló: %s", lang_code or "default", exc)
 
 
 async def set_bot_descriptions():
@@ -4121,8 +4127,24 @@ async def on_startup():
     await load_all_locales()
     logger.info(f"🌐 Locales cargados: {list(LOCALES.keys())}")
 
-    await set_bot_commands()
-    await set_bot_descriptions()
+    # Sincronización de comandos/descripción del bot: metadatos que rara vez
+    # cambian y que Telegram limita con flood control agresivo. Se ejecuta en
+    # SEGUNDO PLANO y con guardas totales para que un flood/ban (que puede
+    # durar >20 min) NUNCA impida que el bot arranque y haga polling. Se puede
+    # desactivar del todo con SYNERGIX_SYNC_BOT_META=false cuando ya están
+    # publicados y se reinicia con frecuencia.
+    if os.getenv("SYNERGIX_SYNC_BOT_META", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    ):
+        async def _sync_bot_metadata() -> None:
+            try:
+                await set_bot_commands()
+                await set_bot_descriptions()
+            except Exception as exc:
+                logger.warning("sincronización de metadatos del bot falló: %s", exc)
+        _spawn_bot_bg(_sync_bot_metadata())
+    else:
+        logger.info("⏭️ Sincronización de metadatos del bot desactivada (SYNERGIX_SYNC_BOT_META)")
 
     from aisynergix.services.irys import (
         load_ai_guard, load_system_config, check_emergency_lock,

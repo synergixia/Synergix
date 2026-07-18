@@ -280,6 +280,9 @@ services:
       SYNERGIX_ADMIN_IDS: ${SYNERGIX_ADMIN_IDS:-}
       # Anti-flood en DM: segundos mínimos entre mensajes de conversación.
       SYNERGIX_DM_COOLDOWN: ${SYNERGIX_DM_COOLDOWN:-3}
+      # Sincronizar comandos/descripción del bot al arrancar (metadatos que
+      # Telegram limita con flood control). false si reinicias con frecuencia.
+      SYNERGIX_SYNC_BOT_META: ${SYNERGIX_SYNC_BOT_META:-true}
 
       # ── Variables sin prefijo (requeridas por bot.py y local_ia.py) ──
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?err}
