@@ -347,9 +347,23 @@ services:
       # Fase D: contrato de bonds on-chain (vacío = bond contable de Fase A).
       SYNERGIX_BOND_CONTRACT: ${SYNERGIX_BOND_CONTRACT:-}
 
+      # ── Web API (sitio web — fase B). Opt-in. ─────────────────
+      SYNERGIX_WEB_API_ENABLED: ${WEB_API_ENABLED:-false}
+      SYNERGIX_WEB_API_KEY: ${WEB_API_KEY:-}
+      SYNERGIX_WEB_API_HOST: 0.0.0.0
+      SYNERGIX_WEB_API_PORT: "8090"
+      SYNERGIX_WEB_CORS_ORIGINS: ${WEB_CORS_ORIGINS:-https://www.synergix.lol,https://synergix.lol}
+      SYNERGIX_WEB_RATE_MAX: ${WEB_RATE_MAX:-20}
+      SYNERGIX_WEB_RATE_WINDOW: ${WEB_RATE_WINDOW:-60}
+      SYNERGIX_WEB_RESIDUAL_REWARDS: ${WEB_RESIDUAL_REWARDS:-false}
+
       # ── HuggingFace / Transformers ─────────────────────────────
       HF_HOME: /tmp/hf_cache
       SENTENCE_TRANSFORMERS_HOME: /tmp/st_cache
+    # Web API port — bound to localhost so only a local Cloudflare Tunnel
+    # (or reverse proxy) on the host can reach it.  Never expose 0.0.0.0.
+    ports:
+      - "127.0.0.1:8090:8090"
     deploy:
       resources:
         limits:
